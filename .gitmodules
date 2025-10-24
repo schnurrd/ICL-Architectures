@@ -1,0 +1,3 @@
+[submodule "external/PFNs"]
+	path = external/PFNs
+	url = git@github.com:automl/PFNs.git
