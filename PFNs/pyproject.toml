@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling==1.18.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pfns"
+version = "0.4.2"
+authors = [
+{name="Samuel Muller"},
+{name="Matthias Feurer"},
+{name="Noah Hollmann"},
+{name="Frank Hutter"},
+]
+
+description = "PFNs made ready for BO"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies=[
+        'torch>=2.2',
+        'scikit-learn>=0.24.2',
+        'pyyaml>=5.4.1',
+        'numpy>=1.21.2',
+        'requests>=2.23.0',
+        'gpytorch>=1.5.0',
+        'configspace>=0.4.21',
+        'tqdm>=4.62.1',
+        'matplotlib>=3.10.1',
+        'einops>=0.8.1',
+        'pre-commit>=3.5.0',
+        'black==24.4.2',
+        'usort==1.0.8.post1',
+        'ruff-api==0.1.0',
+        'stdlibs==2024.1.28',
+        'pytest>=5.4.3',
+        'flake8-bugbear>=24.0.0',
+        'tensorboard>=2.20.0',
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+benchmarks = [
+    "bayesmark>=0.0.8",
+]
+priors = [
+    "botorch",
+]
+
+[tool.hatch.build]
+exclude = [
+  "*.gz",
+  "*.pt",
+  "*.cpkt",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/automl/PFNs4BO"
+
+[tool.usort]
+first_party_detection = false
+
+[tool.ufmt]
+formatter = "ruff-api"
+
+[tool.black]
+line-length = 88
