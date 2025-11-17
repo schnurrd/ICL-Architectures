@@ -637,6 +637,7 @@ def compute_losses(
             output.reshape(-1, len(criterion.weight)),
             targets.long().flatten(),
         )
+        losses = losses.view(*targets.shape)
     else:
         losses = criterion(output, targets.unsqueeze(-1))
     losses = einops.rearrange(losses, "(b t) s -> b s t", t=n_targets_per_input)
