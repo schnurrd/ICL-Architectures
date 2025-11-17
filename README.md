@@ -26,3 +26,11 @@ pip install -e prior-repos/tabularpriors
 ```
 
 Tested for Nvidia RTX 5070 with Cuda 12.8.
+
+## Run pretraining
+
+To run pre-training with the TabPFNv1 prior use:
+
+```bash
+python PFNs/pfns/run_training_cli.py PFNs/tabpfn_prior_config.py --device cuda:0 --checkpoint-save-load-prefix PFNs/models_diff/test.pt
+```
