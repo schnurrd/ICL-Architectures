@@ -138,14 +138,13 @@ def get_batch(
         ).squeeze(-1)
         ys.append(y.T)
 
-    y = torch.stack(ys, dim=1)
+    y = torch.stack(ys, dim=0)
     targets = y
 
     noisy_y = y + torch.randn_like(y) * hyperparameters["mlp_output_noise"]
 
-    # return x.transpose(0, 1), noisy_y, (noisy_y if hyperparameters['mlp_noisy_targets'] else targets)
     return Batch(
-        x.transpose(0, 1),
+        x,
         noisy_y[:, :, :1],
         (noisy_y if hyperparameters["mlp_noisy_targets"] else targets),
     )

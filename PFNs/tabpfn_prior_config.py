@@ -53,17 +53,17 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
 
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=4,
+        batch_size=16,
         min_single_eval_pos=24,
-        max_seq_len=192,
-        min_num_features=4,
-        max_num_features=40,
-        fixed_num_test_instances=48,
+        max_seq_len=128,
+        min_num_features=2,
+        max_num_features=10,
+        fixed_num_test_instances=None,
     )
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=3e-4,
+        lr=1e-4,
         weight_decay=0.01,
     )
 
@@ -72,8 +72,8 @@ def get_config(config_index: int = 0) -> MainConfig:
         optimizer=optimizer,
         model=model,
         batch_shape_sampler=batch_shape,
-        epochs=200,
-        warmup_epochs=20,
+        epochs=20,
+        warmup_epochs=5,
         steps_per_epoch=1000,
         n_targets_per_input=1,
         train_mixed_precision=True,

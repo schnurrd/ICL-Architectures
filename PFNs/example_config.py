@@ -138,9 +138,6 @@ def get_config(config_index: int):
         warmup_epochs=epochs // 10,
         steps_per_epoch=steps_per_epoch,
         num_workers=num_workers,
-        train_mixed_precision=False,
+        train_mixed_precision=True,
     )
     return config
-
-
-# View with: tensorboard --logdir=runs

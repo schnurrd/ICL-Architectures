@@ -29,13 +29,9 @@ from torch.utils.checkpoint import checkpoint
 
 
 def load_model_workflow(
-    i,
-    e,
-    add_name,
+    name,
     base_path,
     device="cpu",
-    eval_addition="",
-    only_inference=True,
 ):
     """
     Workflow for loading a model and setting appropriate parameters for diffable hparam tuning.
@@ -50,54 +46,14 @@ def load_model_workflow(
     :return:
     """
 
-    def get_file(e):
-        """
-        Returns the different paths of model_file, model_path and results_file
-        """
-        model_file = (
-            f"models_diff/prior_diff_real_checkpoint{add_name}_n_{i}_epoch_{e}.cpkt"
-        )
-        model_path = os.path.join(base_path, model_file)
-        # print('Evaluate ', model_path)
-        results_file = os.path.join(
-            base_path,
-            f"models_diff/prior_diff_real_results{add_name}_n_{i}_epoch_{e}_{eval_addition}.pkl",
-        )
-        return model_file, model_path, results_file
+    model_path = os.path.join(base_path, name)
+    # print('Evaluate ', model_path)
+    results_file = os.path.join(
+        base_path,
+        f"results_{name}.pkl",
+    )
 
-    def check_file(e):
-        model_file, model_path, results_file = get_file(e)
-        if not Path(model_path).is_file():  # or Path(results_file).is_file():
-            print(
-                "We have to download the TabPFN, as there is no checkpoint at ",
-                model_path,
-            )
-            print("It has about 100MB, so this might take a moment.")
-            import requests
-
-            url = "https://github.com/automl/TabPFN/raw/main/tabpfn/models_diff/prior_diff_real_checkpoint_n_0_epoch_42.cpkt"
-            r = requests.get(url, allow_redirects=True)
-            os.makedirs(os.path.dirname(model_path), exist_ok=True)
-            open(model_path, "wb").write(r.content)
-        return model_file, model_path, results_file
-
-    model_file = None
-    if e == -1:
-        for e_ in range(100, -1, -1):
-            model_file_, model_path_, results_file_ = check_file(e_)
-            if model_file_ is not None:
-                e = e_
-                model_file, model_path, results_file = (
-                    model_file_,
-                    model_path_,
-                    results_file_,
-                )
-                break
-    else:
-        model_file, model_path, results_file = check_file(e)
-
-    if model_file is None:
-        model_file, model_path, results_file = get_file(e)
+    if name is None:
         raise Exception("No checkpoint found at " + str(model_path))
 
     # print(f'Loading {model_file}')
@@ -109,9 +65,9 @@ def load_model_workflow(
     #     model, c = load_model(base_path, model_file, device, eval_positions=[], verbose=False)
     # #model, c = load_model(base_path, model_file, device, eval_positions=[], verbose=False)
 
-    model, c = load_model_only_inference(base_path, model_file, device)
+    model, config = load_model_only_inference(base_path, name, device)
 
-    return model, c, results_file
+    return model, config, results_file
 
 
 default_base_path = pathlib.Path(__file__).parent.parent.resolve()
@@ -176,13 +132,9 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             model, c, results_file = self.models_in_memory[model_key]
         else:
             model, c, results_file = load_model_workflow(
-                i,
-                -1,
-                add_name=model_string,
+                name=model_string,
                 base_path=base_path,
-                device=device,
-                eval_addition="",
-                only_inference=only_inference,
+                device=device
             )
             self.models_in_memory[model_key] = (model, c, results_file)
             if len(self.models_in_memory) == 2:
@@ -202,10 +154,11 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.i = i
         self.model_string = model_string
 
-        self.max_num_features = self.c["num_features"]
-        self.max_num_classes = self.c["max_num_classes"]
-        self.differentiable_hps_as_style = self.c["differentiable_hps_as_style"]
-
+        self.max_num_features = c.batch_shape_sampler.max_num_features
+        self.max_num_classes = c.model.criterion.num_classes
+        self.differentiable_hps_as_style = getattr(
+            c.model, "differentiable_hps_as_style", False
+        )
         self.no_preprocess_mode = no_preprocess_mode
         self.feature_shift_decoder = feature_shift_decoder
         self.multiclass_decoder = multiclass_decoder
@@ -315,7 +268,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         eval_pos = self.X_.shape[0]
 
         prediction = transformer_predict(
-            self.model[2],
+            self.model,
             X_full,
             y_full,
             eval_pos,
@@ -328,12 +281,12 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             softmax_temperature=self.temperature,
             multiclass_decoder=self.multiclass_decoder,
             feature_shift_decoder=self.feature_shift_decoder,
-            differentiable_hps_as_style=self.differentiable_hps_as_style,
             seed=self.seed,
             return_logits=return_logits,
             no_grad=self.no_grad,
             batch_size_inference=self.batch_size_inference,
-            **get_params_from_config(self.c),
+            max_features=self.max_num_features,
+            num_classes=len(self.classes_),
         )
         prediction_, _y_ = (  # noqa: F841
             prediction.squeeze(0),
@@ -413,30 +366,21 @@ def transformer_predict(
             torch.inference_mode() if inference_mode and no_grad else NOP()
         )
         with inference_mode_call:
+            x_bf = eval_xs.transpose(0, 1)
+            y_bf = eval_ys.transpose(0, 1).float()
+            style_bf = (
+                used_style.repeat(x_bf.shape[0], 1) if used_style is not None else None
+            )
             output = model(
-                (
-                    (
-                        used_style.repeat(eval_xs.shape[1], 1)
-                        if used_style is not None
-                        else None
-                    ),
-                    eval_xs,
-                    eval_ys.float(),
-                ),
-                single_eval_pos=eval_position,
+                x=x_bf,
+                y=y_bf,
+                style=style_bf,
             )[:, :, 0:num_classes]
 
-            output = output[:, :, 0:num_classes] / torch.exp(softmax_temperature)
+            output = output / torch.exp(softmax_temperature)
             if not return_logits:
                 output = torch.nn.functional.softmax(output, dim=-1)
-            # else:
-            #    output[:, :, 1] = model((style.repeat(eval_xs.shape[1], 1) if style is not None else None, eval_xs, eval_ys.float()),
-            #               single_eval_pos=eval_position)
-
-            #    output[:, :, 1] = torch.sigmoid(output[:, :, 1]).squeeze(-1)
-            #    output[:, :, 0] = 1 - output[:, :, 1]
-
-        # print('RESULTS', eval_ys.shape, torch.unique(eval_ys, return_counts=True), output.mean(axis=0))
+            output = output.transpose(0, 1)
 
         return output
 
@@ -466,7 +410,6 @@ def transformer_predict(
             ):
                 pt = RobustScaler(unit_variance=True)
 
-        # eval_xs, eval_ys = normalize_data(eval_xs), normalize_data(eval_ys)
         eval_xs = normalize_data(
             eval_xs,
             normalize_positions=-1 if normalize_with_test else eval_position,
@@ -716,11 +659,3 @@ def transformer_predict(
     output = torch.transpose(output, 0, 1)
 
     return output
-
-
-def get_params_from_config(c):
-    return {
-        "max_features": c["num_features"],
-        "rescale_features": c["normalize_by_used_features"],
-        "normalize_with_sqrt": c.get("normalize_with_sqrt", False),
-    }
