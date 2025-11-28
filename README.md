@@ -34,3 +34,9 @@ To run pre-training with the TabPFNv1 prior use:
 ```bash
 python PFNs/pfns/run_training_cli.py PFNs/tabpfn_prior_config.py --device cuda:0 --checkpoint-save-load-prefix PFNs/models_diff/test.pt
 ```
+
+## Credits
+This repo builds on:
+- [PFNs](https://github.com/automl/PFNs) (Apache 2.0) for the core training pipeline and priors.
+- [TabPFN-v1-prior](https://github.com/automl/tabpfn-v1-prior) (Apache 2.0) for the tabpfn v1 prior implementation.
+- [tabularpriors](https://github.com/automl/tabularpriors) (Apache 2.0) for additional tabular priors (TabICL, TICL)
