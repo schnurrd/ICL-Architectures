@@ -90,12 +90,12 @@ def load_config_from_python(
         print(f"Warning: Config file {config_file} doesn't have .py extension")
 
     try:
-        # Load the Python file as a module
+        # Load the Python file as a module, creates a ModuleSpec instance
         spec = importlib.util.spec_from_file_location("config_module", config_path)
         if spec is None or spec.loader is None:
             raise ValueError(f"Could not load spec for {config_file}")
 
-        config_module = importlib.util.module_from_spec(spec)
+        config_module = importlib.util.module_from_spec(spec) # Creates a new module based on spec
 
         # Add the config file's directory to sys.path temporarily
         config_dir = str(config_path.parent.absolute())

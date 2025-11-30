@@ -59,10 +59,6 @@ python PFNs/pfns/run_training_cli.py PFNs/tabpfn_prior_config.py \
 - `--tensorboard-path`: Path to save tensorboard. If not provided, will use the checkpoint save/load prefix or the path in the config file.
 - `--config-index`: Index of the config to use. This is used to select a config from the config file.
 
-## Config File explanation
-
-The Python configuration file must define a `get_config(config_index: int = 0)` function, which when called returns a `MainConfig` object.
-
 ## Adding tensorboard
 
 Tensorboard can be added via the `tensorboard_path` CLI parameter or by setting it in the `MainConfig`. The training logs can then be viewed by starting the tensorboard with: 
@@ -70,6 +66,17 @@ Tensorboard can be added via the `tensorboard_path` CLI parameter or by setting 
 ```bash
 tensorboard --logdir TENSORBOARD_PATH
 ```
+
+## Config File explanation
+
+The Python configuration file must define a `config`or a `get_config(config_index: int = 0)` function, which when called returns a `MainConfig` object.
+
+## PFNs repository explanation
+
+### Steps of execution in the pre-training pipeline
+1. The CLI script `run_training_cli.py` is executed with the path to a configuration file and the CLI parameters. This first parses the CLI arguments and then loads the configuration file as a Python module. It retrieves the `config` variable or calls the `get_config` function to obtain the `MainConfig` object.
+2. The `MainConfig` object includes all the necessary objects for the training process, including the prior, model, batch shape sampler, optimizer and training loop configuration. If we have already started a training with the same name and have stored a checkpoint the config gets updated to load the checkpoint.
+3. The training loop is started by calling the `pfns.train.train` function with the created `MainConfig` object.
 
 # Credits
 This repo builds on:

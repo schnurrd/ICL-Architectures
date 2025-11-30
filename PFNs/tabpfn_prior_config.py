@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Training config that wires the standalone tabpfn_prior package into the PFNs
+Training config that uses the standalone tabpfn_prior package with the PFNs
 training loop with a TabPFN-v1 style transformer backbone.
 """
 
