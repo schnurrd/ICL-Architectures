@@ -32,6 +32,14 @@ def parse_args():
         help="Device to use for training (e.g., 'cuda:0', 'cpu', 'mps'). If not specified, will auto-detect cuda, but not mps.",
     )
 
+
+    parser.add_argument(
+        "--compile",
+        type=bool,
+        default=False,
+        help="Use torch.compile for the model (requires PyTorch 2.0+).",
+    )
+
     parser.add_argument(
         "--checkpoint-save-load-prefix",
         type=str,
@@ -202,6 +210,7 @@ def main():
         result = pfns.train.train(
             c=config,
             device=args.device,
+            compile=args.compile,
         )
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
