@@ -52,7 +52,7 @@ The training CLI allows you to train PFNs models using configuration from Python
 ```bash
 python PFNs/pfns/run_training_cli.py PFNs/tabpfn_prior_config.py \
     --device cuda:0 \
-    --compile True \
+    --compile \
     --checkpoint-save-load-prefix PFNs/models_diff/test.pt \
     --checkpoint-save-load-suffix no_seed \
     --tensorboard-path PFNs/tensorboards \

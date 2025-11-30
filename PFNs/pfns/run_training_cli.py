@@ -35,10 +35,11 @@ def parse_args():
 
     parser.add_argument(
         "--compile",
-        type=bool,
-        default=False,
+        action="store_true",
         help="Use torch.compile for the model (requires PyTorch 2.0+).",
     )
+    parser.set_defaults(compile=False)
+
 
     parser.add_argument(
         "--checkpoint-save-load-prefix",
