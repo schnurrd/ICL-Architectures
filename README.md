@@ -1,6 +1,17 @@
 # ICL-Architectures
 Unified framework for comparing model architectures in in-context learning across tabular and time-series domains. Includes modular pretraining pipelines, shared priors, and evaluations of Transformers, linear attention, xLSTM, Mamba, and SSM variants.
 
+## Table of Contents
+- [Installation](#installation)
+- [Run pre-training](#run-pre-training)
+- [PFNs documentation](#pfns-documentation)
+  - [CLI interface](#cli-interface)
+    - [Usage](#usage)
+    - [Command Line Arguments](#command-line-arguments)
+  - [Tensorboard support](#tensorboard-support)
+  - [Configuration Files](#configuration-files)
+  - [PFNs repository explanation](#pfns-repository-explanation)
+- [Credits](#credits)
 
 ## Installation
 
@@ -49,7 +60,7 @@ python PFNs/pfns/run_training_cli.py PFNs/tabpfn_prior_config.py \
     --config-index 0
 ```
 
-## Command Line Arguments
+### Command Line Arguments
 
 - `config_file` (required): Path to the Python configuration file that defines a `config` variable
 - `--device`: Device to use for training (e.g., 'cuda:0', 'cpu'). If not specified, will auto-detect.
@@ -59,7 +70,7 @@ python PFNs/pfns/run_training_cli.py PFNs/tabpfn_prior_config.py \
 - `--tensorboard-path`: Path to save tensorboard. If not provided, will use the checkpoint save/load prefix or the path in the config file.
 - `--config-index`: Index of the config to use. This is used to select a config from the config file.
 
-## Adding tensorboard
+## Tensorboard support
 
 Tensorboard can be added via the `tensorboard_path` CLI parameter or by setting it in the `MainConfig`. The training logs can then be viewed by starting the tensorboard with: 
 
@@ -67,9 +78,9 @@ Tensorboard can be added via the `tensorboard_path` CLI parameter or by setting 
 tensorboard --logdir TENSORBOARD_PATH
 ```
 
-## Config File explanation
+## Configuration Files  
 
-The Python configuration file must define a `config`or a `get_config(config_index: int = 0)` function, which when called returns a `MainConfig` object.
+The Python configuration file must define a `config`or a `get_config(config_index: int = 0)` function, which when called returns a `MainConfig` object. An example configuration file can be found at `PFNs/tabpfn_prior_config.py`.
 
 ## PFNs repository explanation
 
