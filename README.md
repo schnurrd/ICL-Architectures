@@ -12,6 +12,7 @@ Unified framework for comparing model architectures in in-context learning acros
   - [Configuration Files](#configuration-files)
   - [PFNs repository explanation](#pfns-repository-explanation)
 - [Credits](#credits)
+- [Similar relevant repositories](#similar-relevant-repositories)
 
 ## Installation
 
@@ -94,3 +95,10 @@ This repo builds on:
 - [PFNs](https://github.com/automl/PFNs) (Apache 2.0) for the core training pipeline and priors. Used as the starting repository.
 - [TabPFN-v1-prior](https://github.com/automl/tabpfn-v1-prior) (Apache 2.0) for the tabpfn v1 prior implementation.
 - [tabularpriors](https://github.com/automl/tabularpriors) (Apache 2.0) for additional tabular priors (TabICL, TICL)
+
+## Similar relevant repositories
+- [TabPFN](https://github.com/PriorLabs/TabPFN) the TabPFN model and prior implementation.
+- [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) similar to this repository however still in initial stages.
+- [nanoTabPFN](https://github.com/automl/nanoTabPFN) small educational version of TabPFN.
+- [TabICL](https://github.com/soda-inria/tabicl) For TabICL model and prior implementation from Inria.
+- [TICL](https://github.com/microsoft/ticl) For TICL model and prior implementation from Microsoft.
