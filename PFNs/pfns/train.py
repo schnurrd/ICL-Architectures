@@ -42,11 +42,11 @@ class MainConfig(base_config.BaseConfig):
     model: TransformerConfig
 
     # Training
-    batch_shape_sampler: BatchShapeSamplerConfig
+    batch_shape_sampler: BatchShapeSamplerConfig # samples num_features and single_eval_pos per batch
     epochs: int = 10
-    steps_per_epoch: int = 100
-    aggregate_k_gradients: int = 1
-    n_targets_per_input: int = 1
+    steps_per_epoch: int = 100 # number of steps that make up one epoch
+    aggregate_k_gradients: int = 1 # for gradient accumulation
+    n_targets_per_input: int = 1 # how many targets to sample per input during training
     train_mixed_precision: bool = True
 
     # LR Scheduler

@@ -1,0 +1,21 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch_pfn/bin/python",
+            "args": [
+                "PFNs/tabpfn_prior_config.py", 
+                "--checkpoint-save-load-prefix", "PFNs/models_diff/checkpoint_new2.pt",
+                "--tensorboard-path", "PFNs/tensorboards"
+            ]
+        }
+    ]
+}

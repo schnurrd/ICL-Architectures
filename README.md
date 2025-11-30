@@ -90,13 +90,59 @@ The Python configuration file must define a `config`or a `get_config(config_inde
 2. The `MainConfig` object includes all the necessary objects for the training process, including the prior, model, batch shape sampler, optimizer and training loop configuration. If we have already started a training with the same name and have stored a checkpoint the config gets updated to load the checkpoint.
 3. The training loop is started by calling the `pfns.train.train` function with the created `MainConfig` object.
 
+### Main Config components
+
+Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for training. Specifically includes:
+- Training:
+    - **Prior**: prior.PriorConfig objects defining the prior
+    - **Optimizer**: OptimizerConfig object defining the optimizer
+- Model:
+    - **model**: TransformerConfig object defining the model architecture
+- Training:
+    - **batch_shape_sampler**: BatchShapeSamplerConfig object which samples num_features, and single_eval_pos for each batch
+    - **epochs**: Number of training epochs
+    - **steps_per_epoch**: Number of steps per epoch (we don't really have a concept of epochs since data is infinite, so this defines how many steps we call an epoch)
+    - **aggregate_k_gradients**: Number of batches to aggregate gradients over before performing an optimizer step, allows an larger effective batch size than fits in GPU memory
+    - **n_targets_per_input**: Used if a model is trained to predict multiple targets per input
+    - **train_mixed_precision**
+- LR Scheduler:
+    - **scheduler**, **warmup_epochs**
+- Checkpointing:
+    - **train_state_dict_save_path**, **train_state_dict_load_path**
+- Validation: 
+    - **test_priors**: prior.PriorConfig objects to use for validation during training
+    - **validation_period**: How often to run validation (in epochs)
+- Logging:
+    - **verbose**, **progress_bar**, **tensorboard_path**: Logging options
+- Data loading
+    - **dataloader_class**, **num_workers**
+
+### Model Overview (TableTransformer)
+
+#### Encoders
+
+TODO
+
+#### Decoder
+
+TODO
+
+#### Preprocessing
+
+TODO
+
+#### Attention Mechanisms
+
+TODO
+
+
 # Credits
 This repo builds on:
 - [PFNs](https://github.com/automl/PFNs) (Apache 2.0) for the core training pipeline and priors. Used as the starting repository.
 - [TabPFN-v1-prior](https://github.com/automl/tabpfn-v1-prior) (Apache 2.0) for the tabpfn v1 prior implementation.
 - [tabularpriors](https://github.com/automl/tabularpriors) (Apache 2.0) for additional tabular priors (TabICL, TICL)
 
-## Similar relevant repositories
+# Similar relevant repositories
 - [TabPFN](https://github.com/PriorLabs/TabPFN) the TabPFN model and prior implementation.
 - [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) similar to this repository however still in initial stages.
 - [nanoTabPFN](https://github.com/automl/nanoTabPFN) small educational version of TabPFN.
