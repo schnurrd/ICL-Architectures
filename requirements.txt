@@ -7,3 +7,5 @@ pynvml
 numpy 
 scipy 
 gpytorch
+openml
+xgboost

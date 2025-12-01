@@ -1,0 +1,74 @@
+"""
+Baseline Models: Random Forest and XGBoost
+"""
+
+from __future__ import annotations
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+
+
+class RandomForestBaseline:
+    """Random Forest baseline with sensible defaults."""
+    
+    name = "RandomForest"
+    
+    def __init__(self, n_estimators: int = 100, random_state: int = 42):
+        self.model = RandomForestClassifier(
+            n_estimators=n_estimators,
+            random_state=random_state,
+            n_jobs=-1
+        )
+        self.classes_ = None
+    
+    def fit(self, X: np.ndarray, y: np.ndarray):
+        self.model.fit(X, y)
+        self.classes_ = self.model.classes_
+        return self
+    
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return self.model.predict(X)
+    
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        return self.model.predict_proba(X)
+
+
+class XGBoostBaseline:
+    """XGBoost baseline with default params."""
+    
+    name = "XGBoost"
+    
+    def __init__(self, n_estimators: int = 100, random_state: int = 42):        
+        self.n_estimators = n_estimators
+        self.random_state = random_state
+        self.model = None
+        self.classes_ = None
+        self._label_map = None
+    
+    def fit(self, X: np.ndarray, y: np.ndarray):
+        # Remap labels to contiguous 0-indexed integers for XGBoost
+        self.classes_ = np.unique(y)
+        self._label_map = {c: i for i, c in enumerate(self.classes_)}
+        y_mapped = np.array([self._label_map[c] for c in y])
+        
+        self.model = XGBClassifier(
+            n_estimators=self.n_estimators,
+            random_state=self.random_state,
+            n_jobs=-1,
+            verbosity=0,
+            eval_metric="logloss"
+        )
+        self.model.fit(X, y_mapped)
+        return self
+    
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        y_pred = self.model.predict(X)
+        return np.array([self.classes_[i] for i in y_pred])
+    
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        return self.model.predict_proba(X)
+
+
+def get_baselines(random_state: int = 42):
+    """Get baselines: Random Forest and XGBoost."""
+    return [RandomForestBaseline(random_state=random_state), XGBoostBaseline(random_state=random_state)]

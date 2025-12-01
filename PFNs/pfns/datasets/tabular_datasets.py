@@ -2,13 +2,16 @@ import numpy as np
 import openml
 import pandas as pd
 import torch
+import warnings
 
 
 def get_openml_classification(did, max_samples, multiclass=True, shuffled=True):
     dataset = openml.datasets.get_dataset(did)
-    X, y, categorical_indicator, attribute_names = dataset.get_data(
-        dataset_format="array", target=dataset.default_target_attribute
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        X, y, categorical_indicator, attribute_names = dataset.get_data(
+            dataset_format="array", target=dataset.default_target_attribute
+        )
 
     if not multiclass:
         X = X[y < 2]
