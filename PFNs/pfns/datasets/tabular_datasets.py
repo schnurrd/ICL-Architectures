@@ -5,16 +5,15 @@ import torch
 from sklearn.preprocessing import OrdinalEncoder
 import logging
 logging.getLogger("openml.datasets.functions").setLevel(logging.ERROR)
+import warnings
 
 def get_openml_classification(did, max_samples, multiclass=True, shuffled=True):
     dataset = openml.datasets.get_dataset(did)
-    X, y, categorical_indicator, attribute_names = dataset.get_data(
-        dataset_format="dataframe", target=dataset.default_target_attribute
-    )
-    X, y = X.to_numpy(), y.to_numpy()
-    # use ordinal encoding for categorical targets
-    if y.dtype == object or isinstance(y[0], str):
-        y = OrdinalEncoder().fit_transform(y.reshape(-1, 1)).reshape(-1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        X, y, categorical_indicator, attribute_names = dataset.get_data(
+            dataset_format="array", target=dataset.default_target_attribute
+        )
 
     if not multiclass:
         X = X[y < 2]
