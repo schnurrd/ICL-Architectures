@@ -2,16 +2,19 @@ import numpy as np
 import openml
 import pandas as pd
 import torch
-import warnings
-
+from sklearn.preprocessing import OrdinalEncoder
+import logging
+logging.getLogger("openml.datasets.functions").setLevel(logging.ERROR)
 
 def get_openml_classification(did, max_samples, multiclass=True, shuffled=True):
     dataset = openml.datasets.get_dataset(did)
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=FutureWarning)
-        X, y, categorical_indicator, attribute_names = dataset.get_data(
-            dataset_format="array", target=dataset.default_target_attribute
-        )
+    X, y, categorical_indicator, attribute_names = dataset.get_data(
+        dataset_format="dataframe", target=dataset.default_target_attribute
+    )
+    X, y = X.to_numpy(), y.to_numpy()
+    # use ordinal encoding for categorical targets
+    if y.dtype == object or isinstance(y[0], str):
+        y = OrdinalEncoder().fit_transform(y.reshape(-1, 1)).reshape(-1)
 
     if not multiclass:
         X = X[y < 2]
@@ -62,23 +65,22 @@ def load_openml_list(
     return_capped=False,
 ):
     datasets = []
-    openml_list = openml.datasets.list_datasets(dids)
+    openml_list = openml.datasets.list_datasets(dids, output_format="dataframe")
     print(f"Number of datasets: {len(openml_list)}")
 
-    datalist = pd.DataFrame.from_dict(openml_list, orient="index")
     if filter_for_nan:
-        datalist = datalist[datalist["NumberOfInstancesWithMissingValues"] == 0]
+        openml_list = openml_list[openml_list["NumberOfInstancesWithMissingValues"] == 0]
         print(
-            f"Number of datasets after Nan and feature number filtering: {len(datalist)}"
+            f"Number of datasets after Nan and feature number filtering: {len(openml_list)}"
         )
 
-    for ds in datalist.index:
+    for ds in openml_list.index:
         modifications = {
             "samples_capped": False,
             "classes_capped": False,
             "feats_capped": False,
         }
-        entry = datalist.loc[ds]
+        entry = openml_list.loc[ds]
 
         print("Loading", entry["name"], entry.did, "..")
 
@@ -112,8 +114,8 @@ def load_openml_list(
 
         if len(np.unique(y)) > max_num_classes:
             if return_capped:
-                X = X[y < np.unique(y)[10]]
-                y = y[y < np.unique(y)[10]]
+                X = X[y < np.unique(y)[max_num_classes]]
+                y = y[y < np.unique(y)[max_num_classes]]
                 modifications["classes_capped"] = True
             else:
                 print("Too many classes")
@@ -130,7 +132,7 @@ def load_openml_list(
             ]
         ]
 
-    return datasets, datalist
+    return datasets, openml_list
 
 
 # Classification

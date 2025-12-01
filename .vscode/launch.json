@@ -5,16 +5,29 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File",
+            "name": "Python Debugger: Pre-training",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch_pfn/bin/python",
             "args": [
-                "PFNs/tabpfn_prior_config.py", 
+                "PFNs/configs/tabpfn_prior_config.py", 
                 "--checkpoint-save-load-prefix", "PFNs/models_diff/checkpoint_new2.pt",
                 "--tensorboard-path", "PFNs/tensorboards"
+            ]
+        },
+        {
+            "name": "Python Debugger: Evaluation",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_evaluation_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch_pfn/bin/python",
+            "args": [
+                "--model_path", "PFNs/models_diff/large_config.pt/tabpfn_prior_config_very_large_0_no_seed", 
+                "--output", "csv",
+                "--only_tabpfn"
             ]
         }
     ]

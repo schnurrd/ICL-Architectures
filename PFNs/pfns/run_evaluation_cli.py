@@ -11,10 +11,10 @@ from pfns.scripts.tabpfn_interface import TabPFNClassifier
 from pfns.evaluation import (
     RandomForestBaseline,
     XGBoostBaseline,
-    evaluate_on_openml,
-    OPENCC_BENCHMARK,
-    TEST_BENCHMARK,
+    evaluate_on_openml
 )
+from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
+from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENCHMARK
 
 
 def main():
@@ -28,8 +28,10 @@ def main():
     parser.add_argument("--max_classes", type=int, default=10)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--output", type=str, default=None)
+    parser.add_argument("--only_tabpfn", action="store_true", help="Evaluate only TabPFN")
     args = parser.parse_args()
     
+    assert args.benchmark in ["opencc", "test"], "Benchmark must be 'opencc' or 'test'"
     dataset_ids = OPENCC_BENCHMARK if args.benchmark == "opencc" else TEST_BENCHMARK
     
     tabpfn = TabPFNClassifier(
@@ -39,8 +41,10 @@ def main():
         N_ensemble_configurations=32,
     )
     
+    models = [tabpfn] if args.only_tabpfn else [tabpfn, RandomForestBaseline(), XGBoostBaseline()]
+    
     results = evaluate_on_openml(
-        models=[tabpfn, RandomForestBaseline(), XGBoostBaseline()],
+        models=models,
         model_names=["TabPFN", "RandomForest", "XGBoost"],
         dataset_ids=dataset_ids,
         max_samples=args.max_samples,

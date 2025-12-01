@@ -6,9 +6,7 @@ from .baselines import RandomForestBaseline, XGBoostBaseline, get_baselines
 from .evaluate import (
     evaluate_model,
     evaluate_on_openml,
-    compare_models,
-    OPENCC_BENCHMARK,
-    TEST_BENCHMARK,
+    compare_models
 )
 
 __all__ = [
@@ -18,6 +16,4 @@ __all__ = [
     "evaluate_model",
     "evaluate_on_openml",
     "compare_models",
-    "OPENCC_BENCHMARK",
-    "TEST_BENCHMARK",
 ]

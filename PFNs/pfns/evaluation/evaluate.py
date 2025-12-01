@@ -7,14 +7,10 @@ import time
 import numpy as np
 import pandas as pd
 from typing import List, Dict
-from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, roc_auc_score, log_loss
 
-from pfns.datasets.tabular_datasets import (
-    load_openml_list,
-    open_cc_dids,
-    test_dids_classification,
-)
+from pfns.datasets.tabular_datasets import load_openml_list
 
 
 def evaluate_model(
@@ -103,8 +99,3 @@ def evaluate_on_openml(
                 print(f"  {model_name}: Error - {e}")
     
     return pd.DataFrame(all_results)[["dataset", "model", "accuracy", "roc_auc", "log_loss", "fit_time"]] if all_results else pd.DataFrame()
-
-
-# Re-export dataset IDs from tabular_datasets
-OPENCC_BENCHMARK = open_cc_dids
-TEST_BENCHMARK = test_dids_classification
