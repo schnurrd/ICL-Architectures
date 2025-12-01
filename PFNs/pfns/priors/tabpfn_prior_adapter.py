@@ -14,7 +14,7 @@ import torch
 from pfns.priors.prior import Batch, PriorConfig
 
 try:
-    from tabpfn_prior.tabpfn_prior import TabPFNPriorDataLoader
+    from tabpfn_prior import build_tabpfn_prior
 except ModuleNotFoundError as exc:
     raise ImportError(
         "The tabpfn_prior package is required. Install it via "
@@ -22,39 +22,16 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 
-def _clone_hyperparameters(hparams: dict[str, Any]) -> dict[str, Any]:
-    try:
-        return deepcopy(hparams)
-    except TypeError:
-        return dict(hparams)
-
-
 @dataclass(frozen=True)
 class TabPFNPriorConfig(PriorConfig):
 
-    prior_type: str = "prior_bag"
+    prior_type: str = "mlp"
     max_num_classes: int = 10
     prior_config: dict[str, Any] | None = None
     flexible: bool = True
     differentiable: bool = False
 
     def create_get_batch_method(self) -> Callable[..., Batch]:
-        loader = TabPFNPriorDataLoader(
-            prior_type=self.prior_type,
-            num_steps=1,
-            batch_size=1,
-            num_datapoints_max=2,
-            num_features=2,
-            max_num_classes=self.max_num_classes,
-            device=torch.device("cpu"),
-            prior_config=self.prior_config,
-            flexible=self.flexible,
-            differentiable=self.differentiable,
-        )
-
-        base_hparams = _clone_hyperparameters(loader.prior_hyperparameters)
-        get_batch_fn = loader.get_batch_fn
-
         def get_batch(
             *,
             batch_size: int,
@@ -68,28 +45,33 @@ class TabPFNPriorConfig(PriorConfig):
             if single_eval_pos is None:
                 single_eval_pos = max(1, int(0.8 * seq_len))
 
-            hparams = _clone_hyperparameters(base_hparams)
-            hparams["seq_len_used"] = seq_len
-            hparams["num_features_used"] = (lambda nf=num_features: nf)
-            hparams["max_num_classes"] = self.max_num_classes
-            hparams["num_classes"] = self.max_num_classes
-
-            batch_tuple = get_batch_fn(
-                batch_size=batch_size,
-                seq_len=seq_len,
-                num_features=num_features,
-                hyperparameters=hparams,
-                device=torch.device(device),
-                num_outputs=n_targets_per_input,
-                single_eval_pos=single_eval_pos,
+            assert n_targets_per_input == 1, (
+                "TabPFNPriorConfig only supports n_targets_per_input=1"
+            )
+            
+            batch_iterator = iter(
+                build_tabpfn_prior(
+                    prior_type=self.prior_type,
+                    num_steps=1,
+                    batch_size=batch_size,
+                    num_datapoints_max=seq_len,
+                    num_features=num_features,
+                    max_num_classes=self.max_num_classes,
+                    device=device,
+                    prior_config=self.prior_config,
+                    flexible=self.flexible,
+                    differentiable=self.differentiable,
+                    **kwargs,
+                )
             )
 
-            converted = loader._tabpfn_to_ours(batch_tuple, single_eval_pos)
+            batch = next(batch_iterator) # get a single batch from the prior
+
             return Batch(
-                x=converted["x"],
-                y=converted["y"],
-                target_y=converted["target_y"],
-                single_eval_pos=converted["single_eval_pos"],
+                x=batch["x"],
+                y=batch["y"],
+                target_y=batch["target_y"],
+                single_eval_pos=single_eval_pos, # we ignore the single_eval_pos from the prior
             )
 
         return get_batch

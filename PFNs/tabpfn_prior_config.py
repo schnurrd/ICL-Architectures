@@ -26,7 +26,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     max_num_classes = 10
 
     prior = TabPFNPriorConfig(
-        prior_type="prior_bag",
+        prior_type="mlp",
         max_num_classes=max_num_classes,
         flexible=True,
         differentiable=False,
