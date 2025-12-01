@@ -92,9 +92,8 @@ def train(
 
     total_start_time = time.time()
 
-    default_device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
     if device is None:
-        device = default_device
+        device = utils.get_default_device()
     using_dist, rank, device = init_dist(device)
     print(f"ALL: Using device {device}.")
 

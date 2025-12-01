@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+
 from pfns.scripts.tabpfn_interface import TabPFNClassifier
 from pfns.evaluation import (
     RandomForestBaseline,
@@ -15,13 +16,14 @@ from pfns.evaluation import (
 )
 from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
 from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENCHMARK
+from pfns.utils import get_default_device
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, required=True)
     parser.add_argument("--checkpoint_name", type=str, default="checkpoint.pt")
-    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--benchmark", type=str, default="opencc", choices=["opencc", "test"])
     parser.add_argument("--max_samples", type=int, default=1024)
     parser.add_argument("--max_features", type=int, default=25)
@@ -31,6 +33,8 @@ def main():
     parser.add_argument("--only_tabpfn", action="store_true", help="Evaluate only TabPFN")
     args = parser.parse_args()
     
+    if args.device is None:
+        args.device = get_default_device()
     assert args.benchmark in ["opencc", "test"], "Benchmark must be 'opencc' or 'test'"
     dataset_ids = OPENCC_BENCHMARK if args.benchmark == "opencc" else TEST_BENCHMARK
     

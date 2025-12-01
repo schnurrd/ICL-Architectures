@@ -5,9 +5,12 @@ Unified framework for comparing model architectures in in-context learning acros
 - [Installation](#installation)
 - [Run pre-training](#run-pre-training)
 - [PFNs documentation](#pfns-documentation)
-  - [CLI interface](#cli-interface)
+  - [CLI training interface](#cli-training-interface)
     - [Usage](#usage)
     - [Command Line Arguments](#command-line-arguments)
+  - [CLI evaluation interface](#cli-evaluation-interface)
+    - [Usage](#usage-1)
+    - [Command Line Arguments](#command-line-arguments-1)
   - [Tensorboard support](#tensorboard-support)
   - [Configuration Files](#configuration-files)
   - [PFNs repository explanation](#pfns-repository-explanation)
@@ -35,7 +38,7 @@ Tested for Nvidia RTX 5070 with Cuda 12.8.
 To run pre-training with the TabPFNv1 prior use:
 
 ```bash
-python PFNs/pfns/run_training_cli.py PFNs/tabpfn_prior_config.py \
+python PFNs/pfns/run_training_cli.py PFNs/configs/tabpfn_prior_config.py \
     --device cuda:0 \
     --compile \
     --checkpoint-save-load-prefix PFNs/models_diff/test.pt \
@@ -46,13 +49,13 @@ For more information refer to the PFNs CLI section below.
 
 # PFNs documentation
 
-## CLI interface
+## CLI training interface
 
 The training CLI allows you to train PFNs models using configuration from Python files. This provides a flexible and programmable way to configure training parameters, allowing for dynamic configuration generation, conditional logic, and easy reuse of configuration components. Configuration files define a `config` variable containing the training configuration.
 
 ### Usage
 ```bash
-python PFNs/pfns/run_training_cli.py PFNs/tabpfn_prior_config.py \
+python PFNs/pfns/run_training_cli.py PFNs/configs/tabpfn_prior_config.py \
     --device cuda:0 \
     --compile \
     --checkpoint-save-load-prefix PFNs/models_diff/test.pt \
@@ -70,6 +73,32 @@ python PFNs/pfns/run_training_cli.py PFNs/tabpfn_prior_config.py \
 - `--checkpoint-save-load-suffix`: Suffix to add to the checkpoint save/load path. this can e.g. be the seed.
 - `--tensorboard-path`: Path to save tensorboard. If not provided, will use the checkpoint save/load prefix or the path in the config file.
 - `--config-index`: Index of the config to use. This is used to select a config from the config file.
+
+### CLI evaluation interface
+
+The evaluation CLI allows you to evaluate trained PFNs models against baselines (RandomForest, XGBoost) on OpenML benchmarks. This provides a standardized way to assess model performance on tabular classification tasks.
+
+#### Usage
+```bash
+python PFNs/pfns/run_evaluation_cli.py \
+    --model_path PFNs/models_diff/large_config.pt/tabpfn_prior_config_large_0_no_seed \
+    --benchmark opencc \
+    --n_splits 5 \
+    --output results.csv
+```
+
+#### Command Line Arguments
+
+- `--model_path` (required): Path to the trained model checkpoint directory
+- `--checkpoint_name`: Name of the checkpoint file within the model path (default: 'checkpoint.pt')
+- `--device`: Device to use for evaluation (e.g., 'cpu', 'cpu'). Default: auto-detect
+- `--benchmark`: Benchmark suite to evaluate on. Choices: 'opencc' (OpenML-CC18), 'test' (smaller test set). Default: 'opencc'
+- `--max_samples`: Maximum number of samples per dataset (default: 1024)
+- `--max_features`: Maximum number of features per dataset (default: 25)
+- `--max_classes`: Maximum number of classes per dataset (default: 10)
+- `--n_splits`: Number of cross-validation splits (default: 5)
+- `--output`: Path to save results as CSV file. If not provided, results are only printed to console
+- `--only_tabpfn`: Flag to evaluate only TabPFN without baseline comparisons
 
 ## Tensorboard support
 
