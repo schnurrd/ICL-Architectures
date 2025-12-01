@@ -121,12 +121,16 @@ def get_config(config_index: int):
             ),
             y_encoder=EncoderConfig(nan_handling=True),
             attention_between_features=True,
-            style_encoder=StyleEncoderConfig(normalize_to_hyperparameters=hps)
-            if sampled_hp_prior
-            else None,
-            y_style_encoder=StyleEncoderConfig(normalize_to_hyperparameters=hps)
-            if sampled_hp_prior
-            else None,
+            style_encoder=(
+                StyleEncoderConfig(normalize_to_hyperparameters=hps)
+                if sampled_hp_prior
+                else None
+            ),
+            y_style_encoder=(
+                StyleEncoderConfig(normalize_to_hyperparameters=hps)
+                if sampled_hp_prior
+                else None
+            ),
         ),
         batch_shape_sampler=BatchShapeSamplerConfig(
             batch_size=32,

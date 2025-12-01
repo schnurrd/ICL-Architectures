@@ -22,7 +22,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     Build a config for training a TabPFN-style classifier on the synthetic
     tabpfn_prior data.
     """
-    
+
     max_num_classes = 10
 
     prior = TabPFNPriorConfig(

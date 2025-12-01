@@ -32,14 +32,12 @@ def parse_args():
         help="Device to use for training (e.g., 'cuda:0', 'cpu', 'mps'). If not specified, will auto-detect cuda, but not mps.",
     )
 
-
     parser.add_argument(
         "--compile",
         action="store_true",
         help="Use torch.compile for the model (requires PyTorch 2.0+).",
     )
     parser.set_defaults(compile=False)
-
 
     parser.add_argument(
         "--checkpoint-save-load-prefix",
@@ -95,7 +93,9 @@ def load_config_from_python(
         if spec is None or spec.loader is None:
             raise ValueError(f"Could not load spec for {config_file}")
 
-        config_module = importlib.util.module_from_spec(spec) # Creates a new module based on spec
+        config_module = importlib.util.module_from_spec(
+            spec
+        )  # Creates a new module based on spec
 
         # Add the config file's directory to sys.path temporarily
         config_dir = str(config_path.parent.absolute())

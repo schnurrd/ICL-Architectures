@@ -45,10 +45,10 @@ class TabPFNPriorConfig(PriorConfig):
             if single_eval_pos is None:
                 single_eval_pos = max(1, int(0.8 * seq_len))
 
-            assert n_targets_per_input == 1, (
-                "TabPFNPriorConfig only supports n_targets_per_input=1"
-            )
-            
+            assert (
+                n_targets_per_input == 1
+            ), "TabPFNPriorConfig only supports n_targets_per_input=1"
+
             batch_iterator = iter(
                 build_tabpfn_prior(
                     prior_type=self.prior_type,
@@ -65,13 +65,13 @@ class TabPFNPriorConfig(PriorConfig):
                 )
             )
 
-            batch = next(batch_iterator) # get a single batch from the prior
+            batch = next(batch_iterator)  # get a single batch from the prior
 
             return Batch(
                 x=batch["x"],
                 y=batch["y"],
                 target_y=batch["target_y"],
-                single_eval_pos=single_eval_pos, # we ignore the single_eval_pos from the prior
+                single_eval_pos=single_eval_pos,  # we ignore the single_eval_pos from the prior
             )
 
         return get_batch

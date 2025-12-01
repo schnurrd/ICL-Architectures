@@ -94,7 +94,8 @@ class BaseConfig:
     @staticmethod
     def from_dict(data: dict):
         """Build a config object from a nested dictionary structure.
-        The dictionary should match what to_dict() produces, handling both nested dicts and lists."""
+        The dictionary should match what to_dict() produces, handling both nested dicts and lists.
+        """
         # Base case - not a container
         if not isinstance(data, (dict, Sequence)) or isinstance(data, str):
             return data
