@@ -12,8 +12,7 @@ authors = [
 {name="Frank Hutter"},
 ]
 
-description = "PFNs made ready for BO"
-readme = "README.md"
+description = "PFNs"
 requires-python = ">=3.9"
 dependencies=[
         'torch>=2.2',
@@ -40,23 +39,12 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-[project.optional-dependencies]
-benchmarks = [
-    "bayesmark>=0.0.8",
-]
-priors = [
-    "botorch",
-]
-
 [tool.hatch.build]
 exclude = [
   "*.gz",
   "*.pt",
   "*.cpkt",
 ]
-
-[project.urls]
-"Homepage" = "https://github.com/automl/PFNs4BO"
 
 [tool.usort]
 first_party_detection = false
