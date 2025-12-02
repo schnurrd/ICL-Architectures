@@ -19,6 +19,13 @@ Unified framework for comparing model architectures in in-context learning acros
 
 ## Installation
 
+Clone the repository with submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/schnurrd/ICL-Architectures.git
+cd ICL-Architectures
+```
+
 Install the required packages and editable installs for the repositories PFNs, TabPFN-v1-prior, and tabularpriors:
 
 ```bash
@@ -27,8 +34,8 @@ conda activate icl_arch_pfn
 
 pip install -r requirements.txt \
     -e ./PFNs \
-    -e prior-repos/tabpfn-v1-prior \
-    -e prior-repos/tabularpriors
+    -e ./prior-repos/tabpfn-v1-prior \
+    -e ./prior-repos/tabularpriors
 ```
 
 Tested for Nvidia RTX 5070 with Cuda 12.8.
