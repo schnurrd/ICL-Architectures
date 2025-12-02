@@ -7,6 +7,14 @@ from pfns.base_config import BaseConfig
 from pfns.train import MainConfig
 
 
+def _strip_compiled_model_prefix(state_dict):
+    """
+    Strips the '_orig_mod.' prefix from state dict keys that were saved from a torch.compile() model.
+    """
+    prefix = "_orig_mod."
+    return {k.removeprefix(prefix): v for k, v in state_dict.items()}
+
+
 def load_model_only_inference(path, filename, device="cpu"):
     """
     Loads a saved model from the specified position. This function only restores inference capabilities and
@@ -24,6 +32,9 @@ def load_model_only_inference(path, filename, device="cpu"):
 
     model = config.model.create_model()
     model_state = checkpoint["model_state_dict"]
+
+    # Handle state dicts saved from torch.compile() models
+    model_state = _strip_compiled_model_prefix(model_state)
 
     model.load_state_dict(model_state, strict=True)
     model.to(device)
