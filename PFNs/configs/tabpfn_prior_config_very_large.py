@@ -45,8 +45,8 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_std=1.0,
         ),
         emsize=512,
-        nhid=192 * 4,
-        nlayers=10,
+        nhid=256 * 4,
+        nlayers=12,
         nhead=8,
         features_per_group=2,
         attention_between_features=True,
@@ -63,7 +63,7 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=1e-4,
+        lr=1.5e-4,
         weight_decay=0.01,
     )
 
@@ -74,7 +74,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         batch_shape_sampler=batch_shape,
         epochs=100,
         warmup_epochs=5,
-        steps_per_epoch=1000,
+        steps_per_epoch=2000,
         n_targets_per_input=1,
         train_mixed_precision=True,
         scheduler="cosine_decay",
