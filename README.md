@@ -38,7 +38,7 @@ pip install -r requirements.txt \
     -e ./prior-repos/tabularpriors
 ```
 
-Tested for Nvidia RTX 5070 with Cuda 12.8. For old GPUs with compute capability < 7.0 you might need to install requirements_old_gpu.txt instead (e.g. Tesla P100, Titan Xp, Titan X) (currently this does not work).
+Tested for Nvidia RTX 5070 with Cuda 12.8. For old GPUs with compute capability < 7.0 you might need to install requirements_old_gpu.txt instead (e.g. Tesla P100, Titan Xp, Titan X) (TODO currently this still does not work).
 
 ## Run pre-training
 
