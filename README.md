@@ -22,7 +22,7 @@ Unified framework for comparing model architectures in in-context learning acros
 Clone the repository with submodules:
 
 ```bash
-git clone --recurse-submodules https://github.com/schnurrd/ICL-Architectures.git
+git clone --recurse-submodules git@github.com:schnurrd/ICL-Architectures.git
 cd ICL-Architectures
 ```
 
