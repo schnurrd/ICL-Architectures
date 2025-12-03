@@ -191,13 +191,34 @@ The default encoding of the transformer model creates one embedding per features
 The model both encodes the input features (X) and the target (y) separately. Each of which goes through its own pipeline and has its own learned parameters.
 
 
-### Table Transformer Model
+### Table Transformer Architecture
 
-Extends the standard Transformer architecture to operate on a per-feature basis, which allows for processing each feature separately.
+Extends the standard Transformer architecture to operate on a per-feature basis, which allows for processing each feature separately. The transformer here only consists of encoder blocks (no decoder blocks). Specifically the transformer is a stack of `PerFeatureLayer` layers.
+
+#### Per Feature Layer
+
+Transformer encoder layer that processes each feature block separately. Does Multi-head attention between features, multi-head attention between items, and feedforward neural networks (MLPs).
+
+**Architecture flow:**
+1. **Attention between features** (optional): Each feature group attends to other feature groups. Operates independently for each item in the sequence.
+2. **Second MLP** (optional): Extra feedforward between attention layers  
+3. **Attention between items**: Items/samples attend to other items in the sequence. Each feature group attends to itself across items.
+4. **MLP**: Standard feedforward network
+
+Each sublayer is followed by layer normalization (post-norm).
+
+The main features here are:
+- **Two attention axes**: Attends across both features AND items (unlike standard transformers)
+- **Train/test split**: `single_eval_pos` separates training context from test items, enabling causal masking for in-context learning
 
 ### Decoder
 
-Maps from output embeddings of the transformer to the target space.
+The decoder is a simple MLP output head, that maps the y-token embeddings from test items to prediction logits:
+
+1. After the transformer layers, extract the **y-token embedding** (last token in feature dimension) for each **test item**
+2. Pass through MLP: `Linear(d_model → nhid) → GELU → Linear(nhid → n_outputs)`
+
+The y-token for test items initially encodes "unknown label" (via NaN handling), and through attention with training context, accumulates information needed for prediction.
 
 ## Inference Overview
 
