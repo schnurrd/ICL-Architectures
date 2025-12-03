@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--only_tabpfn", action="store_true", help="Evaluate only TabPFN")
+    parser.add_argument("--n_jobs", type=int, default=4, help="Number of CPU cores for baseline models (RF, XGBoost)")
     args = parser.parse_args()
     
     if args.device is None:
@@ -45,7 +46,11 @@ def main():
         N_ensemble_configurations=32,
     )
     
-    models = [tabpfn] if args.only_tabpfn else [tabpfn, RandomForestBaseline(), XGBoostBaseline()]
+    models = [tabpfn] if args.only_tabpfn else [
+        tabpfn,
+        RandomForestBaseline(n_jobs=args.n_jobs),
+        XGBoostBaseline(n_jobs=args.n_jobs),
+    ]
     
     results = evaluate_on_openml(
         models=models,

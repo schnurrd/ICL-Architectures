@@ -13,11 +13,13 @@ class RandomForestBaseline:
     
     name = "RandomForest"
     
-    def __init__(self, n_estimators: int = 100, random_state: int = 42):
+    def __init__(self, n_estimators: int = 500, n_jobs: int = 4, random_state: int = 42):
         self.model = RandomForestClassifier(
             n_estimators=n_estimators,
+            max_features="sqrt",
+            class_weight="balanced",
+            n_jobs=n_jobs,
             random_state=random_state,
-            n_jobs=-1
         )
         self.classes_ = None
     
@@ -38,8 +40,9 @@ class XGBoostBaseline:
     
     name = "XGBoost"
     
-    def __init__(self, n_estimators: int = 100, random_state: int = 42):        
+    def __init__(self, n_estimators: int = 500, n_jobs: int = 4, random_state: int = 42):        
         self.n_estimators = n_estimators
+        self.n_jobs = n_jobs
         self.random_state = random_state
         self.model = None
         self.classes_ = None
@@ -53,10 +56,14 @@ class XGBoostBaseline:
         
         self.model = XGBClassifier(
             n_estimators=self.n_estimators,
+            max_depth=6,
+            learning_rate=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            n_jobs=self.n_jobs,
             random_state=self.random_state,
-            n_jobs=-1,
             verbosity=0,
-            eval_metric="logloss"
+            eval_metric="logloss",
         )
         self.model.fit(X, y_mapped)
         return self
@@ -69,6 +76,9 @@ class XGBoostBaseline:
         return self.model.predict_proba(X)
 
 
-def get_baselines(random_state: int = 42):
+def get_baselines(n_jobs: int = 4, random_state: int = 42):
     """Get baselines: Random Forest and XGBoost."""
-    return [RandomForestBaseline(random_state=random_state), XGBoostBaseline(random_state=random_state)]
+    return [
+        RandomForestBaseline(n_jobs=n_jobs, random_state=random_state),
+        XGBoostBaseline(n_jobs=n_jobs, random_state=random_state),
+    ]
