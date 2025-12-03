@@ -3,7 +3,7 @@ Unified framework for comparing model architectures in in-context learning acros
 
 ## Table of Contents
 - [Installation](#installation)
-- [PFNs documentation](#pfns-documentation)
+- [Repository User Guide](#repository-user-guide)
   - [CLI training interface](#cli-training-interface)
     - [Usage](#usage)
     - [Command Line Arguments](#command-line-arguments)
@@ -12,7 +12,14 @@ Unified framework for comparing model architectures in in-context learning acros
     - [Command Line Arguments](#command-line-arguments-1)
   - [Tensorboard support](#tensorboard-support)
   - [Configuration Files](#configuration-files)
-  - [PFNs repository explanation](#pfns-repository-explanation)
+- [Repository (PFNs) explanation](#repository-pfns-explanation)
+  - [Steps of execution in the pre-training pipeline](#steps-of-execution-in-the-pre-training-pipeline)
+  - [Main Config components](#main-config-components)
+  - [Model Overview (TableTransformer)](#model-overview-tabletransformer)
+    - [Encoding](#encoding)
+    - [Decoder](#decoder)
+    - [Preprocessing](#preprocessing)
+    - [Attention Mechanisms](#attention-mechanisms)
 - [Credits](#credits)
 - [Similar relevant repositories](#similar-relevant-repositories)
 
@@ -39,7 +46,7 @@ pip install -r requirements.txt \
 
 Tested for Nvidia RTX 5070 with Cuda 12.8. For old GPUs with compute capability < 7.0 you might need to install requirements_old_gpu.txt instead (e.g. Tesla P100, Titan Xp, Titan X) (TODO currently this still does not work).
 
-# PFNs documentation
+# Repository User Guide
 
 ## CLI training interface
 
@@ -119,14 +126,14 @@ tensorboard --logdir TENSORBOARD_PATH
 
 The Python configuration file must define a `config`or a `get_config(config_index: int = 0)` function, which when called returns a `MainConfig` object. An example configuration file can be found at `PFNs/tabpfn_prior_config.py`.
 
-## PFNs repository explanation
+# Repository (PFNs) explanation
 
-### Steps of execution in the pre-training pipeline
+## Steps of execution in the pre-training pipeline
 1. The CLI script `run_training_cli.py` is executed with the path to a configuration file and the CLI parameters. This first parses the CLI arguments and then loads the configuration file as a Python module. It retrieves the `config` variable or calls the `get_config` function to obtain the `MainConfig` object.
 2. The `MainConfig` object includes all the necessary objects for the training process, including the prior, model, batch shape sampler, optimizer and training loop configuration. If we have already started a training with the same name and have stored a checkpoint the config gets updated to load the checkpoint.
 3. The training loop is started by calling the `pfns.train.train` function with the created `MainConfig` object.
 
-### Main Config components
+## Main Config components
 
 Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for training. Specifically includes:
 - Training:
@@ -153,9 +160,9 @@ Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for 
 - Data loading
     - **dataloader_class**, **num_workers**
 
-### Model Overview (TableTransformer)
+## Model Overview (TableTransformer)
 
-#### Encoding
+### Encoding
 
 Encoders are a sequence of (learned) transformations (encoding steps) that process the input data (x and y) before into an embedding that is fed into the main sequence model (e.g. Transformer). Different encoding steps can be stacked to form the final encoder. The different encoders currently implemented are in `PFNs/pfns/model/encoders.py` and implement the abstract base class `SeqEncStep`:
 
@@ -171,15 +178,15 @@ These individual encoders can be combined using the `SequentialEncoder` class to
 **Style Encoder**: Special encoder that encodes metadata (e.g. hyperparameters) that describes how the data was generated, allowing the model to condition on this information.
 
 
-#### Decoder
+### Decoder
 
 TODO
 
-#### Preprocessing
+### Preprocessing
 
 TODO
 
-#### Attention Mechanisms
+### Attention Mechanisms
 
 TODO
 
