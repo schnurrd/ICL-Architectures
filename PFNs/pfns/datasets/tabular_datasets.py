@@ -93,7 +93,6 @@ def load_openml_list(
 
         if entry["NumberOfClasses"] == 0.0:
             raise Exception("Regression not supported")
-            # X, y, categorical_feats, attribute_names = get_openml_regression(int(entry.did), max_samples)
         else:
             X, y, categorical_feats, attribute_names = get_openml_classification(
                 int(entry.did),

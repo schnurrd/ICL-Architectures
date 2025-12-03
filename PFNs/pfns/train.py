@@ -236,7 +236,7 @@ def train(
             device_ids=[rank],
             output_device=rank,
             broadcast_buffers=False,
-        )
+        )  # each GPU gets a copy of the model, gradients are synced during backward()
 
     scaler = GradScaler() if c.train_mixed_precision else None
 
@@ -442,6 +442,7 @@ def train_or_evaluate_epoch(
         if tqdm_iter is not None:
             tqdm_iter.update()
 
+        # only synch gradients once every aggregate_k_gradients steps
         if using_dist and not (
             batch_index % c.aggregate_k_gradients == c.aggregate_k_gradients - 1
         ):

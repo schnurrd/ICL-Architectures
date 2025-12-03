@@ -57,13 +57,13 @@ def get_config(config_index: int = 0) -> MainConfig:
         min_single_eval_pos=24,
         max_seq_len=1024,
         min_num_features=2,
-        max_num_features=30,
+        max_num_features=50,
         fixed_num_test_instances=None,
     )
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=2e-4,
+        lr=1.5e-4,
         weight_decay=0.01,
     )
 
@@ -72,13 +72,13 @@ def get_config(config_index: int = 0) -> MainConfig:
         optimizer=optimizer,
         model=model,
         batch_shape_sampler=batch_shape,
-        epochs=100,
-        warmup_epochs=5,
-        steps_per_epoch=4000,
+        epochs=200,
+        warmup_epochs=10,
+        steps_per_epoch=1000,
         n_targets_per_input=1,
         train_mixed_precision=True,
         scheduler="cosine_decay",
         progress_bar=True,
         num_workers=4,
-        aggregate_k_gradients=8,
+        aggregate_k_gradients=4,
     )

@@ -305,8 +305,8 @@ def init_dist(device):
     if "LOCAL_RANK" in os.environ:
         # launched with torch.distributed.launch or torchrun
         local_rank = int(os.environ["LOCAL_RANK"]) # per-node (0, ..., # gpus in node -1)
-        rank = int(os.environ.get("RANK", local_rank)) # global rank (all machines: )
-        world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
+        rank = int(os.environ.get("RANK", local_rank)) # global rank (all machines: 0, ..., # num gpus)
+        world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))  # total number of gpus
         print(f"torch.distributed.launch and my rank is {rank}, local_rank is {local_rank}, world_size is {world_size}")
         torch.cuda.set_device(local_rank)
         torch.distributed.init_process_group(
@@ -316,7 +316,7 @@ def init_dist(device):
             world_size=world_size,
             rank=rank,
         )
-        torch.distributed.barrier()
+        torch.distributed.barrier()  # synchronization point
         print_on_master_only(rank == 0)
         print(
             f"Distributed training on {world_size} GPUs, this is rank {rank}, "
