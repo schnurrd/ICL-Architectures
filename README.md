@@ -119,6 +119,7 @@ python PFNs/pfns/run_evaluation_cli.py \
 - `--output`: Path to save results as CSV file. If not provided, results are only printed to console
 - `--only_tabpfn`: Flag to evaluate only TabPFN without baseline comparisons
 - `--n_jobs`: Number of CPU cores for baseline models (RandomForest, XGBoost). Default: 4. Use this to limit CPU usage on shared machines
+- `--batch_size_inference`: Batch size for TabPFN inference (default: 32). Lower values reduce GPU memory usage without affecting accuracy - useful for memory-constrained environments
 
 ## Tensorboard support
 

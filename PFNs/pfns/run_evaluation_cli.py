@@ -32,6 +32,7 @@ def main():
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--only_tabpfn", action="store_true", help="Evaluate only TabPFN")
     parser.add_argument("--n_jobs", type=int, default=4, help="Number of CPU cores for baseline models (RF, XGBoost)")
+    parser.add_argument("--batch_size_inference", type=int, default=32, help="Batch size for TabPFN inference. Lower values reduce memory usage without affecting accuracy")
     args = parser.parse_args()
     
     if args.device is None:
@@ -44,6 +45,7 @@ def main():
         device=args.device,
         model_string=args.checkpoint_name,
         N_ensemble_configurations=32,
+        batch_size_inference=args.batch_size_inference,
     )
     
     models = [tabpfn] if args.only_tabpfn else [
@@ -63,10 +65,33 @@ def main():
     )
     
     if not results.empty:
-        print("\n" + "="*50)
-        print(results.groupby('model')['accuracy'].agg(['mean', 'std']).sort_values('mean', ascending=False))
+        print("\n" + "=" * 80)
+        print("SUMMARY: Aggregated Results Across All Datasets")
+        print("=" * 80)
+        
+        summary = results.groupby('model').agg({
+            'accuracy': ['mean', 'std'],
+            'roc_auc': ['mean', 'std'],
+            'fit_time': ['mean', 'sum'],
+        }).round(4)
+        
+        summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
+        summary = summary.sort_values('accuracy_mean', ascending=False)
+        
+        print(f"{'Model':<20} {'Accuracy':>18} {'ROC-AUC':>18} {'Fit Time (s)':>18}")
+        print(f"{'':20} {'mean ± std':>18} {'mean ± std':>18} {'mean (total)':>18}")
+        print("-" * 80)
+        for model in summary.index:
+            row = summary.loc[model]
+            acc_str = f"{row['accuracy_mean']:.4f} ± {row['accuracy_std']:.4f}"
+            auc_str = f"{row['roc_auc_mean']:.4f} ± {row['roc_auc_std']:.4f}"
+            time_str = f"{row['fit_time_mean']:.2f} ({row['fit_time_sum']:.1f})"
+            print(f"{model:<20} {acc_str:>18} {auc_str:>18} {time_str:>18}")
+        print("=" * 80)
+        
         if args.output:
             results.to_csv(args.output, index=False)
+            print(f"\nDetailed results saved to: {args.output}")
 
 
 if __name__ == "__main__":
