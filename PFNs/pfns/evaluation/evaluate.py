@@ -88,18 +88,18 @@ def evaluate_on_openml(
     
     all_results = []
     for name, X, y, _, _, _ in datasets:
-        print(f"\n{'='*60}")
+        print(f"\n{'='*75}")
         print(f"{name}: {X.shape[0]} samples, {X.shape[1]} features")
-        print(f"{'='*60}")
-        print(f"{'Model':<20} {'Accuracy':>10} {'ROC-AUC':>10} {'Fit Time':>10}")
-        print(f"{'-'*20} {'-'*10} {'-'*10} {'-'*10}")
+        print(f"{'='*75}")
+        print(f"{'Model':<20} {'Accuracy':>10} {'ROC-AUC':>10} {'Fit (s)':>10} {'Pred (s)':>10}")
+        print(f"{'-'*20} {'-'*10} {'-'*10} {'-'*10} {'-'*10}")
         for model, model_name in zip(models, model_names):
             try:
                 result = evaluate_model(model, X.numpy(), y.numpy(), n_splits=n_splits)
                 result.update({"model": model_name, "dataset": name})
                 all_results.append(result)
-                print(f"{model_name:<20} {result['accuracy']:>10.4f} {result['roc_auc']:>10.4f} {result['fit_time']:>9.2f}s")
+                print(f"{model_name:<20} {result['accuracy']:>10.4f} {result['roc_auc']:>10.4f} {result['fit_time']:>10.2f} {result['predict_time']:>10.2f}")
             except Exception as e:
                 print(f"{model_name:<20} {'Error':>10} - {e}")
     
-    return pd.DataFrame(all_results)[["dataset", "model", "accuracy", "roc_auc", "log_loss", "fit_time"]] if all_results else pd.DataFrame()
+    return pd.DataFrame(all_results)[["dataset", "model", "accuracy", "roc_auc", "log_loss", "fit_time", "predict_time"]] if all_results else pd.DataFrame()

@@ -65,29 +65,31 @@ def main():
     )
     
     if not results.empty:
-        print("\n" + "=" * 80)
+        print("\n" + "=" * 95)
         print("SUMMARY: Aggregated Results Across All Datasets")
-        print("=" * 80)
+        print("=" * 95)
         
         summary = results.groupby('model').agg({
             'accuracy': ['mean', 'std'],
             'roc_auc': ['mean', 'std'],
             'fit_time': ['mean', 'sum'],
+            'predict_time': ['mean', 'sum'],
         }).round(4)
         
         summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
         summary = summary.sort_values('accuracy_mean', ascending=False)
         
-        print(f"{'Model':<20} {'Accuracy':>18} {'ROC-AUC':>18} {'Fit Time (s)':>18}")
-        print(f"{'':20} {'mean ± std':>18} {'mean ± std':>18} {'mean (total)':>18}")
-        print("-" * 80)
+        print(f"{'Model':<20} {'Accuracy':>18} {'ROC-AUC':>18} {'Fit (s)':>14} {'Pred (s)':>14}")
+        print(f"{'':20} {'mean ± std':>18} {'mean ± std':>18} {'mean (tot)':>14} {'mean (tot)':>14}")
+        print("-" * 95)
         for model in summary.index:
             row = summary.loc[model]
             acc_str = f"{row['accuracy_mean']:.4f} ± {row['accuracy_std']:.4f}"
             auc_str = f"{row['roc_auc_mean']:.4f} ± {row['roc_auc_std']:.4f}"
-            time_str = f"{row['fit_time_mean']:.2f} ({row['fit_time_sum']:.1f})"
-            print(f"{model:<20} {acc_str:>18} {auc_str:>18} {time_str:>18}")
-        print("=" * 80)
+            fit_str = f"{row['fit_time_mean']:.2f} ({row['fit_time_sum']:.1f})"
+            pred_str = f"{row['predict_time_mean']:.2f} ({row['predict_time_sum']:.1f})"
+            print(f"{model:<20} {acc_str:>18} {auc_str:>18} {fit_str:>14} {pred_str:>14}")
+        print("=" * 95)
         
         if args.output:
             results.to_csv(args.output, index=False)
