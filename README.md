@@ -126,6 +126,12 @@ tensorboard --logdir TENSORBOARD_PATH
 
 The Python configuration file must define a `config`or a `get_config(config_index: int = 0)` function, which when called returns a `MainConfig` object. An example configuration file can be found at `PFNs/tabpfn_prior_config.py`.
 
+# Currently known issues / TODOs
+
+- Old GPUs with compute capability < 7.0 (e.g. Tesla P100, Titan Xp, Titan X) do not work properly due to Cuda version incompatibilities. Please use a newer GPU if possible
+- Multi GPU training currently does not provide the expected predictive performance and is worse than single GPU training
+- Samplers used are very basic and could be improved to better cover the data distribution
+
 # Repository (PFNs) explanation
 
 ## Steps of execution in the pre-training pipeline
@@ -160,7 +166,7 @@ Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for 
 - Data loading
     - **dataloader_class**, **num_workers**
 
-## Model Overview (TableTransformer)
+## Model Overview
 
 ### Encoding
 
@@ -174,19 +180,32 @@ Encoders are a sequence of (learned) transformations (encoding steps) that proce
 
 These individual encoders can be combined using the `SequentialEncoder` class to form a complete encoding pipeline.
 
-
 **Style Encoder**: Special encoder that encodes metadata (e.g. hyperparameters) that describes how the data was generated, allowing the model to condition on this information.
 
+#### Features per group parameter
+
+The default encoding of the transformer model creates one embedding per features. TabPFN v1 used one embedding per row (features_per_group = num_features). The larger the feature_per_group is set the less tokens the sequence model has to process, reducing memory and compute requirements. However, this also reduces the model capacity.
+
+#### Encoding overview 
+
+The model both encodes the input features (X) and the target (y) separately. Each of which goes through its own pipeline and has its own learned parameters.
+
+
+### Table Transformer Model
+
+Extends the standard Transformer architecture to operate on a per-feature basis, which allows for processing each feature separately.
 
 ### Decoder
 
-TODO
+Maps from output embeddings of the transformer to the target space.
+
+## Inference Overview
 
 ### Preprocessing
 
 TODO
 
-### Attention Mechanisms
+### Model Inference
 
 TODO
 

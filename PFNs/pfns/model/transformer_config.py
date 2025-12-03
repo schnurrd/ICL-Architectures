@@ -26,7 +26,7 @@ class TransformerConfig(base_config.BaseConfig):
     nhid: int = 200
     nlayers: int = 6
     nhead: int = 2
-    features_per_group: int = 1
+    features_per_group: int = 1 # number of features grouped together as one token
     attention_between_features: bool = True
     model_extra_args: tp.Dict[str, base_config.BaseTypes] | None = None
 
