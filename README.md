@@ -71,6 +71,18 @@ python PFNs/pfns/run_training_cli.py PFNs/configs/tabpfn_prior_config.py \
     --config-index 0
 ```
 
+or Multiple GPUs (e.g. 2 GPUs):
+
+```bash
+CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 PFNs/pfns/run_training_cli.py \
+    PFNs/configs/tabpfn_prior_config_very_large_2_gpu.py \
+    --checkpoint-save-load-prefix PFNs/models_diff/large_config_2_gpu.pt \
+    --checkpoint-save-load-suffix no_seed \
+    --tensorboard-path PFNs/tensorboards \
+    --config-index 0
+```
+
+
 ### Command Line Arguments
 
 - `config_file` (required): Path to the Python configuration file that defines a `config` variable

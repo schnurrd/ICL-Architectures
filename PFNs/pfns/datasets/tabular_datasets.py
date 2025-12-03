@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import numpy as np
 import openml
 import pandas as pd
@@ -5,6 +8,11 @@ import torch
 from sklearn.preprocessing import OrdinalEncoder
 import logging
 logging.getLogger("openml.datasets.functions").setLevel(logging.ERROR)
+
+# Set OpenML cache directory to avoid re-downloading datasets
+openml.config.set_root_cache_directory(
+    os.environ.get("OPENML_CACHE_DIRECTORY", Path(__file__).parent / "openml")
+)
 import warnings
 
 def get_openml_classification(did, max_samples, multiclass=True, shuffled=True):

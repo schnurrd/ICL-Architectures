@@ -304,8 +304,8 @@ def init_dist(device):
     print("init dist")
     if "LOCAL_RANK" in os.environ:
         # launched with torch.distributed.launch or torchrun
-        local_rank = int(os.environ["LOCAL_RANK"])
-        rank = int(os.environ.get("RANK", local_rank))
+        local_rank = int(os.environ["LOCAL_RANK"]) # per-node (0, ..., # gpus in node -1)
+        rank = int(os.environ.get("RANK", local_rank)) # global rank (all machines: )
         world_size = int(os.environ.get("WORLD_SIZE", torch.cuda.device_count()))
         print(f"torch.distributed.launch and my rank is {rank}, local_rank is {local_rank}, world_size is {world_size}")
         torch.cuda.set_device(local_rank)
