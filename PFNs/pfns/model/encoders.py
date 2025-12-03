@@ -824,6 +824,7 @@ def remove_outliers(
     lower: None | torch.Tensor = None,
     upper: None | torch.Tensor = None,
 ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+    """Soft clips outliers using logarithmic compression and determines outliers via deviation of at least n_sigma standard deviations."""
     # Expects T, B, H
     assert (lower is None) == (upper is None), "Either both or none of lower and upper"
     assert len(X.shape) == 3, "X must be T,B,H"

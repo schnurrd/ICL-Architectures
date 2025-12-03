@@ -3,7 +3,6 @@ Unified framework for comparing model architectures in in-context learning acros
 
 ## Table of Contents
 - [Installation](#installation)
-- [Run pre-training](#run-pre-training)
 - [PFNs documentation](#pfns-documentation)
   - [CLI training interface](#cli-training-interface)
     - [Usage](#usage)
@@ -39,20 +38,6 @@ pip install -r requirements.txt \
 ```
 
 Tested for Nvidia RTX 5070 with Cuda 12.8. For old GPUs with compute capability < 7.0 you might need to install requirements_old_gpu.txt instead (e.g. Tesla P100, Titan Xp, Titan X) (TODO currently this still does not work).
-
-## Run pre-training
-
-To run pre-training with the TabPFNv1 prior use:
-
-```bash
-python PFNs/pfns/run_training_cli.py PFNs/configs/tabpfn_prior_config.py \
-    --device cuda:0 \
-    --compile \
-    --checkpoint-save-load-prefix PFNs/models_diff/test.pt \
-    --tensorboard-path PFNs/tensorboards
-```
-
-For more information refer to the PFNs CLI section below.
 
 # PFNs documentation
 
@@ -103,7 +88,8 @@ python PFNs/pfns/run_evaluation_cli.py \
     --model_path PFNs/models_diff/large_config.pt/tabpfn_prior_config_large_0_no_seed \
     --benchmark opencc \
     --n_splits 5 \
-    --output results.csv
+    --output results.csv \
+    --batch_size_inference 16
 ```
 
 #### Command Line Arguments
@@ -169,9 +155,21 @@ Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for 
 
 ### Model Overview (TableTransformer)
 
-#### Encoders
+#### Encoding
 
-TODO
+Encoders are a sequence of (learned) transformations (encoding steps) that process the input data (x and y) before into an embedding that is fed into the main sequence model (e.g. Transformer). Different encoding steps can be stacked to form the final encoder. The different encoders currently implemented are in `PFNs/pfns/model/encoders.py` and implement the abstract base class `SeqEncStep`:
+
+- **Constant Normalization Input Encoder**: Input normalization with a provided mean and std.
+- **InputNormalizationEncoder**: Performs simple outlier soft clipping using logarithmic compression and input normalization to mean 0 and std 1.
+- **VariableNumFeaturesEncoder**: Transforms input to a fixed number of features by appending zeros and performs normalization buy number of features used to keep variance consistent.
+- **NanHandlingEncoder**: Creates NaN masks for input and target and replaces NaNs with feature mean.
+- **LinearInputEncoder**: Linear layer to map input features to model dimension (num_features -> embedding size). Normally single layer but with optinal 2-layer MLP with GELU activation.
+
+These individual encoders can be combined using the `SequentialEncoder` class to form a complete encoding pipeline.
+
+
+**Style Encoder**: Special encoder that encodes metadata (e.g. hyperparameters) that describes how the data was generated, allowing the model to condition on this information.
+
 
 #### Decoder
 
