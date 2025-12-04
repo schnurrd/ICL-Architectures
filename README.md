@@ -187,10 +187,20 @@ These individual encoders can be combined using the `SequentialEncoder` class to
 
 The default encoding of the transformer model creates one embedding per features. TabPFN v1 used one embedding per row (features_per_group = num_features). The larger the feature_per_group is set the less tokens the sequence model has to process, reducing memory and compute requirements. However, this also reduces the model capacity.
 
-#### Encoding overview 
+#### Encoding overview
 
 The model both encodes the input features (X) and the target (y) separately. Each of which goes through its own pipeline and has its own learned parameters.
 
+#### Feature Positional Embedding
+
+Without positional embeddings, the model cannot distinguish between different feature groups as attention is permutation-invariant. The `feature_positional_embedding` adds a unique identifier to each feature group's embedding. Options are: 
+- `None`: No embedding (features indistinguishable)
+- `normal_rand_vec`: Random Gaussian vectors (fixed per seed)
+- `uni_rand_vec`: Random uniform [-1, 1] vectors
+- `learned`: Lookup table of 1000 learnable embeddings
+- `subspace` (recommended): Random vectors projected through a learned linear layer — combines random uniqueness with learnable representations
+
+The random embeddings use a fixed seed, ensuring consistent feature IDs across forward passes while different models get different IDs. 
 
 ### Table Transformer Architecture
 
