@@ -204,7 +204,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             X, y = check_X_y(X, y, ensure_all_finite=False)
         # Store the classes seen during fit
         y = self._validate_targets(y)
-        self.label_encoder = LabelEncoder()
+        self.label_encoder = LabelEncoder()  # encodes y to 0,...,n_classes-1
         y = self.label_encoder.fit_transform(y)
 
         self.X_ = X
@@ -486,14 +486,6 @@ def transformer_predict(
         softmax_temperature = torch.log(torch.tensor([0.8]))
 
     styles_configurations = range(0, num_styles)
-
-    def get_preprocess(i):
-        if i == 0:
-            return "power_all"
-        #            if i == 1:
-        #                return 'robust_all'
-        if i == 1:
-            return "none"
 
     preprocess_transform_configurations = (
         ["none", "power_all"]

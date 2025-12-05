@@ -132,6 +132,7 @@ The Python configuration file must define a `config`or a `get_config(config_inde
 - Old GPUs with compute capability < 7.0 (e.g. Tesla P100, Titan Xp, Titan X) do not work properly due to Cuda version incompatibilities. Please use a newer GPU if possible
 - Multi GPU training currently does not provide the expected predictive performance and is worse than single GPU training
 - Samplers used are very basic and could be improved to better cover the data distribution
+- Look into replacing the Inference wrapper with the prior labs tabpfn implementation
 
 # Repository (PFNs) explanation
 
@@ -233,13 +234,29 @@ The y-token for test items initially encodes "unknown label" (via NaN handling),
 
 ## Inference Overview
 
-### Preprocessing
+`TabPFNClassifier` is the main prediction interface. The training set is provided via `fit(X_train, y_train)`, and predictions are made on new data with `predict(X_test)` or `predict_proba(X_test)`. 
 
-TODO
+During the `fit` call, the training data is preprocessed:
+- Y values are encoded via sklearn's LabelEncoder (outputs 0,...,n_classes-1)
+- X and y are stored for use during prediction (no actual training occurs here)
 
-### Model Inference
+During `predict`/`predict_proba` calls the following then happens:
+- y_test labels are initiated to zeros
+- Call into `transformer_predict` function 
 
-TODO
+`transformer_predict` is currently the main prediction method that handles both preprocessing and model inference. It performs the following steps:
+1. Build iterator of possible preprocessings:
+    - Shift classes and features according to a random permuation
+    - Apply preprocessing transforms (e.g. power transform or none)
+2. Iterate over preprocessing configurations:
+    - Apply preprocessing to X_train and X_test
+    - Store preprocessed versions along
+3. Iterate over preprocessed datasets in batches:
+    - Predict the targets for each batch i.e. one forward pass through the model
+    - Store the predicted logits
+4. Iterate over the preprocessing configurations
+    - Reverse the class shifting
+    - Average the logits over all preprocessing configurations
 
 
 # Credits
