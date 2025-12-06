@@ -238,29 +238,34 @@ The y-token for test items initially encodes "unknown label" (via NaN handling),
 
 ## Inference Overview
 
-`TabPFNClassifier` is the main prediction interface. The training set is provided via `fit(X_train, y_train)`, and predictions are made on new data with `predict(X_test)` or `predict_proba(X_test)`. 
+`TabPFNClassifier` is the main prediction interface with a modular architecture supporting swappable model backbones. The training set is provided via `fit(X_train, y_train)`, and predictions are made on new data with `predict(X_test)` or `predict_proba(X_test)`. 
+
+### Architecture Components
+
+The inference pipeline consists of three main components:
+
+1. **EnsembleConfig**: Dataclass defining configuration for each ensemble member (class shift, feature shift, preprocessing transform type)
+
+2. **InferenceEngine**: Handles preprocessing, ensemble prediction, and aggregation
+   - Manages preprocessing transformations (PowerTransformer, QuantileTransformer, RobustScaler)
+   - Applies class/feature shifts for ensemble diversity
+   - Batches inference across ensemble members and aggregates results
+
+3. **ModelBackbone Protocol**: Interface for swappable architectures
+   - `TransformerBackbone`: Wrapper for existing Transformer model
+
+### Prediction Flow
 
 During the `fit` call, the training data is preprocessed:
 - Y values are encoded via sklearn's LabelEncoder (outputs 0,...,n_classes-1)
 - X and y are stored for use during prediction (no actual training occurs here)
 
-During `predict`/`predict_proba` calls the following then happens:
-- y_test labels are initiated to zeros
-- Call into `transformer_predict` function 
-
-`transformer_predict` is currently the main prediction method that handles both preprocessing and model inference. It performs the following steps:
-1. Build iterator of possible preprocessings:
-    - Shift classes and features according to a random permuation
-    - Apply preprocessing transforms (e.g. power transform or none)
-2. Iterate over preprocessing configurations:
-    - Apply preprocessing to X_train and X_test
-    - Store preprocessed versions along
-3. Iterate over preprocessed datasets in batches:
-    - Predict the targets for each batch i.e. one forward pass through the model
-    - Store the predicted logits
-4. Iterate over the preprocessing configurations
-    - Reverse the class shifting
-    - Average the logits over all preprocessing configurations
+During `predict`/`predict_proba` calls:
+1. **Generate ensemble configurations**: Create N configurations with random class/feature shifts and preprocessing transforms
+2. **Preprocess data**: InferenceEngine applies transforms (with caching by transform type), removes constant features, handles outliers
+3. **Apply shifts**: Circular shift classes/features according to each configuration
+4. **Batch inference**: Forward passes through model backbone in batches
+5. **Aggregate**: Reverse class shifts, average logits across ensemble, apply softmax
 
 
 # Credits
