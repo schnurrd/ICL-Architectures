@@ -11,7 +11,12 @@ from typing import Any, Literal, Protocol
 import numpy as np
 import torch
 from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.preprocessing import LabelEncoder, PowerTransformer, QuantileTransformer, RobustScaler
+from sklearn.preprocessing import (
+    LabelEncoder,
+    PowerTransformer,
+    QuantileTransformer,
+    RobustScaler,
+)
 from sklearn.utils import column_or_1d
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
@@ -29,12 +34,16 @@ from pfns.utils import (
 # Ensemble Configuration
 # =============================================================================
 
+
 @dataclass
 class EnsembleConfig:
     """Configuration for a single ensemble member."""
+
     class_shift: int = 0
     feature_shift: int = 0
-    transform_type: Literal["none", "power", "power_all", "quantile", "quantile_all", "robust", "robust_all"] = "none"
+    transform_type: Literal[
+        "none", "power", "power_all", "quantile", "quantile_all", "robust", "robust_all"
+    ] = "none"
     max_features: int = 100
 
 
@@ -42,9 +51,10 @@ class EnsembleConfig:
 # Model Architecture Interface
 # =============================================================================
 
+
 class ModelBackbone(Protocol):
     """Protocol defining the interface for model backbones."""
-    
+
     def forward(
         self,
         x: torch.Tensor,
@@ -52,21 +62,21 @@ class ModelBackbone(Protocol):
         style: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Forward pass through the model.
-        
+
         Args:
             x: Input features [seq_len, batch_size, features]
             y: Target labels [seq_len, batch_size]
             style: Optional style encoding
-            
+
         Returns:
             Logits [seq_len, batch_size, num_classes]
         """
         ...
-    
+
     def to(self, device: str) -> "ModelBackbone":
         """Move model to device."""
         ...
-    
+
     def eval(self) -> "ModelBackbone":
         """Set model to evaluation mode."""
         ...
@@ -74,10 +84,10 @@ class ModelBackbone(Protocol):
 
 class TransformerBackbone:
     """Wrapper for the existing Transformer model to match the protocol."""
-    
+
     def __init__(self, model: torch.nn.Module):
         self.model = model
-        
+
     def forward(
         self,
         x: torch.Tensor,
@@ -87,17 +97,15 @@ class TransformerBackbone:
         """Forward pass delegating to wrapped model."""
         x_bf = x.transpose(0, 1)
         y_bf = y.transpose(0, 1).float()
-        style_bf = (
-            style.repeat(x_bf.shape[0], 1) if style is not None else None
-        )
-        
+        style_bf = style.repeat(x_bf.shape[0], 1) if style is not None else None
+
         output = self.model(x=x_bf, y=y_bf, style=style_bf)
         return output.transpose(0, 1)
-    
+
     def to(self, device: str):
         self.model.to(device)
         return self
-    
+
     def eval(self):
         self.model.eval()
         return self
@@ -107,9 +115,10 @@ class TransformerBackbone:
 # Inference Engine
 # =============================================================================
 
+
 class InferenceEngine:
     """Manages preprocessing, ensemble prediction, and aggregation."""
-    
+
     def __init__(
         self,
         backbone: ModelBackbone,
@@ -133,7 +142,7 @@ class InferenceEngine:
         self.extend_features = extend_features
         self.fp16_inference = fp16_inference
         self.no_grad = no_grad
-    
+
     def _get_sklearn_transformer(self, transform_type: str):
         """Get sklearn transformer based on config."""
         if transform_type == "none":
@@ -145,52 +154,63 @@ class InferenceEngine:
         elif transform_type in ["robust", "robust_all"]:
             return RobustScaler(unit_variance=True)
         return None
-    
+
     def _preprocess_data(
-        self, 
-        X: torch.Tensor, 
-        y: torch.Tensor, 
+        self,
+        X: torch.Tensor,
+        y: torch.Tensor,
         eval_position: int,
         transform_type: str,
         max_features: int,
     ) -> torch.Tensor:
         """Preprocess input data for one ensemble member."""
         X = normalize_data(X, normalize_positions=eval_position)
-        
+
         # Remove constant features
         X = X[:, 0, :]
-        sel = [len(torch.unique(X[0:y.shape[0], col])) > 1 for col in range(X.shape[1])]
+        sel = [
+            len(torch.unique(X[0 : y.shape[0], col])) > 1 for col in range(X.shape[1])
+        ]
         X = X[:, sel]
-        
+
         # Apply sklearn transforms
         if transform_type != "none":
             import warnings
+
             X_np = X.cpu().numpy()
-            feats = set(range(X_np.shape[1])) if "all" in transform_type else set(range(X_np.shape[1]))
-            
+            feats = (
+                set(range(X_np.shape[1]))
+                if "all" in transform_type
+                else set(range(X_np.shape[1]))
+            )
+
             warnings.simplefilter("error")
             for col in feats:
                 try:
                     transformer = self._get_sklearn_transformer(transform_type)
                     if transformer is not None:
-                        transformer.fit(X_np[0:eval_position, col:col+1])
-                        trans = transformer.transform(X_np[:, col:col+1])
-                        X_np[:, col:col+1] = trans
+                        transformer.fit(X_np[0:eval_position, col : col + 1])
+                        trans = transformer.transform(X_np[:, col : col + 1])
+                        X_np[:, col : col + 1] = trans
                 except Exception:
                     pass
             warnings.simplefilter("default")
             X = torch.tensor(X_np).float()
-        
+
         X = X.unsqueeze(1)
         X = remove_outliers(X, normalize_positions=eval_position)
-        X = normalize_by_used_features_f(X, X.shape[-1], max_features, normalize_with_sqrt=False)
-        
+        X = normalize_by_used_features_f(
+            X, X.shape[-1], max_features, normalize_with_sqrt=False
+        )
+
         # Subsample features if needed
         if X.shape[2] > max_features:
-            X = X[:, :, sorted(np.random.choice(X.shape[2], max_features, replace=False))]
-        
+            X = X[
+                :, :, sorted(np.random.choice(X.shape[2], max_features, replace=False))
+            ]
+
         return X.to(self.device)
-    
+
     def predict(
         self,
         X: torch.Tensor,
@@ -200,38 +220,40 @@ class InferenceEngine:
         return_logits: bool = False,
     ) -> torch.Tensor:
         """Run inference with ensemble.
-        
+
         Args:
             X: Input features [n_samples, batch_size, n_features]
             y: Target labels [n_samples, batch_size]
             eval_position: Split between train and test
             style: Optional style encoding
             return_logits: If True, return logits instead of probabilities
-            
+
         Returns:
             Predictions [batch_size, n_test_samples, n_classes]
         """
         self.backbone.to(self.device)
         self.backbone.eval()
-        
+
         y_train = y[:eval_position]
-        
-        inputs_list, labels_list = self._prepare_ensemble_inputs(X, y_train, eval_position)
-        
+
+        inputs_list, labels_list = self._prepare_ensemble_inputs(
+            X, y_train, eval_position
+        )
+
         inputs_batched = torch.split(inputs_list, self.batch_size_inference, dim=1)
         labels_batched = torch.split(labels_list, self.batch_size_inference, dim=1)
-        
+
         all_outputs = []
         for batch_input, batch_label in zip(inputs_batched, labels_batched):
             batch_output = self._forward_batch(batch_input, batch_label, style)
             all_outputs.append(batch_output)
-        
+
         outputs = torch.cat(all_outputs, dim=1)
-        
+
         final_output = self._aggregate_ensemble_outputs(outputs, return_logits)
-        
+
         return final_output
-    
+
     def _prepare_ensemble_inputs(
         self,
         X: torch.Tensor,
@@ -241,10 +263,10 @@ class InferenceEngine:
         """Preprocess inputs for all ensemble members."""
         inputs = []
         labels = []
-        
+
         # Cache preprocessed data by transform type
         preprocessed_cache = {}
-        
+
         for config in self.ensemble_configs:
             transform_type = config.transform_type
             if transform_type in preprocessed_cache:
@@ -256,30 +278,36 @@ class InferenceEngine:
                 if self.no_grad:
                     X_processed = X_processed.detach()
                 preprocessed_cache[transform_type] = X_processed
-            
+
             y_shifted = ((y + config.class_shift) % self.num_classes).float()
-            
+
             # Apply feature shift
             if config.feature_shift > 0:
-                X_processed = torch.cat([
-                    X_processed[..., config.feature_shift:],
-                    X_processed[..., :config.feature_shift],
-                ], dim=-1)
-            
+                X_processed = torch.cat(
+                    [
+                        X_processed[..., config.feature_shift :],
+                        X_processed[..., : config.feature_shift],
+                    ],
+                    dim=-1,
+                )
+
             # Extend features to max_features if needed
             if self.extend_features:
                 if X_processed.shape[2] < config.max_features:
                     padding = torch.zeros(
-                        (X_processed.shape[0], X_processed.shape[1], 
-                         config.max_features - X_processed.shape[2])
+                        (
+                            X_processed.shape[0],
+                            X_processed.shape[1],
+                            config.max_features - X_processed.shape[2],
+                        )
                     ).to(self.device)
                     X_processed = torch.cat([X_processed, padding], dim=-1)
-            
+
             inputs.append(X_processed)
             labels.append(y_shifted)
-        
+
         return torch.cat(inputs, dim=1), torch.cat(labels, dim=1)
-    
+
     def _forward_batch(
         self,
         batch_input: torch.Tensor,
@@ -289,11 +317,9 @@ class InferenceEngine:
         """Forward pass for a batch."""
         import warnings
         from torch.utils.checkpoint import checkpoint
-        
-        inference_mode_ctx = (
-            torch.inference_mode() if self.no_grad else NOP()
-        )
-        
+
+        inference_mode_ctx = torch.inference_mode() if self.no_grad else NOP()
+
         with inference_mode_ctx:
             with warnings.catch_warnings():
                 warnings.filterwarnings(
@@ -304,7 +330,7 @@ class InferenceEngine:
                     "ignore",
                     message="torch.cuda.amp.autocast only affects CUDA ops",
                 )
-                
+
                 if self.device == "cpu":
                     output = checkpoint(
                         self._forward_fn,
@@ -314,7 +340,7 @@ class InferenceEngine:
                         use_reentrant=False,
                     )
                 else:
-                    with torch.amp.autocast('cuda', enabled=self.fp16_inference):
+                    with torch.amp.autocast("cuda", enabled=self.fp16_inference):
                         output = checkpoint(
                             self._forward_fn,
                             batch_input,
@@ -322,9 +348,9 @@ class InferenceEngine:
                             style,
                             use_reentrant=False,
                         )
-        
+
         return output
-    
+
     def _forward_fn(
         self,
         x: torch.Tensor,
@@ -333,13 +359,13 @@ class InferenceEngine:
     ) -> torch.Tensor:
         """Actual forward function through the backbone."""
         output = self.backbone.forward(x=x, y=y, style=style)
-        
-        output = output[:, :, 0:self.num_classes]
-        
+
+        output = output[:, :, 0 : self.num_classes]
+
         output = output / self.softmax_temperature
-        
+
         return output
-    
+
     def _aggregate_ensemble_outputs(
         self,
         outputs: torch.Tensor,
@@ -350,29 +376,32 @@ class InferenceEngine:
         # outputs shape: [n_samples, n_ensemble * batch, n_classes]
         n_ensemble = len(self.ensemble_configs)
         batch_size = outputs.shape[1] // n_ensemble
-        
+
         ensemble_outputs = []
         for i, config in enumerate(self.ensemble_configs):
-            output_i = outputs[:, i*batch_size:(i+1)*batch_size, :]
-            
+            output_i = outputs[:, i * batch_size : (i + 1) * batch_size, :]
+
             # Reverse class shift
             if config.class_shift > 0:
-                output_i = torch.cat([
-                    output_i[..., config.class_shift:],
-                    output_i[..., :config.class_shift],
-                ], dim=-1)
-            
+                output_i = torch.cat(
+                    [
+                        output_i[..., config.class_shift :],
+                        output_i[..., : config.class_shift],
+                    ],
+                    dim=-1,
+                )
+
             if not self.average_logits and not return_logits:
                 output_i = torch.nn.functional.softmax(output_i, dim=-1)
-            
+
             ensemble_outputs.append(output_i)
-        
+
         # Average across ensemble
         aggregated = torch.stack(ensemble_outputs).mean(dim=0)
-        
+
         if self.average_logits and not return_logits:
             aggregated = torch.nn.functional.softmax(aggregated, dim=-1)
-        
+
         return aggregated.transpose(0, 1)
 
 
@@ -385,9 +414,9 @@ default_base_path = pathlib.Path(__file__).parent.parent.resolve()
 
 class TabPFNClassifier(BaseEstimator, ClassifierMixin):
     """Refactored TabPFN Classifier with separated preprocessing and model backbone."""
-    
+
     models_in_memory = {}
-    
+
     def __init__(
         self,
         device: str = "cpu",
@@ -450,7 +479,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.batch_size_inference = batch_size_inference
         self.subsample_features = subsample_features
         self.backbone_type = backbone_type
-        
+
         model_key = model_string + "|" + str(device)
         if model_key in self.models_in_memory:
             model, c, results_file = self.models_in_memory[model_key]
@@ -465,26 +494,28 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                 print(
                     "Multiple models in memory. This might lead to memory issues. Consider calling remove_models_from_memory()"
                 )
-        
+
         self.model = model
         self.c = c
-        
+
         self.max_num_features = c.batch_shape_sampler.max_num_features
         self.max_num_classes = c.model.criterion.num_classes
-        
+
         assert (
             self.no_preprocess_mode if not self.no_grad else True
         ), "If no_grad is false, no_preprocess_mode must be true, because otherwise no gradient can be computed."
 
         self.backbone = self._create_backbone(model, backbone_type)
-        
-    def _create_backbone(self, model: torch.nn.Module, backbone_type: str) -> ModelBackbone:
+
+    def _create_backbone(
+        self, model: torch.nn.Module, backbone_type: str
+    ) -> ModelBackbone:
         """Factory method to create different backbone types."""
         if backbone_type == "transformer":
             return TransformerBackbone(model)
         else:
             raise ValueError(f"Unknown backbone type: {backbone_type}")
-    
+
     def _validate_targets(self, y):
         y_ = column_or_1d(y, warn=True)
         check_classification_targets(y)
@@ -496,7 +527,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             )
         self.classes_ = cls
         return np.asarray(y, dtype=np.float64, order="C")
-    
+
     def fit(self, X, y, overwrite_warning=False):
         """
         Validates the training set and stores it.
@@ -513,10 +544,10 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         y = self._validate_targets(y)
         self.label_encoder = LabelEncoder()  # encodes y to 0,...,n_classes-1
         y = self.label_encoder.fit_transform(y)
-        
+
         self.X_ = X
         self.y_ = y
-        
+
         if X.shape[1] > self.max_num_features:
             if self.subsample_features:
                 print(
@@ -538,10 +569,10 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             raise ValueError(
                 "⚠️ WARNING: TabPFN is not made for datasets with a trainingsize > 1024. Prediction might take a while, be less reliable. We advise not to run datasets > 10k samples, which might lead to your machine crashing (due to quadratic memory scaling of TabPFN). Please confirm you want to run by passing overwrite_warning=True to the fit function."
             )
-            
+
         # Return the classifier
         return self
-    
+
     def predict_proba(self, X, return_logits=False):
         """
         Predict the probabilities for the input X depending on the training set previously passed in the method fit.
@@ -551,7 +582,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         """
         # Check is fit had been called
         check_is_fitted(self)
-        
+
         # Input validation
         if self.no_grad:
             X = check_array(X, ensure_all_finite=False)
@@ -568,22 +599,21 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                 print(
                     "X contains nans and the gradient implementation is not designed to handel nans."
                 )
-        
+
         y_full = np.concatenate([self.y_, np.zeros(shape=X.shape[0])], axis=0)
         y_full = torch.tensor(y_full, device=self.device).float().unsqueeze(1)
-        
+
         eval_pos = self.X_.shape[0]
         num_classes = len(self.classes_)
-        
+
         preprocess_transforms = (
-            ["none"] if self.no_preprocess_mode
-            else ["none", "power_all"]
+            ["none"] if self.no_preprocess_mode else ["none", "power_all"]
         )
-        
+
         # Generate ensemble configurations
         if self.seed is not None:
             torch.manual_seed(self.seed)
-        
+
         feature_shifts = (
             torch.randperm(X_full.shape[2]).tolist()
             if self.feature_shift_decoder
@@ -594,12 +624,14 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             if self.multiclass_decoder == "permutation"
             else [0]
         )
-        
-        combinations = list(itertools.product(class_shifts, feature_shifts, preprocess_transforms))
+
+        combinations = list(
+            itertools.product(class_shifts, feature_shifts, preprocess_transforms)
+        )
         rng = random.Random(self.seed)
         rng.shuffle(combinations)
-        combinations = combinations[:self.N_ensemble_configurations]
-        
+        combinations = combinations[: self.N_ensemble_configurations]
+
         ensemble_configs = [
             EnsembleConfig(
                 class_shift=cs,
@@ -609,7 +641,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             )
             for cs, fs, transform in combinations
         ]
-        
+
         engine = InferenceEngine(
             backbone=self.backbone,
             ensemble_configs=ensemble_configs,
@@ -622,7 +654,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             fp16_inference=False,
             no_grad=self.no_grad,
         )
-        
+
         prediction = engine.predict(
             X=X_full,
             y=y_full,
@@ -630,20 +662,20 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             style=None,
             return_logits=return_logits,
         )
-        
+
         prediction_ = prediction.squeeze(0)
         return prediction_.detach().cpu().numpy() if self.no_grad else prediction_
-    
+
     def predict(self, X, return_winning_probability=False):
         """Predict class labels."""
         p = self.predict_proba(X)
         y = np.argmax(p, axis=-1)
         y = self.classes_.take(np.asarray(y, dtype=np.intp))
-        
+
         if return_winning_probability:
             return y, p.max(axis=-1)
         return y
-    
+
     def remove_models_from_memory(self):
         """Clear cached models."""
         self.models_in_memory = {}
@@ -653,9 +685,9 @@ def load_model_workflow(name, base_path, device="cpu"):
     """Load model from checkpoint."""
     model_path = os.path.join(base_path, name)
     results_file = os.path.join(base_path, f"results_{name}.pkl")
-    
+
     if name is None:
         raise Exception("No checkpoint found at " + str(model_path))
-    
+
     model, config = load_model_only_inference(base_path, name, device)
     return model, config, results_file
