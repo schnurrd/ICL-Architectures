@@ -21,19 +21,18 @@ from sklearn.utils import column_or_1d
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
-from pfns.scripts.tabpfn_model_builder import load_model_only_inference
 from pfns.utils import (
     NOP,
     normalize_by_used_features_f,
     normalize_data,
     remove_outliers,
 )
-
+from pfns.base_config import BaseConfig
+from pfns.train import MainConfig
 
 # =============================================================================
 # Ensemble Configuration
 # =============================================================================
-
 
 @dataclass
 class EnsembleConfig:
@@ -50,7 +49,6 @@ class EnsembleConfig:
 # =============================================================================
 # Model Architecture Interface
 # =============================================================================
-
 
 class ModelBackbone(Protocol):
     """Protocol defining the interface for model backbones."""
@@ -615,12 +613,12 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             torch.manual_seed(self.seed)
 
         feature_shifts = (
-            torch.randperm(X_full.shape[2]).tolist()
+            torch.randperm(X_full.shape[2])
             if self.feature_shift_decoder
             else [0]
         )
         class_shifts = (
-            torch.randperm(num_classes).tolist()
+            torch.randperm(num_classes)
             if self.multiclass_decoder == "permutation"
             else [0]
         )
@@ -682,12 +680,34 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
 
 
 def load_model_workflow(name, base_path, device="cpu"):
-    """Load model from checkpoint."""
+    """
+    Loads a saved model from the specified position. This function only restores inference capabilities and
+    cannot be used for further training.
+    """
+    
     model_path = os.path.join(base_path, name)
     results_file = os.path.join(base_path, f"results_{name}.pkl")
 
     if name is None:
         raise Exception("No checkpoint found at " + str(model_path))
 
-    model, config = load_model_only_inference(base_path, name, device)
+    checkpoint = torch.load(os.path.join(base_path, name), map_location="cpu")
+
+    if "config" not in checkpoint:
+        raise ValueError(
+            "Checkpoint is missing the serialized training config under key 'config'."
+        )
+    
+    config: BaseConfig = MainConfig.from_dict(checkpoint["config"])
+    
+    model = config.model.create_model()
+    model_state = checkpoint["model_state_dict"]
+
+    # Handle state dicts saved from torch.compile() models
+    model_state = {k.removeprefix("_orig_mod."): v for k, v in model_state.items()}
+
+    model.load_state_dict(model_state, strict=True)
+    model.to(device)
+    model.eval()
+    
     return model, config, results_file
