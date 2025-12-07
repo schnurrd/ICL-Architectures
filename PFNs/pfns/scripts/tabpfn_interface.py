@@ -66,6 +66,7 @@ class InferenceEngine:
         extend_features: bool = True,
         fp16_inference: bool = False,
         no_grad: bool = True,
+        categorical_feats: tuple[int, ...] = (),
     ):
         self.model = model
         self.ensemble_configs = ensemble_configs
@@ -77,6 +78,7 @@ class InferenceEngine:
         self.extend_features = extend_features
         self.fp16_inference = fp16_inference
         self.no_grad = no_grad
+        self.categorical_feats = categorical_feats
 
     def _get_sklearn_transformer(self, transform_type: str):
         """Get sklearn transformer based on config."""
@@ -99,6 +101,14 @@ class InferenceEngine:
         max_features: int,
     ) -> torch.Tensor:
         """Preprocess input data for one ensemble member."""
+        # Subsample before any normalization to mirror legacy behavior
+        if X.shape[2] > max_features:
+            X = X[
+                :,
+                :,
+                sorted(np.random.choice(X.shape[2], max_features, replace=False)),
+            ]
+
         X = normalize_data(X, normalize_positions=eval_position)
 
         # Remove constant features
@@ -116,7 +126,7 @@ class InferenceEngine:
             feats = (
                 set(range(X_np.shape[1]))
                 if "all" in transform_type
-                else set(range(X_np.shape[1]))
+                else set(range(X_np.shape[1])) - set(self.categorical_feats)
             )
 
             warnings.simplefilter("error")
@@ -137,12 +147,6 @@ class InferenceEngine:
         X = normalize_by_used_features_f(
             X, X.shape[-1], max_features, normalize_with_sqrt=False
         )
-
-        # Subsample features if needed
-        if X.shape[2] > max_features:
-            X = X[
-                :, :, sorted(np.random.choice(X.shape[2], max_features, replace=False))
-            ]
 
         return X.to(self.device)
 
@@ -346,7 +350,7 @@ class InferenceEngine:
 
 
 # =============================================================================
-# Scikit-learn Compatible Classifier Interface
+# Classifier Interface
 # =============================================================================
 
 default_base_path = pathlib.Path(__file__).parent.parent.resolve()
@@ -580,6 +584,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             extend_features=True,
             fp16_inference=False,
             no_grad=self.no_grad,
+            categorical_feats=(),
         )
 
         prediction = engine.predict(
