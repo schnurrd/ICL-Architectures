@@ -13,7 +13,7 @@ from pfns.train import (
     BatchShapeSamplerConfig,
     MainConfig,
     OptimizerConfig,
-    TransformerConfig,
+    ModelConfig,
 )
 
 
@@ -32,7 +32,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         differentiable=False,
     )
 
-    model = TransformerConfig(
+    model = ModelConfig(
         criterion=CrossEntropyConfig(num_classes=max_num_classes),
         encoder=EncoderConfig(
             variable_num_features_normalization=True,

@@ -152,7 +152,7 @@ Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for 
     - **Prior**: prior.PriorConfig objects defining the prior
     - **Optimizer**: OptimizerConfig object defining the optimizer
 - Model:
-    - **model**: TransformerConfig object defining the model architecture
+    - **model**: ModelConfig object defining the model architecture
 - Training:
     - **batch_shape_sampler**: BatchShapeSamplerConfig object which samples num_features, and single_eval_pos for each batch
     - **epochs**: Number of training epochs

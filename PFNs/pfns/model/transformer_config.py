@@ -11,7 +11,7 @@ from torch import nn
 
 
 @dataclass(frozen=True)
-class TransformerConfig(base_config.BaseConfig):
+class ModelConfig(base_config.BaseConfig):
     criterion: CrossEntropyConfig | BarDistributionConfig
     encoder: tp.Optional[encoders.EncoderConfig] = (
         None  # todo add back in as config, currently only supporting standard encoder
@@ -85,3 +85,7 @@ class TransformerConfig(base_config.BaseConfig):
         )
         model.criterion = criterion
         return model
+
+
+# Backwards compatibility alias for models saved with the old name
+TransformerConfig = ModelConfig

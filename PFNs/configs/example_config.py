@@ -16,7 +16,7 @@ from pfns.train import (
     BatchShapeSamplerConfig,
     MainConfig,
     OptimizerConfig,
-    TransformerConfig,
+    ModelConfig,
 )
 from pfns.utils import product_dict
 
@@ -106,7 +106,7 @@ def get_config(config_index: int):
         priors=[prior_config],
         optimizer=OptimizerConfig("adamw", lr=lr, weight_decay=0.0),
         scheduler="constant",
-        model=TransformerConfig(
+        model=ModelConfig(
             criterion=bar_distribution.BarDistributionConfig(
                 borders.tolist(), full_support=True
             ),

@@ -45,7 +45,7 @@ Example configuration file for PFNs training.
 
 from pfns.train import MainConfig
 from pfns.optimizer import OptimizerConfig
-from pfns.model.transformer_config import TransformerConfig
+from pfns.model.transformer_config import ModelConfig
 from pfns.batch_shape_sampler import BatchShapeSamplerConfig
 from pfns.priors.formula.get_batch import FormulaPriorConfig
 
@@ -63,7 +63,7 @@ optimizer = OptimizerConfig(
 )
 
 # Configure model
-model = TransformerConfig(
+model = ModelConfig(
     # Add your model configuration here
 )
 
@@ -107,7 +107,7 @@ import os
 from pfns.train import MainConfig
 from pfns.priors.formula.get_batch import FormulaPriorConfig
 from pfns.optimizer import OptimizerConfig
-from pfns.model.transformer_config import TransformerConfig
+from pfns.model.transformer_config import ModelConfig
 from pfns.batch_shape_sampler import BatchShapeSamplerConfig
 
 
@@ -137,7 +137,7 @@ base_model_config = {
     'n_layers': 6,
 }
 
-model = TransformerConfig(**base_model_config)
+model = ModelConfig(**base_model_config)
 optimizer = OptimizerConfig()
 batch_shape_sampler = BatchShapeSamplerConfig()
 

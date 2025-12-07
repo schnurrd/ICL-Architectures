@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 from . import base_config, utils
 from .batch_shape_sampler import BatchShapeSamplerConfig
-from .model.transformer_config import TransformerConfig
+from .model.transformer_config import ModelConfig
 from .optimizer import OptimizerConfig
 
 from .priors import data_loading, prior, utils as priors_utils
@@ -39,7 +39,7 @@ class MainConfig(base_config.BaseConfig):
     optimizer: OptimizerConfig
 
     # Model (includes criterion)
-    model: TransformerConfig
+    model: ModelConfig
 
     # Training
     batch_shape_sampler: BatchShapeSamplerConfig # samples num_features and single_eval_pos per batch
