@@ -47,69 +47,6 @@ class EnsembleConfig:
 
 
 # =============================================================================
-# Model Architecture Interface
-# =============================================================================
-
-class ModelBackbone(Protocol):
-    """Protocol defining the interface for model backbones."""
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-        style: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Forward pass through the model.
-
-        Args:
-            x: Input features [seq_len, batch_size, features]
-            y: Target labels [seq_len, batch_size]
-            style: Optional style encoding
-
-        Returns:
-            Logits [seq_len, batch_size, num_classes]
-        """
-        ...
-
-    def to(self, device: str) -> "ModelBackbone":
-        """Move model to device."""
-        ...
-
-    def eval(self) -> "ModelBackbone":
-        """Set model to evaluation mode."""
-        ...
-
-
-class TransformerBackbone:
-    """Wrapper for the existing Transformer model to match the protocol."""
-
-    def __init__(self, model: torch.nn.Module):
-        self.model = model
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-        style: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Forward pass delegating to wrapped model."""
-        x_bf = x.transpose(0, 1)
-        y_bf = y.transpose(0, 1).float()
-        style_bf = style.repeat(x_bf.shape[0], 1) if style is not None else None
-
-        output = self.model(x=x_bf, y=y_bf, style=style_bf)
-        return output.transpose(0, 1)
-
-    def to(self, device: str):
-        self.model.to(device)
-        return self
-
-    def eval(self):
-        self.model.eval()
-        return self
-
-
-# =============================================================================
 # Inference Engine
 # =============================================================================
 
@@ -119,7 +56,7 @@ class InferenceEngine:
 
     def __init__(
         self,
-        backbone: ModelBackbone,
+        model: torch.nn.Module,
         ensemble_configs: list[EnsembleConfig],
         num_classes: int,
         device: str = "cpu",
@@ -130,7 +67,7 @@ class InferenceEngine:
         fp16_inference: bool = False,
         no_grad: bool = True,
     ):
-        self.backbone = backbone
+        self.model = model
         self.ensemble_configs = ensemble_configs
         self.num_classes = num_classes
         self.device = device
@@ -229,8 +166,8 @@ class InferenceEngine:
         Returns:
             Predictions [batch_size, n_test_samples, n_classes]
         """
-        self.backbone.to(self.device)
-        self.backbone.eval()
+        self.model.to(self.device)
+        self.model.eval()
 
         y_train = y[:eval_position]
 
@@ -355,8 +292,13 @@ class InferenceEngine:
         y: torch.Tensor,
         style: torch.Tensor | None,
     ) -> torch.Tensor:
-        """Actual forward function through the backbone."""
-        output = self.backbone.forward(x=x, y=y, style=style)
+        """Actual forward function through the model."""
+        
+        x_bf = x.transpose(0, 1)
+        y_bf = y.transpose(0, 1).float()
+        style_bf = style.repeat(x_bf.shape[0], 1) if style is not None else None
+
+        output = self.model.forward(x=x_bf, y=y_bf, style=style_bf).transpose(0, 1)
 
         output = output[:, :, 0 : self.num_classes]
 
@@ -411,7 +353,7 @@ default_base_path = pathlib.Path(__file__).parent.parent.resolve()
 
 
 class TabPFNClassifier(BaseEstimator, ClassifierMixin):
-    """Refactored TabPFN Classifier with separated preprocessing and model backbone."""
+    """Refactored TabPFN Classifier with separated preprocessing and model."""
 
     models_in_memory = {}
 
@@ -428,8 +370,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         seed: int = 0,
         no_grad: bool = True,
         batch_size_inference: int = 32,
-        subsample_features: bool = False,
-        backbone_type: str = "transformer",  # New: allows swapping backbones
+        subsample_features: bool = False
     ):
         """
         Initializes the classifier and loads the model.
@@ -462,7 +403,6 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                For this to correctly function no_preprocessing_mode must be set to true.
         :param subsample_features: If set to true and the number of features in the dataset exceeds self.max_features (100),
                 the features are subsampled to self.max_features.
-        :param backbone_type: Type of model backbone to use ('transformer', 'mamba', etc.)
         """
         self.device = device
         self.base_path = base_path
@@ -476,43 +416,32 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.no_grad = no_grad
         self.batch_size_inference = batch_size_inference
         self.subsample_features = subsample_features
-        self.backbone_type = backbone_type
 
         model_key = model_string + "|" + str(device)
         if model_key in self.models_in_memory:
-            model, c, results_file = self.models_in_memory[model_key]
+            model, config, results_file = self.models_in_memory[model_key]
         else:
-            model, c, results_file = load_model_workflow(
+            model, config, results_file = load_model_workflow(
                 name=model_string,
                 base_path=base_path,
                 device=device,
             )
-            self.models_in_memory[model_key] = (model, c, results_file)
+            self.models_in_memory[model_key] = (model, config, results_file)
             if len(self.models_in_memory) == 2:
                 print(
                     "Multiple models in memory. This might lead to memory issues. Consider calling remove_models_from_memory()"
                 )
 
         self.model = model
-        self.c = c
+        self.config = config
 
-        self.max_num_features = c.batch_shape_sampler.max_num_features
-        self.max_num_classes = c.model.criterion.num_classes
+        self.max_num_features = config.batch_shape_sampler.max_num_features
+        self.max_num_classes = config.model.criterion.num_classes
 
         assert (
             self.no_preprocess_mode if not self.no_grad else True
         ), "If no_grad is false, no_preprocess_mode must be true, because otherwise no gradient can be computed."
 
-        self.backbone = self._create_backbone(model, backbone_type)
-
-    def _create_backbone(
-        self, model: torch.nn.Module, backbone_type: str
-    ) -> ModelBackbone:
-        """Factory method to create different backbone types."""
-        if backbone_type == "transformer":
-            return TransformerBackbone(model)
-        else:
-            raise ValueError(f"Unknown backbone type: {backbone_type}")
 
     def _validate_targets(self, y):
         y_ = column_or_1d(y, warn=True)
@@ -641,7 +570,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         ]
 
         engine = InferenceEngine(
-            backbone=self.backbone,
+            model=self.model,
             ensemble_configs=ensemble_configs,
             num_classes=num_classes,
             device=self.device,
