@@ -95,5 +95,5 @@ def get_config(config_index: int = 0) -> MainConfig:
         train_mixed_precision=True,
         scheduler="cosine_decay",
         progress_bar=True,
-        num_workers=0,
+        num_workers=4,
     )
