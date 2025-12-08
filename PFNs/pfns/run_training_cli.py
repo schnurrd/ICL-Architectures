@@ -70,6 +70,12 @@ def parse_args():
         help="Index of the config to use. This is used to select a config from the config file.",
     )
 
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="If set, do not load an existing checkpoint/config even if present; start fresh and overwrite.",
+    )
+
     return parser.parse_args()
 
 
@@ -195,8 +201,8 @@ def main():
 
     # We overwrite the config with the one from the checkpoint if it exists
     # as there is some randomness in the config and we want to use the exact
-    # same config again.
-    if pfns.train.should_load_checkpoint(config):
+    # same config again. When --overwrite is set, skip loading so we start fresh.
+    if not args.overwrite and pfns.train.should_load_checkpoint(config):
         config = pfns.train.load_config(
             config.train_state_dict_load_path,
         )

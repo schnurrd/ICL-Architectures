@@ -89,6 +89,7 @@ CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 PFNs/pfns/run_training_cli.
 - `--checkpoint-save-load-suffix`: Suffix to add to the checkpoint save/load path. this can e.g. be the seed.
 - `--tensorboard-path`: Path to save tensorboard. If not provided, will use the checkpoint save/load prefix or the path in the config file.
 - `--config-index`: Index of the config to use. This is used to select a config from the config file.
+- `--overwrite`: Start fresh even if a checkpoint/config exists at the target path (do not load, overwrite on save).
 
 ### CLI evaluation interface
 
@@ -137,6 +138,7 @@ The Python configuration file must define a `config`or a `get_config(config_inde
 - Multi GPU training currently does not provide the expected predictive performance and is worse than single GPU training
 - Samplers used are very basic and could be improved to better cover the data distribution
 - Look into replacing the Inference wrapper with the prior labs tabpfn implementation
+- Check handling of categorical features during training and inference and in prior generation
 
 # Repository (PFNs) explanation
 

@@ -179,7 +179,7 @@ def train(
         model.load_state_dict(load_weights_from_this_state_dict)
 
     print(
-        f"Using a Transformer with {sum(p.numel() for p in model.parameters()) / 1000 / 1000:.{2}f} M parameters"
+        f"Using a model with {sum(p.numel() for p in model.parameters()) / 1000 / 1000:.{2}f} M parameters"
     )
 
     model.to(device)

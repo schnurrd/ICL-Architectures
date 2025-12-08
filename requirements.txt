@@ -9,3 +9,4 @@ scipy
 gpytorch
 openml
 xgboost
+flash-linear-attention
