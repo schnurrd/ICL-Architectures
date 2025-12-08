@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from pfns import base_config
 from pfns.model import encoders, transformer
+from pfns.model.backbone_config import BackboneConfig, TransformerBackboneConfig
 from pfns.model.bar_distribution import BarDistribution
 from pfns.model.criterions import BarDistributionConfig, CrossEntropyConfig
 from pfns.model.encoders import StyleEncoderConfig
@@ -13,6 +14,7 @@ from torch import nn
 @dataclass(frozen=True)
 class ModelConfig(base_config.BaseConfig):
     criterion: CrossEntropyConfig | BarDistributionConfig
+    backbone: BackboneConfig = TransformerBackboneConfig()
     encoder: tp.Optional[encoders.EncoderConfig] = (
         None  # todo add back in as config, currently only supporting standard encoder
     )
@@ -23,14 +25,25 @@ class ModelConfig(base_config.BaseConfig):
     y_style_encoder: tp.Optional[StyleEncoderConfig] = None
     decoder_dict: tp.Dict[str, base_config.BaseTypes] | None = None
     emsize: int = 200
-    nhid: int = 200
-    nlayers: int = 6
-    nhead: int = 2
     features_per_group: int = 1 # number of features grouped together as one token
     attention_between_features: bool = True
     model_extra_args: tp.Dict[str, base_config.BaseTypes] | None = None
+    
+    # Legacy parameters for backward compatibility
+    nhid: tp.Optional[int] = None
+    nlayers: tp.Optional[int] = None
+    nhead: tp.Optional[int] = None
 
-    def create_model(self) -> transformer.TableTransformer:
+    def create_model(self) -> transformer.TabularModel:
+        if self.nhid is not None or self.nlayers is not None or self.nhead is not None:
+            backbone = TransformerBackboneConfig(
+                nhid=self.nhid if self.nhid is not None else 200,
+                nlayers=self.nlayers if self.nlayers is not None else 6,
+                nhead=self.nhead if self.nhead is not None else 2,
+            )
+        else:
+            backbone = self.backbone
+        
         # Resolve criterion
         criterion = self.criterion.get_criterion()
 
@@ -68,15 +81,21 @@ class ModelConfig(base_config.BaseConfig):
         else:
             y_style_encoder = None
 
-        model = transformer.TableTransformer(
+        transformer_layers = backbone.create_backbone(
+            ninp=self.emsize,
+            attention_between_features=self.attention_between_features,
+        )
+        
+        nhid = getattr(backbone, 'nhid', self.emsize * 4)
+
+        model = transformer.TabularModel(
             encoder=encoder,
+            transformer_layers=transformer_layers,
             y_encoder=y_encoder,
             features_per_group=self.features_per_group,
             decoder_dict=decoder_dict,
             ninp=self.emsize,
-            nhid=self.nhid,
-            nlayers=self.nlayers,
-            nhead=self.nhead,
+            nhid=nhid,
             attention_between_features=self.attention_between_features,
             style_encoder=style_encoder,
             y_style_encoder=y_style_encoder,

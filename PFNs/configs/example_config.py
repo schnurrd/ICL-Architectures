@@ -9,6 +9,7 @@ import math
 
 import torch
 from pfns.model import bar_distribution
+from pfns.model.backbone_config import TransformerBackboneConfig
 from pfns.model.encoders import EncoderConfig, StyleEncoderConfig
 from pfns.priors.hyperparameter_sampling import ChoiceDistConfig, UniformFloatDistConfig
 from pfns.priors.prior import AdhocPriorConfig
@@ -111,9 +112,11 @@ def get_config(config_index: int):
                 borders.tolist(), full_support=True
             ),
             emsize=emsize,
-            nhead=emsize // 32,
-            nhid=emsize * 4,
-            nlayers=8,
+            backbone=TransformerBackboneConfig(
+                nhid=emsize * 4,
+                nlayers=8,
+                nhead=emsize // 32,
+            ),
             encoder=EncoderConfig(
                 variable_num_features_normalization=True,
                 constant_normalization_mean=0.5,

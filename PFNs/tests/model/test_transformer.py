@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from pfns.model import encoders, transformer
-from pfns.model.transformer import isolate_torch_rng, TableTransformer
+from pfns.model.transformer import isolate_torch_rng, TabularModel
 from torch.nn import CrossEntropyLoss
 
 
@@ -57,7 +57,7 @@ def sample_data(batch_first_setting):
 
 def test_transformer_init():
     """Test basic initialization of the transformer."""
-    transformer = TableTransformer(ninp=64, nhead=4, nhid=256, nlayers=6)
+    transformer = TabularModel(ninp=64, nhead=4, nhid=256, nlayers=6)
 
     assert transformer.ninp == 64
     assert transformer.nhead == 4
@@ -68,7 +68,7 @@ def test_transformer_init():
 def test_transformer_forward(sample_data):
     """Test basic forward pass with default parameters."""
     model_batch_first = sample_data["batch_first"]
-    transformer_model = TableTransformer(
+    transformer_model = TabularModel(
         ninp=32, nhead=2, nhid=64, nlayers=2, batch_first=model_batch_first
     )
 
@@ -96,7 +96,7 @@ def test_transformer_forward(sample_data):
 def test_add_embeddings_normal_rand_vec():
     """Test that add_embeddings adds the same embeddings when using normal_rand_vec."""
     # Create a transformer with normal_rand_vec feature positional embedding
-    transformer = TableTransformer(
+    transformer = TabularModel(
         ninp=64,
         nhead=4,
         nhid=256,
@@ -211,7 +211,7 @@ def test_feature_positional_embeddings(sample_data):
     model_batch_first = sample_data["batch_first"]
 
     for emb_type in embedding_types:
-        transformer_model = TableTransformer(
+        transformer_model = TabularModel(
             ninp=32,
             nhead=2,
             nhid=64,
@@ -246,7 +246,7 @@ def test_features_per_group(sample_data):
     """Test the features_per_group parameter."""
     model_batch_first = sample_data["batch_first"]
     # Set features_per_group=3 to match the number of features in sample data
-    transformer_model = TableTransformer(
+    transformer_model = TabularModel(
         ninp=32,
         nhead=2,
         nhid=64,
@@ -280,7 +280,7 @@ def test_features_per_group(sample_data):
 def test_cache_trainset_representation(sample_data):
     """Test caching of trainset representations."""
     model_batch_first = sample_data["batch_first"]
-    transformer_model = TableTransformer(
+    transformer_model = TabularModel(
         ninp=32,
         nhead=2,
         nhid=64,
@@ -335,7 +335,7 @@ def test_decoder_dict(sample_data):
 
     model_batch_first = sample_data["batch_first"]
 
-    transformer_model = TableTransformer(
+    transformer_model = TabularModel(
         ninp=32,
         nhead=2,
         nhid=64,
@@ -387,7 +387,7 @@ def test_style_encoder(sample_data):
     style_encoder_module = SimpleStyleEncoder(32)
     model_batch_first = sample_data["batch_first"]
 
-    transformer_model = TableTransformer(
+    transformer_model = TabularModel(
         ninp=32,
         nhead=2,
         nhid=64,
@@ -442,7 +442,7 @@ def test_y_style_encoder(sample_data):
     style_encoder_module = SimpleStyleEncoder(32)
     model_batch_first = sample_data["batch_first"]
 
-    transformer_model = TableTransformer(
+    transformer_model = TabularModel(
         ninp=32,
         nhead=2,
         nhid=64,
@@ -522,7 +522,7 @@ def test_y_style_encoder(sample_data):
 def test_separate_train_inference(
     multiquery_item_attention_for_test_set, model_batch_first_setting
 ):
-    model = transformer.TableTransformer(
+    model = transformer.TabularModel(
         encoder=encoders.SequentialEncoder(
             encoders.InputNormalizationEncoderStep(
                 normalize_on_train_only=True,
@@ -620,7 +620,7 @@ def test_transformer_overfit(attention_between_features):
     num_classes = 3  # 3-way classification
 
     # Create a tiny transformer
-    transformer = TableTransformer(
+    transformer = TabularModel(
         ninp=emsize,
         nhead=2,
         nhid=32,

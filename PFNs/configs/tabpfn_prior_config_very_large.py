@@ -6,6 +6,7 @@ training loop with a TabPFN-v1 style transformer backbone.
 
 from __future__ import annotations
 
+from pfns.model.backbone_config import TransformerBackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
@@ -45,9 +46,11 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_std=1.0,
         ),
         emsize=512,
-        nhid=256 * 4,
-        nlayers=12,
-        nhead=8,
+        backbone=TransformerBackboneConfig(
+            nhid=256 * 4,
+            nlayers=12,
+            nhead=8,
+        ),
         features_per_group=2,
         attention_between_features=True,
     )

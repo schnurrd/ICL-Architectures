@@ -21,7 +21,7 @@ from torch.utils.checkpoint import checkpoint
 DEFAULT_EMSIZE = 128
 
 
-class TableTransformer(nn.Module):
+class TabularModel(nn.Module):
     """A Transformer model processes a token per feature and sample.
 
     This model extends the standard Transformer architecture to operate on a
@@ -37,18 +37,14 @@ class TableTransformer(nn.Module):
     def __init__(  # noqa: C901, D417, PLR0913
         self,
         *,
+        transformer_layers: nn.Module,
         encoder: nn.Module | None = None,
         ninp: int = DEFAULT_EMSIZE,
-        nhead: int = 4,
         nhid: int = DEFAULT_EMSIZE * 4,
-        nlayers: int = 10,
         y_encoder: nn.Module | None = None,
         decoder_dict: (
             dict[str, tuple[Callable[[int, int, int], nn.Module] | None, int]] | None
         ) = None,
-        activation: Literal["gelu", "relu"] = "gelu",
-        recompute_layer: bool = False,
-        min_num_layers_layer_dropout: int | None = None,
         features_per_group: int = 1,
         feature_positional_embedding: (
             Literal[
@@ -59,30 +55,25 @@ class TableTransformer(nn.Module):
             ]
             | None
         ) = None,
-        zero_init: bool = True,
-        precomputed_kv: (
-            list[torch.Tensor | tuple[torch.Tensor, torch.Tensor]] | None
-        ) = None,
         cache_trainset_representation: bool = False,
         seed: int | None = None,
         style_encoder: nn.Module | None = None,
         y_style_encoder: nn.Module | None = None,
         attention_between_features: bool = True,
         batch_first: bool = True,
-        **layer_kwargs: Any,
     ):
-        """Initializes the PerFeatureTransformer module.
+        """Initializes the TabularModel (formerly PerFeatureTransformer).
 
         Args:
+            transformer_layers: Pre-built backbone module (REQUIRED).
+                This should be a Backbone instance (e.g., TransformerBackbone, MambaBackbone)
+                created via BackboneConfig.create_backbone().
+                The backbone processes embedded sequences through its forward() method.
             encoder:
                 Pass a nn.Module that takes in a batch of sequences of inputs and
                 returns something of the shape (seq_len, batch_size, ninp)
             ninp: Input dimension, also called the embedding dimension
-            nhead: Number of attention heads
-            nhid: Hidden dimension in the MLP layers
-            nlayers:
-                Number of layers, each consisting of a multi-head attention layer and
-                an MLP layer
+            nhid: Hidden dimension in the MLP decoders
             y_encoder:
                 A nn.Module that takes in a batch of sequences of outputs and
                 returns something of the shape (seq_len, batch_size, ninp)
@@ -95,13 +86,6 @@ class TableTransformer(nn.Module):
                         nhid,
                         decoder_n_out,
                     )
-            activation: An activation function, "gelu" or "relu"
-            recompute_layer:
-                If True, the transformer layers will be recomputed on each
-                forward pass in training. This is useful to save memory.
-            min_num_layers_layer_dropout:
-                If this is set, it enables to drop the last
-                layers randomly during training up to this number.
             features_per_group:
                 If > 1, the features will be grouped into groups of this
                 size and the attention is across groups.
@@ -110,12 +94,8 @@ class TableTransformer(nn.Module):
                 features with each other. This positional embedding is added to the
                 features to help the model distinguish them.
                 We recommend setting this to "subspace".
-            zero_init:
-                If True, the last sublayer of each attention and MLP layer will
-                be initialized with zeros.
-                Thus, the layers will start out as identity functions.
+            cache_trainset_representation: Whether to cache the training set representation for faster inference.
             seed: The seed to use for the random embeddings that identify features.
-            precomputed_kv: Experimental
             style_encoder: A nn.Module that per dataset takes in a single style vector (batch_size, -1)
                 or one style vector per feature (batch_size, num_features, -1) and returns a style embedding of the shape (batch_size, ninp)
             y_style_encoder: A nn.Module that per dataset takes in a single style vector (batch_size, -1) and returns a style embedding of the shape (batch_size, ninp)
@@ -123,19 +103,6 @@ class TableTransformer(nn.Module):
             batch_first: If True, then the input and output tensors are provided
                 as (batch, seq, feature). Default is True. If False,
                 (seq, batch, feature).
-            layer_kwargs: Keyword arguments passed to the `PerFeatureEncoderLayer`.
-                Possible arguments include:
-                - `layer_norm_eps`: Epsilon for layer normalization.
-                - `pre_norm`: Apply layer norm before attention/MLP.
-                - `recompute_attn`: Recompute attention during backpropagation.
-                - `second_mlp`: Include a second MLP in the layer.
-                - `layer_norm_with_elementwise_affine`: Use elementwise affine in layer norm.
-                - `save_peak_mem_factor`: Factor to save peak memory (post-norm only).
-                - `multiquery_item_attention`: Use multiquery attention for all items.
-                - `multiquery_item_attention_for_test_set`: Use multiquery attention for the test set.
-                - `attention_init_gain`: Gain for initializing attention parameters.
-                - `d_k`: Dimensionality of query and key vectors.
-                - `d_v`: Dimensionality of value vectors.
         """
         if decoder_dict is None:
             decoder_dict = {"standard": (None, 1)}
@@ -153,7 +120,6 @@ class TableTransformer(nn.Module):
         self.encoder = encoder
         self.y_encoder = y_encoder
         self.ninp = ninp
-        self.nhead = nhead
         self.nhid = nhid
         self.features_per_group = features_per_group
         self.cache_trainset_representation = cache_trainset_representation
@@ -161,29 +127,13 @@ class TableTransformer(nn.Module):
         self.attention_between_features = attention_between_features
         self.batch_first = batch_first
 
-        def layer_creator():
-            return PerFeatureLayer(
-                d_model=ninp,
-                nhead=nhead,
-                dim_feedforward=nhid,
-                activation=activation,
-                zero_init=zero_init,
-                precomputed_kv=(
-                    precomputed_kv.pop(0) if precomputed_kv is not None else None
-                ),
-                attention_between_features=attention_between_features,
-                **layer_kwargs,
-            )
-
-        nlayers_encoder = nlayers
-
-        self.transformer_layers = LayerStack(
-            layer_creator=layer_creator,
-            num_layers=nlayers_encoder,
-            recompute_each_layer=recompute_layer,
-            min_num_layers_layer_dropout=min_num_layers_layer_dropout,
-        )
-
+        assert transformer_layers is not None, "Must provide pre-built transformer_layers for TabularModel."
+        self.transformer_layers = transformer_layers
+        
+        # Register hook for backward compatibility with old checkpoint format
+        # Old: transformer_layers.layers.X -> New: transformer_layers.layer_stack.layers.X
+        self._register_load_state_dict_pre_hook(self._remap_old_checkpoint_keys)
+        
         initialized_decoder_dict = {}
         for decoder_key in decoder_dict:
             decoder_model, decoder_n_out = decoder_dict[decoder_key]
@@ -214,6 +164,24 @@ class TableTransformer(nn.Module):
         if y_style_encoder is not None:
             assert attention_between_features, "Attention between features must be True when using a y_style_encoder, otherwise only use a style_encoder."
         self.y_style_encoder = y_style_encoder
+
+    @staticmethod
+    def _remap_old_checkpoint_keys(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        """Pre-hook to remap old checkpoint keys for backward compatibility.
+        
+        Old checkpoints: transformer_layers.layers.X...
+        New structure: transformer_layers.layer_stack.layers.X...
+        """
+        keys_to_remap = [k for k in state_dict.keys() if k.startswith(prefix + "transformer_layers.layers.")]
+        
+        if keys_to_remap:
+            for old_key in keys_to_remap:
+                new_key = old_key.replace(
+                    prefix + "transformer_layers.layers.",
+                    prefix + "transformer_layers.layer_stack.layers.",
+                    1
+                )
+                state_dict[new_key] = state_dict.pop(old_key)
 
     def forward(
         self,
@@ -826,3 +794,7 @@ def isolate_torch_rng(seed: int, device: torch.device) -> Generator[None, None, 
         torch.set_rng_state(torch_rng_state)
         if torch.cuda.is_available():
             torch.cuda.set_rng_state(torch_cuda_rng_state, device=device)
+
+
+# Backward compatibility alias for old checkpoints and code
+TableTransformer = TabularModel

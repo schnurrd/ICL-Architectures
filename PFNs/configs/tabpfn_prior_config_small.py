@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
+from pfns.model.backbone_config import TransformerBackboneConfig
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
 from pfns.train import (
     BatchShapeSamplerConfig,
@@ -34,6 +35,11 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     model = ModelConfig(
         criterion=CrossEntropyConfig(num_classes=max_num_classes),
+        backbone=TransformerBackboneConfig(
+            nhid=192 * 4,
+            nlayers=10,
+            nhead=6,
+        ),
         encoder=EncoderConfig(
             variable_num_features_normalization=True,
             constant_normalization_mean=0.0,
@@ -45,9 +51,6 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_std=1.0,
         ),
         emsize=192,
-        nhid=192 * 4,
-        nlayers=10,
-        nhead=6,
         features_per_group=1,
         attention_between_features=True,
     )
