@@ -218,6 +218,7 @@ def main():
             c=config,
             device=args.device,
             compile=args.compile,
+            overwrite=args.overwrite,
         )
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")

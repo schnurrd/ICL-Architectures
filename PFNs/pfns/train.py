@@ -76,6 +76,7 @@ def train(
     device: str | None = None,
     reusable_config: bool = True,
     compile: bool = False,
+    overwrite: bool = False,
     # Handy functions to override when not working with a standard file system
     save_object_function: tp.Callable | None = None,  # defaults to torch.save
     load_object_function: tp.Callable | None = None,  # defaults to torch.load
@@ -210,7 +211,7 @@ def train(
 
     start_epoch = 1  # Default start epoch
 
-    if should_load_checkpoint(c, check_path_exists_function=check_path_exists_function):
+    if not overwrite and should_load_checkpoint(c, check_path_exists_function=check_path_exists_function):
         # load_checkpoint needs the scheduler instance, not the factory
         start_epoch = load_checkpoint(  # load_checkpoint might return start_epoch
             model,
