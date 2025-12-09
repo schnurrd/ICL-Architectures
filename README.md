@@ -40,8 +40,8 @@ cd ICL-Architectures
 Install the required packages and editable installs for the repositories PFNs, TabPFN-v1-prior, and tabularpriors:
 
 ```bash
-conda create -n icl_arch_pfn python=3.10
-conda activate icl_arch_pfn
+conda create -n icl_arch python=3.11
+conda activate icl_arch
 
 pip install -r requirements.txt \
     -e ./PFNs \
