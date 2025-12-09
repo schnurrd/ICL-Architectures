@@ -25,10 +25,12 @@ def get_config(config_index: int = 0) -> MainConfig:
     """
 
     max_num_classes = 10
+    max_num_features = 25
 
     prior = TabPFNPriorConfig(
         prior_type="mlp",
         max_num_classes=max_num_classes,
+        max_num_features=max_num_features,
         flexible=True,
         differentiable=False,
     )
@@ -73,7 +75,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         # Shorter contexts to keep seq_len * num_tokens manageable in interleaved mode
         max_seq_len=1000,
         min_num_features=2,
-        max_num_features=25,
+        max_num_features=max_num_features,
         fixed_num_test_instances=None,
     )
 

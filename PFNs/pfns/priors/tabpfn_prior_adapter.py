@@ -12,6 +12,7 @@ from typing import Any, Callable
 import torch
 
 from pfns.priors.prior import Batch, PriorConfig
+from pfns.utils import normalize_by_used_features_f
 
 try:
     from tabpfn_prior import build_tabpfn_prior
@@ -30,6 +31,7 @@ class TabPFNPriorConfig(PriorConfig):
     prior_config: dict[str, Any] | None = None
     flexible: bool = True
     differentiable: bool = False
+    max_num_features: int = 20
 
     def create_get_batch_method(self) -> Callable[..., Batch]:
         def get_batch(
@@ -49,6 +51,11 @@ class TabPFNPriorConfig(PriorConfig):
                 n_targets_per_input == 1
             ), "TabPFNPriorConfig only supports n_targets_per_input=1"
 
+            assert num_features <= self.max_num_features, (
+                f"num_features ({num_features}) cannot be larger than "
+                f"max_num_features ({self.max_num_features})"
+            )
+            
             batch_iterator = iter(
                 build_tabpfn_prior(
                     prior_type=self.prior_type,
@@ -68,7 +75,7 @@ class TabPFNPriorConfig(PriorConfig):
             batch = next(batch_iterator)  # get a single batch from the prior
 
             return Batch(
-                x=batch["x"],
+                x=normalize_by_used_features_f(batch["x"], num_features, self.max_num_features),
                 y=batch["y"],
                 target_y=batch["target_y"],
                 single_eval_pos=single_eval_pos,  # we ignore the single_eval_pos from the prior

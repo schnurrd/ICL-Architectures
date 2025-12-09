@@ -12,9 +12,9 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch_pfn/bin/python",
             "args": [
-                "PFNs/configs/tabpfn_prior_config.py", 
-                "--checkpoint-save-load-prefix", "PFNs/models_diff/checkpoint_new2.pt",
-                "--tensorboard-path", "PFNs/tensorboards"
+                "PFNs/configs/tabpfn_prior_config_1_gpu_10h.py", // tabpfn_prior_config_1_gpu_10h tabpfn_prior_config_very_large_gla
+                "--checkpoint-save-load-prefix", "PFNs/models_diff/checkpoint.pt",
+                "--tensorboard-path", "PFNs/tensorboards", "--overwrite"
             ]
         },
         {
@@ -25,9 +25,9 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch_pfn/bin/python",
             "args": [
-                "--model_path", "PFNs/models_diff/large_config.pt/tabpfn_prior_config_very_large_0_no_seed", 
-                "--output", "csv",
-                "--only_tabpfn"
+                "--model_path", "PFNs/models_diff/large_config_backbone_new2.pt/tabpfn_prior_config_very_large_0_no_seed", 
+                "--only_tabpfn", 
+                "--max_features", "20"
             ]
         }
     ]

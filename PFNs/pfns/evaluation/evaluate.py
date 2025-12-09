@@ -33,8 +33,7 @@ def evaluate_model(
         fit_time = time.time() - start
         
         start = time.time()
-        y_pred = model.predict(X[test_idx])
-        y_proba = model.predict_proba(X[test_idx])
+        y_pred, y_proba = model.predict(X[test_idx], return_prediction_probs=True)
         predict_time = time.time() - start
         
         acc = accuracy_score(y[test_idx], y_pred)

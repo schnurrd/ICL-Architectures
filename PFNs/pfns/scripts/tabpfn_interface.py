@@ -87,7 +87,7 @@ class InferenceEngine:
         elif transform_type in ["power", "power_all"]:
             return PowerTransformer(standardize=True)
         elif transform_type in ["quantile", "quantile_all"]:
-            return QuantileTransformer(output_distribution="normal")
+            return QuantileTransformer(output_distribution="normal", n_quantiles=100)
         elif transform_type in ["robust", "robust_all"]:
             return RobustScaler(unit_variance=True)
         return None
@@ -137,8 +137,10 @@ class InferenceEngine:
                         transformer.fit(X_np[0:eval_position, col : col + 1])
                         trans = transformer.transform(X_np[:, col : col + 1])
                         X_np[:, col : col + 1] = trans
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(
+                        f"Warning: Preprocessing transform {transform_type} failed on column {col}. Skipping transform. Error: {e}"
+                    )
             warnings.simplefilter("default")
             X = torch.tensor(X_np).float()
 
@@ -609,15 +611,18 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         prediction_ = prediction.squeeze(0)
         return prediction_.detach().cpu().numpy() if self.no_grad else prediction_
 
-    def predict(self, X, return_winning_probability=False):
+    def predict(self, X, return_winning_probability=False, return_prediction_probs=False):
         """Predict class labels."""
         p = self.predict_proba(X)
         y = np.argmax(p, axis=-1)
         y = self.classes_.take(np.asarray(y, dtype=np.intp))
 
+        out = [y]
         if return_winning_probability:
-            return y, p.max(axis=-1)
-        return y
+            out.append(p.max(axis=-1))
+        if return_prediction_probs:
+            out.append(p)
+        return out[0] if len(out) == 1 else tuple(out)
 
     def remove_models_from_memory(self):
         """Clear cached models."""

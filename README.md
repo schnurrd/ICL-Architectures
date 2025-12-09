@@ -139,6 +139,7 @@ The Python configuration file must define a `config`or a `get_config(config_inde
 - Samplers used are very basic and could be improved to better cover the data distribution
 - Look into replacing the Inference wrapper with the prior labs tabpfn implementation
 - Check handling of categorical features during training and inference and in prior generation
+- TabPFN v1 prior has many issues e.g. very simple prior and normalize_by_used_features was broken (fixed it in this repo)
 
 # Repository (PFNs) explanation
 
