@@ -101,15 +101,17 @@ class InferenceEngine:
         max_features: int,
     ) -> torch.Tensor:
         """Preprocess input data for one ensemble member."""
-        # Subsample before any normalization to mirror legacy behavior
+        
         if X.shape[2] > max_features:
             X = X[
                 :,
                 :,
                 sorted(np.random.choice(X.shape[2], max_features, replace=False)),
             ]
-
-        X = normalize_data(X, normalize_positions=eval_position)
+            print(
+                f"Warning: Subsampling features to {max_features} for preprocessing."
+            )
+        X = normalize_data(X, normalize_positions=eval_position)  # probably redundant
 
         # Remove constant features
         X = X[:, 0, :]
@@ -145,11 +147,9 @@ class InferenceEngine:
             X = torch.tensor(X_np).float()
 
         X = X.unsqueeze(1)
-        X = remove_outliers(X, normalize_positions=eval_position)
-        X = normalize_by_used_features_f(
-            X, X.shape[-1], max_features, normalize_with_sqrt=False
-        )
-
+        #X = normalize_by_used_features_f(
+        #    X, X.shape[-1], max_features, normalize_with_sqrt=False
+        #)
         return X.to(self.device)
 
     def predict(
@@ -536,7 +536,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                     "X contains nans and the gradient implementation is not designed to handel nans."
                 )
 
-        y_full = np.concatenate([self.y_, np.zeros(shape=X.shape[0])], axis=0)
+        y_full = np.concatenate([self.y_, np.full(shape=X.shape[0], fill_value=np.nan)], axis=0)
         y_full = torch.tensor(y_full, device=self.device).float().unsqueeze(1)
 
         eval_pos = self.X_.shape[0]
@@ -569,12 +569,19 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             else [0]
         )
 
-        combinations = list(
-            itertools.product(class_shifts, feature_shifts, preprocess_transforms)
-        )
+        class_feature_pairs = list(itertools.product(class_shifts, feature_shifts))
         rng = random.Random(self.seed)
-        rng.shuffle(combinations)
-        combinations = combinations[: self.N_ensemble_configurations]
+        rng.shuffle(class_feature_pairs)
+
+        combinations = []
+        if class_feature_pairs and self.N_ensemble_configurations > 0:
+            combinations = [
+                (
+                    *class_feature_pairs[i % len(class_feature_pairs)],
+                    preprocess_transforms[i % len(preprocess_transforms)],
+                )
+                for i in range(self.N_ensemble_configurations)
+            ]
 
         ensemble_configs = [
             EnsembleConfig(

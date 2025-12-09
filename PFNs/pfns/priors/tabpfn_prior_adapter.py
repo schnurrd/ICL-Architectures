@@ -73,9 +73,13 @@ class TabPFNPriorConfig(PriorConfig):
             )
 
             batch = next(batch_iterator)  # get a single batch from the prior
-
+            
+            # Normalize by used features should like note be necessary anymore
+            #x = normalize_by_used_features_f(
+            #    batch["x"], num_features, self.max_num_features
+            #)
             return Batch(
-                x=normalize_by_used_features_f(batch["x"], num_features, self.max_num_features),
+                x=batch["x"],
                 y=batch["y"],
                 target_y=batch["target_y"],
                 single_eval_pos=single_eval_pos,  # we ignore the single_eval_pos from the prior
