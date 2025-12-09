@@ -34,6 +34,15 @@ def get_config(config_index: int = 0) -> MainConfig:
         flexible=True,
         differentiable=False,
     )
+    
+    batch_shape = BatchShapeSamplerConfig(
+        batch_size=1,
+        min_single_eval_pos=24,
+        max_seq_len=1000,
+        min_num_features=2,
+        max_num_features=max_num_features,
+        fixed_num_test_instances=None,
+    )
 
     model = ModelConfig(
         criterion=CrossEntropyConfig(num_classes=max_num_classes),
@@ -55,15 +64,6 @@ def get_config(config_index: int = 0) -> MainConfig:
         ),
         features_per_group=1,
         attention_between_features=True,
-    )
-
-    batch_shape = BatchShapeSamplerConfig(
-        batch_size=1,
-        min_single_eval_pos=24,
-        max_seq_len=1000,
-        min_num_features=2,
-        max_num_features=max_num_features,
-        fixed_num_test_instances=None,
     )
 
     optimizer = OptimizerConfig(
