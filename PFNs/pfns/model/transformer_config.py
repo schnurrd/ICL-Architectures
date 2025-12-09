@@ -27,6 +27,15 @@ class ModelConfig(base_config.BaseConfig):
     emsize: int = 200
     features_per_group: int = 1 # number of features grouped together as one token
     attention_between_features: bool = True
+    feature_positional_embedding: (
+        tp.Literal[
+            "normal_rand_vec",
+            "uni_rand_vec",
+            "learned",
+            "subspace",
+        ]
+        | None
+    ) = None,
     model_extra_args: tp.Dict[str, base_config.BaseTypes] | None = None
     
     # Legacy parameters for backward compatibility
@@ -100,6 +109,7 @@ class ModelConfig(base_config.BaseConfig):
             style_encoder=style_encoder,
             y_style_encoder=y_style_encoder,
             batch_first=True,  # model is batch_first by default now
+            feature_positional_embedding=self.feature_positional_embedding,
             **(self.model_extra_args or {}),
         )
         model.criterion = criterion
