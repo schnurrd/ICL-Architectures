@@ -33,6 +33,8 @@ def main():
     parser.add_argument("--only_tabpfn", action="store_true", help="Evaluate only TabPFN")
     parser.add_argument("--n_jobs", type=int, default=4, help="Number of CPU cores for baseline models (RF, XGBoost)")
     parser.add_argument("--batch_size_inference", type=int, default=32, help="Batch size for TabPFN inference. Lower values reduce memory usage without affecting accuracy")
+    parser.add_argument("--n_ensemble_configurations", type=int, default=32, help="Number of ensemble configurations for TabPFN")
+    parser.add_argument("--preprocess_transforms", type=str, nargs='+', default=["power", "quantile", "robust", "none"], help="Preprocessing transforms to ensemble over for TabPFN")
     args = parser.parse_args()
     
     if args.device is None:
@@ -44,7 +46,8 @@ def main():
         base_path=args.model_path,
         device=args.device,
         model_string=args.checkpoint_name,
-        N_ensemble_configurations=32,
+        N_ensemble_configurations=args.n_ensemble_configurations,
+        preprocess_transforms=args.preprocess_transforms,
         batch_size_inference=args.batch_size_inference,
     )
     

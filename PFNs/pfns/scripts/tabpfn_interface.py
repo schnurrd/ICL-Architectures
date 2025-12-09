@@ -374,7 +374,8 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         seed: int = 0,
         no_grad: bool = True,
         batch_size_inference: int = 32,
-        subsample_features: bool = False
+        subsample_features: bool = False,
+        preprocess_transforms: list[str] = None,
     ):
         """
         Initializes the classifier and loads the model.
@@ -407,6 +408,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                For this to correctly function no_preprocessing_mode must be set to true.
         :param subsample_features: If set to true and the number of features in the dataset exceeds self.max_features (100),
                 the features are subsampled to self.max_features.
+        :param preprocess_transforms: List of preprocessing transforms to consider during inference.
         """
         self.device = device
         self.base_path = base_path
@@ -420,6 +422,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.no_grad = no_grad
         self.batch_size_inference = batch_size_inference
         self.subsample_features = subsample_features
+        self.preprocess_transforms = preprocess_transforms
 
         model_key = model_string + "|" + str(device)
         if model_key in self.models_in_memory:
@@ -537,9 +540,17 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         eval_pos = self.X_.shape[0]
         num_classes = len(self.classes_)
 
-        preprocess_transforms = (
-            ["none"] if self.no_preprocess_mode else ["none", "power_all"]
-        )
+        if self.no_preprocess_mode:
+            preprocess_transforms = ["none"]
+        elif self.preprocess_transforms is not None:
+            preprocess_transforms = self.preprocess_transforms
+        else:
+            preprocess_transforms = [
+                "power",
+                "quantile",
+                "robust",
+                "none",
+            ]
 
         # Generate ensemble configurations
         if self.seed is not None:
