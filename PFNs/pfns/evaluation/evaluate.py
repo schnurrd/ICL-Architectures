@@ -19,10 +19,14 @@ def evaluate_model(
     y: np.ndarray,
     n_splits: int = 5,
     random_state: int = 42,
+    categorical_feats: list[int] | tuple[int, ...] | None = None,
 ) -> Dict[str, float]:
     """Evaluate a model with cross-validation."""
     X = np.nan_to_num(np.asarray(X, dtype=np.float32), nan=0.0)
     y = np.asarray(y, dtype=np.int64)
+
+    if categorical_feats is not None and hasattr(model, "categorical_feats"):
+        model.categorical_feats = tuple(categorical_feats)
     
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
     results = []
@@ -58,12 +62,19 @@ def compare_models(
     X: np.ndarray,
     y: np.ndarray,
     n_splits: int = 5,
+    categorical_feats: list[int] | tuple[int, ...] | None = None,
 ) -> pd.DataFrame:
     """Compare multiple models on a single dataset."""
     results = []
     for model, name in zip(models, model_names):
         print(f"Evaluating {name}...")
-        result = evaluate_model(model, X, y, n_splits=n_splits)
+        result = evaluate_model(
+            model,
+            X,
+            y,
+            n_splits=n_splits,
+            categorical_feats=categorical_feats,
+        )
         result["model"] = name
         results.append(result)
         print(f"  Accuracy: {result['accuracy']:.4f}")
@@ -90,7 +101,7 @@ def evaluate_on_openml(
     )
     
     all_results = []
-    for name, X, y, _, _, _ in datasets:
+    for name, X, y, categorical_feats, _, _ in datasets:
         print(f"\n{'='*75}")
         print(f"{name}: {X.shape[0]} samples, {X.shape[1]} features")
         print(f"{'='*75}")
@@ -98,7 +109,13 @@ def evaluate_on_openml(
         print(f"{'-'*20} {'-'*10} {'-'*10} {'-'*10} {'-'*10}")
         for model, model_name in zip(models, model_names):
             try:
-                result = evaluate_model(model, X.numpy(), y.numpy(), n_splits=n_splits)
+                result = evaluate_model(
+                    model,
+                    X.numpy(),
+                    y.numpy(),
+                    n_splits=n_splits,
+                    categorical_feats=categorical_feats,
+                )
                 result.update({"model": model_name, "dataset": name})
                 all_results.append(result)
                 print(f"{model_name:<20} {result['accuracy']:>10.4f} {result['roc_auc']:>10.4f} {result['fit_time']:>10.2f} {result['predict_time']:>10.2f}")

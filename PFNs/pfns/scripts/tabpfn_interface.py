@@ -607,7 +607,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             extend_features=True,
             fp16_inference=False,
             no_grad=self.no_grad,
-            categorical_feats=(),
+            categorical_feats=self.categorical_feats,
             seed=self.seed,
         )
 
