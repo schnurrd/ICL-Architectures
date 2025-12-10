@@ -381,6 +381,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         batch_size_inference: int = 32,
         subsample_features: bool = False,
         preprocess_transforms: list[str] = None,
+        categorical_feats: tuple[int, ...] = (),
     ):
         """
         Initializes the classifier and loads the model.
@@ -428,6 +429,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.batch_size_inference = batch_size_inference
         self.subsample_features = subsample_features
         self.preprocess_transforms = preprocess_transforms
+        self.categorical_feats = categorical_feats
 
         model_key = model_string + "|" + str(device)
         if model_key in self.models_in_memory:
