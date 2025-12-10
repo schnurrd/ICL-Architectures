@@ -6,7 +6,7 @@ import itertools
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Optional, Protocol
 
 import numpy as np
 import torch
@@ -67,6 +67,7 @@ class InferenceEngine:
         fp16_inference: bool = False,
         no_grad: bool = True,
         categorical_feats: tuple[int, ...] = (),
+        seed: Optional[int] = None,
     ):
         self.model = model
         self.ensemble_configs = ensemble_configs
@@ -79,6 +80,7 @@ class InferenceEngine:
         self.fp16_inference = fp16_inference
         self.no_grad = no_grad
         self.categorical_feats = categorical_feats
+        self.seed = seed
 
     def _get_sklearn_transformer(self, transform_type: str):
         """Get sklearn transformer based on config."""
@@ -87,7 +89,11 @@ class InferenceEngine:
         elif transform_type in ["power", "power_all"]:
             return PowerTransformer(standardize=True)
         elif transform_type in ["quantile", "quantile_all"]:
-            return QuantileTransformer(output_distribution="normal", n_quantiles=100)
+            return QuantileTransformer(
+                output_distribution="normal",
+                n_quantiles=100,
+                random_state=self.seed,
+            )
         elif transform_type in ["robust", "robust_all"]:
             return RobustScaler(unit_variance=True)
         return None
@@ -147,9 +153,6 @@ class InferenceEngine:
             X = torch.tensor(X_np).float()
 
         X = X.unsqueeze(1)
-        #X = normalize_by_used_features_f(
-        #    X, X.shape[-1], max_features, normalize_with_sqrt=False
-        #)
         return X.to(self.device)
 
     def predict(
@@ -605,6 +608,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             fp16_inference=False,
             no_grad=self.no_grad,
             categorical_feats=(),
+            seed=self.seed,
         )
 
         prediction = engine.predict(

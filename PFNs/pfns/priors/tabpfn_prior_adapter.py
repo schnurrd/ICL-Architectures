@@ -31,7 +31,10 @@ class TabPFNPriorConfig(PriorConfig):
     prior_config: dict[str, Any] | None = None
     flexible: bool = True
     differentiable: bool = False
+    differentiable_hyperparameters: dict[str, Any] | None = None
     max_num_features: int = 20
+    return_categorical_mask: bool = False
+    nan_handling: bool = False
 
     def create_get_batch_method(self) -> Callable[..., Batch]:
         def get_batch(
@@ -68,6 +71,8 @@ class TabPFNPriorConfig(PriorConfig):
                     prior_config=self.prior_config,
                     flexible=self.flexible,
                     differentiable=self.differentiable,
+                    return_categorical_mask=self.return_categorical_mask,
+                    nan_handling=self.nan_handling,
                     **kwargs,
                 )
             )
@@ -78,11 +83,16 @@ class TabPFNPriorConfig(PriorConfig):
             #x = normalize_by_used_features_f(
             #    batch["x"], num_features, self.max_num_features
             #)
+            
+            # Extract categorical_mask if available
+            categorical_mask = batch.get("categorical_mask", None)
+            
             return Batch(
                 x=batch["x"],
                 y=batch["y"],
                 target_y=batch["target_y"],
                 single_eval_pos=single_eval_pos,  # we ignore the single_eval_pos from the prior
+                categorical_mask=categorical_mask,
             )
 
         return get_batch

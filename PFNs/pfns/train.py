@@ -461,6 +461,19 @@ def train_or_evaluate_epoch(
             before_forward = time.time()
             try:
                 with autocast(device.split(":")[0], enabled=scaler is not None):
+                    categorical_inds = None
+                    if hasattr(batch, 'categorical_mask') and batch.categorical_mask is not None:
+                        mask = batch.categorical_mask
+                        if mask.ndim > 1:
+                            if not torch.all(mask == mask[0]):
+                                raise NotImplementedError(
+                                    "Per-sample categorical masks are not yet supported. "
+                                    "All samples in a batch must have the same categorical features. "
+                                    "This should not happen with TabPFN prior (flexible=True)."
+                                )
+                            mask = mask[0]
+                        categorical_inds = torch.nonzero(mask, as_tuple=True)[0].tolist()
+                    
                     output = model(
                         x=batch.x.to(device),
                         y=batch.y[:, :single_eval_pos].to(device),
@@ -468,6 +481,7 @@ def train_or_evaluate_epoch(
                         y_style=move_y_style_and_check_shape(
                             batch.y_style, batch.y, device
                         ),
+                        categorical_inds=categorical_inds,
                         only_return_standard_out=True,
                     )  # shape: (batch_size, test_len)
 

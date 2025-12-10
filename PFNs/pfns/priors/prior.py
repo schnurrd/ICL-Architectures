@@ -82,6 +82,7 @@ class Batch:
     )
     info_used_with_gradient_magnitudes: Optional[dict] = None
     gradient_multipliers: Optional[torch.Tensor] = None
+    categorical_mask: Optional[torch.Tensor] = None  # Boolean mask [batch_size, num_features] indicating categorical features
 
     def other_filled_attributes(
         self, set_of_attributes: Set[str] = frozenset(("x", "y", "target_y"))

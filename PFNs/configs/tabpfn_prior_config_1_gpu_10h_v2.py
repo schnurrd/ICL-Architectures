@@ -28,11 +28,12 @@ def get_config(config_index: int = 0) -> MainConfig:
     max_num_features = 20
 
     prior = TabPFNPriorConfig(
-        prior_type="mlp",
-        max_num_classes=max_num_classes,
-        max_num_features=max_num_features,
-        flexible=True,
-        differentiable=False,
+        prior_type="mlp",       
+        max_num_classes=10,
+        max_num_features=max_num_features,          
+        flexible=True,                 
+        differentiable=True,
+        return_categorical_mask=True,
     )
     
     batch_shape = BatchShapeSamplerConfig(
@@ -50,7 +51,8 @@ def get_config(config_index: int = 0) -> MainConfig:
             variable_num_features_normalization=True,
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
-            nan_handling=False,  # prior does not support nans in current config
+            nan_handling=False,  # todo fix, currently broken
+            use_categorical_encoder=True
         ),
         y_encoder=EncoderConfig(
             nan_handling=True,

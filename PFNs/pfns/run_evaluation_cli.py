@@ -25,8 +25,8 @@ def main():
     parser.add_argument("--checkpoint_name", type=str, default="checkpoint.pt")
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--benchmark", type=str, default="opencc", choices=["opencc", "test"])
-    parser.add_argument("--max_samples", type=int, default=1024)
-    parser.add_argument("--max_features", type=int, default=25)
+    parser.add_argument("--max_samples", type=int, default=1000)
+    parser.add_argument("--max_features", type=int, default=20)
     parser.add_argument("--max_classes", type=int, default=10)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--output", type=str, default=None)
@@ -34,7 +34,7 @@ def main():
     parser.add_argument("--n_jobs", type=int, default=4, help="Number of CPU cores for baseline models (RF, XGBoost)")
     parser.add_argument("--batch_size_inference", type=int, default=32, help="Batch size for TabPFN inference. Lower values reduce memory usage without affecting accuracy")
     parser.add_argument("--n_ensemble_configurations", type=int, default=32, help="Number of ensemble configurations for TabPFN")
-    parser.add_argument("--preprocess_transforms", type=str, nargs='+', default=["power", "quantile", "robust", "none"], help="Preprocessing transforms to ensemble over for TabPFN")
+    parser.add_argument("--preprocess_transforms", type=str, nargs='+', default=["none", "power"], help="Preprocessing transforms to ensemble over for TabPFN")
     args = parser.parse_args()
     
     if args.device is None:

@@ -16,6 +16,7 @@ from pfns.priors.hyperparameter_sampling import (
     HyperparameterNormalizer,
 )
 from torch import nn
+from sklearn.preprocessing import OrdinalEncoder
 
 ### Simple Encoders
 
@@ -55,6 +56,8 @@ class EncoderConfig(base_config.BaseConfig):
     constant_normalization_std: float = 1.0
     train_normalization: bool = False
     hidden_size: int | None = None
+    use_categorical_encoder: bool = False
+    max_categories: int = 100
 
     def __post_init__(self):
         assert not (
@@ -97,14 +100,32 @@ class EncoderConfig(base_config.BaseConfig):
             encoder_sequence.append(NanHandlingEncoderStep())
             in_keys_for_linear = ("main", "nan_indicators")
 
-        encoder_sequence.append(
-            LinearInputEncoderStep(
-                num_features=features * len(in_keys_for_linear),
-                emsize=emsize if self.hidden_size is None else self.hidden_size,
-                in_keys=in_keys_for_linear,
-                out_keys=("output" if self.hidden_size is None else "main",),
-            ),
-        )
+        if self.use_categorical_encoder:
+            encoder_sequence.append(
+                OrdinalEncoderStep(
+                    in_keys=in_keys_for_linear,
+                    out_keys=in_keys_for_linear,
+                )
+            )
+            encoder_sequence.append(
+                MixedFeatureEncoderStep(
+                    num_features=features * len(in_keys_for_linear),
+                    emsize=emsize if self.hidden_size is None else self.hidden_size,
+                    max_categories=self.max_categories,
+                    in_keys=in_keys_for_linear,
+                    out_keys=("output" if self.hidden_size is None else "main",),
+                ),
+            )
+        else:
+            encoder_sequence.append(
+                LinearInputEncoderStep(
+                    num_features=features * len(in_keys_for_linear),
+                    emsize=emsize if self.hidden_size is None else self.hidden_size,
+                    in_keys=in_keys_for_linear,
+                    out_keys=("output" if self.hidden_size is None else "main",),
+                ),
+            )
+        
         if self.hidden_size is not None:
             encoder_sequence.append(
                 LinearInputEncoderStep(
@@ -378,6 +399,215 @@ class LinearInputEncoderStep(SeqEncStep):
         if self.activation is not None:
             x = self.activation(x)
         return (self.layer(x),)
+
+
+class OrdinalEncoderStep(SeqEncStep):
+    """Ordinal encoding for categorical features.
+    
+    Maps categorical values to integers [0, num_categories-1].
+    Uses per-group categorical_inds from the prior.
+    """
+
+    def __init__(
+        self,
+        seed: int = 0,
+        in_keys: tuple[str, ...] = ("main",),
+        out_keys: tuple[str, ...] = ("main",),
+    ):
+        super().__init__(in_keys, out_keys)
+        self.seed = seed
+        self.categorical_inds_: list[list[int]] | None = None
+        # (group_idx, batch_idx) -> encoder
+        self._group_encoders: dict[tuple[int, int], OrdinalEncoder] = {}
+
+    def _fit(
+        self,
+        *x: torch.Tensor,
+        categorical_inds: list[list[int]] | None = None,
+        single_eval_pos: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Build ordinal mappings from training data.
+        
+        Args:
+            x: Input tensor (seq_len, batch*groups, num_features)
+            categorical_inds: Per-group categorical indices [[0], [0], [], ...]
+            single_eval_pos: Position to split train/test
+        """
+        x = torch.cat(x, dim=-1)
+        self.categorical_inds_ = categorical_inds or []
+
+        if any(not isinstance(entry, list) for entry in self.categorical_inds_):
+            raise ValueError("categorical_inds must be a list of lists (per-group).")
+
+        if not self.categorical_inds_ or all(len(inds) == 0 for inds in self.categorical_inds_):
+            self._group_encoders.clear()
+            return
+
+        train_x = x[:single_eval_pos] if single_eval_pos else x
+        num_groups = len(self.categorical_inds_)
+        batch_size = train_x.shape[1] // num_groups  # batch_size from (s, b*num_groups, f_per_group)
+        features_per_group = train_x.shape[-1]  # features per group
+
+        self._group_encoders.clear()
+
+        for batch_idx in range(batch_size):
+            for group_idx, inds in enumerate(self.categorical_inds_):
+                if not inds:
+                    continue
+                cat_features = sorted(set(inds))
+                if any(i < 0 or i >= features_per_group for i in cat_features):
+                    raise ValueError("categorical_inds contain feature indices out of range")
+
+                sample_idx = batch_idx * num_groups + group_idx
+                group_features = train_x[:, sample_idx]  # (seq, features_per_group)
+                cat_data = group_features[:, cat_features].reshape(-1, len(cat_features))
+
+                enc = OrdinalEncoder(
+                    handle_unknown="use_encoded_value",
+                    unknown_value=-1,
+                    encoded_missing_value=-1,
+                    dtype=np.float32,
+                )
+                enc.fit(cat_data.cpu().numpy())
+                self._group_encoders[(group_idx, batch_idx)] = enc
+
+    def _transform(
+        self,
+        *x: torch.Tensor,
+        categorical_inds: list[list[int]] | None = None,
+        **kwargs: Any,
+    ) -> tuple[torch.Tensor]:
+        """Apply ordinal encoding to categorical features per group.
+        
+        Args:
+            x: Input tensor (seq_len, batch*groups, num_features)
+            categorical_inds: Per-group categorical indices
+        """
+        x = torch.cat(x, dim=-1).clone()
+        categorical_inds = (
+            categorical_inds if categorical_inds is not None else self.categorical_inds_
+        )
+
+        if not categorical_inds or all(len(inds) == 0 for inds in categorical_inds):
+            return (x,)
+
+        if any(not isinstance(entry, list) for entry in categorical_inds):
+            raise ValueError("categorical_inds must be a list of lists (per-group).")
+
+        if not self._group_encoders:
+            return (x,)
+
+        num_groups = len(categorical_inds)
+        if x.shape[1] % num_groups != 0:
+            raise ValueError("batch*groups dimension must be divisible by num_groups")
+        batch_size = x.shape[1] // num_groups  # batch_size from (s, b*num_groups, f_per_group)
+        features_per_group = x.shape[-1]  # features per group
+
+        for batch_idx in range(batch_size):
+            for group_idx, inds in enumerate(categorical_inds):
+                if not inds:
+                    continue
+                cat_features = sorted(set(inds))
+                if any(i < 0 or i >= features_per_group for i in cat_features):
+                    raise ValueError("categorical_inds contain feature indices out of range")
+
+                enc = self._group_encoders.get((group_idx, batch_idx))
+                if enc is None:
+                    continue
+
+                sample_idx = batch_idx * num_groups + group_idx
+                group_features = x[:, sample_idx]  # (seq, features_per_group)
+                cat_data = group_features[:, cat_features].reshape(-1, len(cat_features))
+
+                encoded = enc.transform(cat_data.cpu().numpy())
+                encoded = torch.from_numpy(encoded).to(x.device, x.dtype)
+                encoded = encoded.view(x.shape[0], len(cat_features))
+
+                for idx, feat_idx in enumerate(cat_features):
+                    x[:, sample_idx, feat_idx] = encoded[:, idx]
+
+        return (x,)
+
+class MixedFeatureEncoderStep(SeqEncStep):
+    """Combines linear encoding for continuous and embeddings for categorical features.
+    
+    Uses per-group categorical_inds from the prior.
+    """
+
+    def __init__(
+        self,
+        num_features: int,
+        emsize: int,
+        max_categories: int = 100,
+        in_keys: tuple[str, ...] = ("main",),
+        out_keys: tuple[str, ...] = ("output",),
+    ):
+        super().__init__(in_keys, out_keys)
+        self.num_features = num_features
+        self.emsize = emsize
+        self.max_categories = max_categories
+        # Reserve one slot for unknown categories and one for NaN/Inf.
+        self.cat_embedding = nn.Embedding(max_categories + 2, emsize)
+        self.cont_linear = nn.Linear(1, emsize)
+        self.categorical_inds_: list[list[int]] | None = None
+
+    def _fit(self, *x: torch.Tensor, single_eval_pos: int | None = None, categorical_inds: list[list[int]] | None = None, **kwargs: Any):
+        """Store categorical indices from prior.
+        
+        Args:
+            x: Input tensor (not used)
+            single_eval_pos: Position to split train/test (not used)
+            categorical_inds: Per-group categorical indices [[0], [0], [], ...]
+        """
+        self.categorical_inds_ = categorical_inds or []
+
+    def _transform(self, *x: torch.Tensor, categorical_inds: list[list[int]] | None = None, **kwargs: Any) -> tuple[torch.Tensor]:
+        x = torch.cat(x, dim=-1)  # Shape: (seq, batch*groups, num_input_features)
+        
+        categorical_inds = categorical_inds if categorical_inds is not None else self.categorical_inds_
+        
+        if not categorical_inds:
+            # No categorical features, process all as continuous
+            feature_embeddings = []
+            for feat_idx in range(self.num_features):
+                feat_values = x[..., feat_idx:feat_idx+1]
+                feat_emb = self.cont_linear(feat_values).to(x.dtype)
+                feature_embeddings.append(feat_emb)
+            return (torch.stack(feature_embeddings, dim=0).sum(dim=0),)
+        
+        num_groups = len(categorical_inds)
+        
+        feature_embeddings = []
+        
+        for feat_idx in range(self.num_features):
+            feat_values = x[..., feat_idx:feat_idx+1]  # (s, bf, 1)
+            feat_emb = torch.empty(feat_values.shape[0], feat_values.shape[1], self.emsize, device=x.device, dtype=x.dtype)
+            
+            for sample_idx in range(feat_values.shape[1]):
+                group_idx = sample_idx % num_groups
+                
+                if feat_idx in categorical_inds[group_idx]:
+                    sample_feat = feat_values[:, sample_idx, 0]  # (s,)
+                    nan_mask = torch.isnan(sample_feat) | torch.isinf(sample_feat)
+                    unknown_mask = sample_feat == -1  # Ordinal encoder uses -1 for unknown/missing
+
+                    # Clamp known categories to valid range, keep room for unknown/nan slots
+                    cat_vals = sample_feat.long().clamp(0, self.max_categories - 1)
+
+                    unknown_idx = self.cat_embedding.num_embeddings - 2
+                    nan_idx = self.cat_embedding.num_embeddings - 1
+                    cat_vals[unknown_mask] = unknown_idx
+                    cat_vals[nan_mask] = nan_idx
+
+                    feat_emb[:, sample_idx, :] = self.cat_embedding(cat_vals).to(x.dtype)  # (s, emsize)
+                else:
+                    feat_emb[:, sample_idx, :] = self.cont_linear(feat_values[:, sample_idx:sample_idx+1, :]).squeeze(1).to(x.dtype)
+            
+            feature_embeddings.append(feat_emb)
+        
+        output = torch.stack(feature_embeddings, dim=0).sum(dim=0)  # (s, bf, emsize)
+        return (output,)
 
 
 class ConstantNormalizationInputEncoderStep(SeqEncStep):
