@@ -12,7 +12,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch_pfn/bin/python",
             "args": [
-                "PFNs/configs/tabpfn_prior_config_1_gpu_10h.py", // tabpfn_prior_config_1_gpu_10h tabpfn_prior_config_very_large_gla
+                "PFNs/configs/tabpfn_prior_config_1_gpu_10h_v2.py", // tabpfn_prior_config_1_gpu_10h tabpfn_prior_config_very_large_gla
                 "--checkpoint-save-load-prefix", "PFNs/models_diff/checkpoint.pt",
                 "--tensorboard-path", "PFNs/tensorboards", "--overwrite"
             ]
