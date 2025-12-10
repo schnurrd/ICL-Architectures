@@ -3,7 +3,7 @@
 	url = git@github.com:automl/PFNs.git
 [submodule "prior-repos/tabpfn-v1-prior"]
 	path = prior-repos/tabpfn-v1-prior
-	url = git@github.com:automl/tabpfn-v1-prior.git
+	url = git@github.com:schnurrd/tabpfn-v1-prior.git
 [submodule "prior-repos/tabularpriors"]
 	path = prior-repos/tabularpriors
 	url = git@github.com:automl/tabularpriors.git
