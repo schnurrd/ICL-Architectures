@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 
 import pfns.train
+from pfns.run_evaluation_cli import run_tabpfn_evaluation, print_results_summary
+from pfns.utils import get_default_device
 
 
 def parse_args():
@@ -230,6 +232,43 @@ def main():
 
     if config.train_state_dict_save_path is not None:
         print(f"Model saved to: {config.train_state_dict_save_path}")
+
+    if config.train_state_dict_save_path is None:
+        print(
+            "Skipping automatic evaluation because no train_state_dict_save_path was provided."
+        )
+        return
+
+    base_path = os.path.dirname(config.train_state_dict_save_path)
+    checkpoint_name = os.path.basename(config.train_state_dict_save_path)
+    eval_device = args.device or get_default_device()
+
+    print(
+        "\nStarting automatic evaluation on OpenCC benchmark with TabPFN only "
+        "(n_splits=5, batch_size_inference=16, preprocess_transforms=['none','power'], "
+        "max_features=20, max_samples=1000)..."
+    )
+
+    results = run_tabpfn_evaluation(
+        base_path=base_path,
+        checkpoint_name=checkpoint_name,
+        device=eval_device,
+        benchmark="opencc",
+        max_samples=1000,
+        max_features=20,
+        max_classes=10,
+        n_splits=5,
+        only_tabpfn=True,
+        n_jobs=4,
+        batch_size_inference=16,
+        n_ensemble_configurations=32,
+        preprocess_transforms=["none", "power"],
+    )
+
+    print_results_summary(
+        results,
+        title="Aggregated Results Across All Datasets (TabPFN only)",
+    )
 
 
 if __name__ == "__main__":

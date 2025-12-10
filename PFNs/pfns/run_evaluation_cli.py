@@ -19,6 +19,89 @@ from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENC
 from pfns.utils import get_default_device
 
 
+def run_tabpfn_evaluation(
+    *,
+    base_path: str,
+    checkpoint_name: str = "checkpoint.pt",
+    device: str | None = None,
+    benchmark: str = "opencc",
+    max_samples: int = 1000,
+    max_features: int = 20,
+    max_classes: int = 10,
+    n_splits: int = 5,
+    only_tabpfn: bool = False,
+    n_jobs: int = 4,
+    batch_size_inference: int = 32,
+    n_ensemble_configurations: int = 32,
+    preprocess_transforms: list[str] | tuple[str, ...] = ("none", "power"),
+):
+    """Run TabPFN (and optionally baselines) on the requested benchmark."""
+    if device is None:
+        device = get_default_device()
+
+    assert benchmark in ["opencc", "test"], "Benchmark must be 'opencc' or 'test'"
+    dataset_ids = OPENCC_BENCHMARK if benchmark == "opencc" else TEST_BENCHMARK
+
+    tabpfn = TabPFNClassifier(
+        base_path=base_path,
+        device=device,
+        model_string=checkpoint_name,
+        N_ensemble_configurations=n_ensemble_configurations,
+        preprocess_transforms=list(preprocess_transforms),
+        batch_size_inference=batch_size_inference,
+    )
+
+    models = [tabpfn] if only_tabpfn else [
+        tabpfn,
+        RandomForestBaseline(n_jobs=n_jobs),
+        XGBoostBaseline(n_jobs=n_jobs),
+    ]
+    model_names = ["TabPFN"] if only_tabpfn else ["TabPFN", "RandomForest", "XGBoost"]
+
+    results = evaluate_on_openml(
+        models=models,
+        model_names=model_names,
+        dataset_ids=dataset_ids,
+        max_samples=max_samples,
+        max_features=max_features,
+        max_classes=max_classes,
+        n_splits=n_splits,
+    )
+    return results
+
+
+def print_results_summary(results, title: str = "Aggregated Results Across All Datasets"):
+    if results.empty:
+        print("Evaluation produced no results.")
+        return
+
+    print("\n" + "=" * 95)
+    print(f"SUMMARY: {title}")
+    print("=" * 95)
+
+    summary = results.groupby('model').agg({
+        'accuracy': ['mean', 'std'],
+        'roc_auc': ['mean', 'std'],
+        'fit_time': ['mean'],
+        'predict_time': ['mean'],
+    }).round(4)
+
+    summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
+    summary = summary.sort_values('accuracy_mean', ascending=False)
+
+    print(f"{'Model':<20} {'Accuracy':>18} {'ROC-AUC':>18} {'Fit (s)':>14} {'Pred (s)':>14}")
+    print(f"{'':20} {'mean ± std':>18} {'mean ± std':>18} {'mean':>14} {'mean':>14}")
+    print("-" * 95)
+    for model in summary.index:
+        row = summary.loc[model]
+        acc_str = f"{row['accuracy_mean']:.4f} ± {row['accuracy_std']:.4f}"
+        auc_str = f"{row['roc_auc_mean']:.4f} ± {row['roc_auc_std']:.4f}"
+        fit_str = f"{row['fit_time_mean']:.2f}"
+        pred_str = f"{row['predict_time_mean']:.2f}"
+        print(f"{model:<20} {acc_str:>18} {auc_str:>18} {fit_str:>14} {pred_str:>14}")
+    print("=" * 95)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, required=True)
@@ -37,66 +120,27 @@ def main():
     parser.add_argument("--preprocess_transforms", type=str, nargs='+', default=["none", "power"], help="Preprocessing transforms to ensemble over for TabPFN")
     args = parser.parse_args()
     
-    if args.device is None:
-        args.device = get_default_device()
-    assert args.benchmark in ["opencc", "test"], "Benchmark must be 'opencc' or 'test'"
-    dataset_ids = OPENCC_BENCHMARK if args.benchmark == "opencc" else TEST_BENCHMARK
-    
-    tabpfn = TabPFNClassifier(
+    results = run_tabpfn_evaluation(
         base_path=args.model_path,
+        checkpoint_name=args.checkpoint_name,
         device=args.device,
-        model_string=args.checkpoint_name,
-        N_ensemble_configurations=args.n_ensemble_configurations,
-        preprocess_transforms=args.preprocess_transforms,
-        batch_size_inference=args.batch_size_inference,
-    )
-    
-    models = [tabpfn] if args.only_tabpfn else [
-        tabpfn,
-        RandomForestBaseline(n_jobs=args.n_jobs),
-        XGBoostBaseline(n_jobs=args.n_jobs),
-    ]
-    
-    results = evaluate_on_openml(
-        models=models,
-        model_names=["TabPFN", "RandomForest", "XGBoost"],
-        dataset_ids=dataset_ids,
+        benchmark=args.benchmark,
         max_samples=args.max_samples,
         max_features=args.max_features,
         max_classes=args.max_classes,
         n_splits=args.n_splits,
+        only_tabpfn=args.only_tabpfn,
+        n_jobs=args.n_jobs,
+        batch_size_inference=args.batch_size_inference,
+        n_ensemble_configurations=args.n_ensemble_configurations,
+        preprocess_transforms=args.preprocess_transforms,
     )
-    
-    if not results.empty:
-        print("\n" + "=" * 95)
-        print("SUMMARY: Aggregated Results Across All Datasets")
-        print("=" * 95)
-        
-        summary = results.groupby('model').agg({
-            'accuracy': ['mean', 'std'],
-            'roc_auc': ['mean', 'std'],
-            'fit_time': ['mean'],
-            'predict_time': ['mean'],
-        }).round(4)
-        
-        summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
-        summary = summary.sort_values('accuracy_mean', ascending=False)
-        
-        print(f"{'Model':<20} {'Accuracy':>18} {'ROC-AUC':>18} {'Fit (s)':>14} {'Pred (s)':>14}")
-        print(f"{'':20} {'mean ± std':>18} {'mean ± std':>18} {'mean':>14} {'mean':>14}")
-        print("-" * 95)
-        for model in summary.index:
-            row = summary.loc[model]
-            acc_str = f"{row['accuracy_mean']:.4f} ± {row['accuracy_std']:.4f}"
-            auc_str = f"{row['roc_auc_mean']:.4f} ± {row['roc_auc_std']:.4f}"
-            fit_str = f"{row['fit_time_mean']:.2f}"
-            pred_str = f"{row['predict_time_mean']:.2f}"
-            print(f"{model:<20} {acc_str:>18} {auc_str:>18} {fit_str:>14} {pred_str:>14}")
-        print("=" * 95)
-        
-        if args.output:
-            results.to_csv(args.output, index=False)
-            print(f"\nDetailed results saved to: {args.output}")
+
+    print_results_summary(results)
+
+    if args.output and not results.empty:
+        results.to_csv(args.output, index=False)
+        print(f"\nDetailed results saved to: {args.output}")
 
 
 if __name__ == "__main__":
