@@ -57,7 +57,7 @@ def get_openml_classification(did, max_samples, multiclass=True, shuffled=True):
     if max_samples:
         X, y = X[:max_samples], y[:max_samples]
 
-    return X, y, list(np.where(categorical_indicator)[0]), attribute_names
+    return X, y, np.where(categorical_indicator)[0].tolist(), attribute_names
 
 
 def load_openml_list(

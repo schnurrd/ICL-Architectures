@@ -105,18 +105,25 @@ class InferenceEngine:
         eval_position: int,
         transform_type: str,
         max_features: int,
-    ) -> torch.Tensor:
-        """Preprocess input data for one ensemble member."""
-        
+    ) -> tuple[torch.Tensor, list[int]]:
+        """Preprocess input data for one ensemble member and track categorical indices."""
+        categorical_inds = list(self.categorical_feats) if self.categorical_feats else []
+        active_indices = list(range(X.shape[2]))
+
         if X.shape[2] > max_features:
-            X = X[
-                :,
-                :,
-                sorted(np.random.choice(X.shape[2], max_features, replace=False)),
-            ]
+            selected = sorted(np.random.choice(X.shape[2], max_features, replace=False))
+            X = X[:, :, selected]
+            active_indices = [active_indices[i] for i in selected]
             print(
                 f"Warning: Subsampling features to {max_features} for preprocessing."
             )
+
+        categorical_inds = [
+            new_idx
+            for new_idx, orig_idx in enumerate(active_indices)
+            if orig_idx in self.categorical_feats
+        ]
+
         X = normalize_data(X, normalize_positions=eval_position)  # probably redundant
 
         # Remove constant features
@@ -125,6 +132,12 @@ class InferenceEngine:
             len(torch.unique(X[0 : y.shape[0], col])) > 1 for col in range(X.shape[1])
         ]
         X = X[:, sel]
+        active_indices = [idx for idx, keep in zip(active_indices, sel) if keep]
+        categorical_inds = [
+            new_idx
+            for new_idx, orig_idx in enumerate(active_indices)
+            if orig_idx in self.categorical_feats
+        ]
 
         # Apply sklearn transforms
         if transform_type != "none":
@@ -153,7 +166,7 @@ class InferenceEngine:
             X = torch.tensor(X_np).float()
 
         X = X.unsqueeze(1)
-        return X.to(self.device)
+        return X.to(self.device), categorical_inds
 
     def predict(
         self,
@@ -180,21 +193,16 @@ class InferenceEngine:
 
         y_train = y[:eval_position]
 
-        inputs_list, labels_list = self._prepare_ensemble_inputs(
+        inputs_list, labels_list, categorical_inds_list = self._prepare_ensemble_inputs(
             X, y_train, eval_position
         )
 
-        inputs_batched = torch.split(inputs_list, self.batch_size_inference, dim=1)
-        labels_batched = torch.split(labels_list, self.batch_size_inference, dim=1)
-
         all_outputs = []
-        for batch_input, batch_label in zip(inputs_batched, labels_batched):
-            batch_output = self._forward_batch(batch_input, batch_label, style)
+        for inp, lbl, cat_inds in zip(inputs_list, labels_list, categorical_inds_list):
+            batch_output = self._forward_batch(inp, lbl, style, cat_inds)
             all_outputs.append(batch_output)
 
-        outputs = torch.cat(all_outputs, dim=1)
-
-        final_output = self._aggregate_ensemble_outputs(outputs, return_logits)
+        final_output = self._aggregate_ensemble_outputs(all_outputs, return_logits)
 
         return final_output
 
@@ -207,6 +215,7 @@ class InferenceEngine:
         """Preprocess inputs for all ensemble members."""
         inputs = []
         labels = []
+        categorical_inds_list = []
 
         # Cache preprocessed data by transform type
         preprocessed_cache = {}
@@ -214,14 +223,19 @@ class InferenceEngine:
         for config in self.ensemble_configs:
             transform_type = config.transform_type
             if transform_type in preprocessed_cache:
-                X_processed = preprocessed_cache[transform_type].clone()
+                X_processed, cached_cat_inds = preprocessed_cache[transform_type]
+                X_processed = X_processed.clone()
+                cat_inds_processed = list(cached_cat_inds)
             else:
-                X_processed = self._preprocess_data(
+                X_processed, cat_inds_processed = self._preprocess_data(
                     X.clone(), y, eval_position, transform_type, config.max_features
                 )
                 if self.no_grad:
                     X_processed = X_processed.detach()
-                preprocessed_cache[transform_type] = X_processed
+                preprocessed_cache[transform_type] = (
+                    X_processed,
+                    list(cat_inds_processed),
+                )
 
             y_shifted = ((y + config.class_shift) % self.num_classes).float()
 
@@ -234,6 +248,10 @@ class InferenceEngine:
                     ],
                     dim=-1,
                 )
+                cat_inds_processed = [
+                    (idx - config.feature_shift) % X_processed.shape[2]
+                    for idx in cat_inds_processed
+                ]
 
             # Extend features to max_features if needed
             if self.extend_features:
@@ -249,14 +267,16 @@ class InferenceEngine:
 
             inputs.append(X_processed)
             labels.append(y_shifted)
+            categorical_inds_list.append(cat_inds_processed)
 
-        return torch.cat(inputs, dim=1), torch.cat(labels, dim=1)
+        return inputs, labels, categorical_inds_list
 
     def _forward_batch(
         self,
         batch_input: torch.Tensor,
         batch_label: torch.Tensor,
         style: torch.Tensor | None,
+        categorical_inds: list[int] | None,
     ) -> torch.Tensor:
         """Forward pass for a batch."""
         import warnings
@@ -275,31 +295,40 @@ class InferenceEngine:
                     message="torch.cuda.amp.autocast only affects CUDA ops",
                 )
 
-                if self.device == "cpu":
-                    output = checkpoint(
-                        self._forward_fn,
-                        batch_input,
-                        batch_label,
-                        style,
-                        use_reentrant=False,
-                    )
-                else:
-                    with torch.amp.autocast("cuda", enabled=self.fp16_inference):
-                        output = checkpoint(
+                outputs = []
+                for split_input, split_label in zip(
+                    torch.split(batch_input, self.batch_size_inference, dim=1),
+                    torch.split(batch_label, self.batch_size_inference, dim=1),
+                ):
+                    if self.device == "cpu":
+                        out = checkpoint(
                             self._forward_fn,
-                            batch_input,
-                            batch_label,
+                            split_input,
+                            split_label,
                             style,
+                            categorical_inds,
                             use_reentrant=False,
                         )
+                    else:
+                        with torch.amp.autocast("cuda", enabled=self.fp16_inference):
+                            out = checkpoint(
+                                self._forward_fn,
+                                split_input,
+                                split_label,
+                                style,
+                                categorical_inds,
+                                use_reentrant=False,
+                            )
+                    outputs.append(out)
 
-        return output
+        return torch.cat(outputs, dim=1)
 
     def _forward_fn(
         self,
         x: torch.Tensor,
         y: torch.Tensor,
         style: torch.Tensor | None,
+        categorical_inds: list[int] | None,
     ) -> torch.Tensor:
         """Actual forward function through the model."""
         
@@ -307,7 +336,12 @@ class InferenceEngine:
         y_bf = y.transpose(0, 1).float()
         style_bf = style.repeat(x_bf.shape[0], 1) if style is not None else None
 
-        output = self.model.forward(x=x_bf, y=y_bf, style=style_bf).transpose(0, 1)
+        output = self.model.forward(
+            x=x_bf,
+            y=y_bf,
+            style=style_bf,
+            categorical_inds=categorical_inds,
+        ).transpose(0, 1)
 
         output = output[:, :, 0 : self.num_classes]
 
@@ -317,19 +351,12 @@ class InferenceEngine:
 
     def _aggregate_ensemble_outputs(
         self,
-        outputs: torch.Tensor,
+        outputs: list[torch.Tensor],
         return_logits: bool,
     ) -> torch.Tensor:
         """Aggregate outputs from all ensemble members."""
-        # Reshape to separate ensemble members
-        # outputs shape: [n_samples, n_ensemble * batch, n_classes]
-        n_ensemble = len(self.ensemble_configs)
-        batch_size = outputs.shape[1] // n_ensemble
-
         ensemble_outputs = []
-        for i, config in enumerate(self.ensemble_configs):
-            output_i = outputs[:, i * batch_size : (i + 1) * batch_size, :]
-
+        for output_i, config in zip(outputs, self.ensemble_configs):
             # Reverse class shift
             if config.class_shift > 0:
                 output_i = torch.cat(
@@ -345,7 +372,6 @@ class InferenceEngine:
 
             ensemble_outputs.append(output_i)
 
-        # Average across ensemble
         aggregated = torch.stack(ensemble_outputs).mean(dim=0)
 
         if self.average_logits and not return_logits:
