@@ -34,7 +34,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         flexible=True,                 
         differentiable=True,
         return_categorical_mask=True,
-        nan_handling=True,
+        nan_handling=False,
     )
     
     batch_shape = BatchShapeSamplerConfig(
@@ -52,7 +52,7 @@ def get_config(config_index: int = 0) -> MainConfig:
             variable_num_features_normalization=True,
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
-            nan_handling=True, # currently only nan to mean imputation works
+            nan_handling=False, # currently only nan to mean imputation works
             use_categorical_encoder=True
         ),
         y_encoder=EncoderConfig(

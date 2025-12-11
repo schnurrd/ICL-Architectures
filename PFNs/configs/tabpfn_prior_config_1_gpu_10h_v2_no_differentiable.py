@@ -32,8 +32,9 @@ def get_config(config_index: int = 0) -> MainConfig:
         max_num_classes=10,
         max_num_features=max_num_features,          
         flexible=True,                 
-        differentiable=True,
+        differentiable=False,
         return_categorical_mask=True,
+        nan_handling=True,
     )
     
     batch_shape = BatchShapeSamplerConfig(
@@ -51,7 +52,7 @@ def get_config(config_index: int = 0) -> MainConfig:
             variable_num_features_normalization=True,
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
-            nan_handling=False,  # todo fix, currently broken
+            nan_handling=True, # currently only nan to mean imputation works
             use_categorical_encoder=True
         ),
         y_encoder=EncoderConfig(
@@ -72,7 +73,7 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=1.5e-4,
+        lr=1e-4,
         weight_decay=0.01,
     )
 

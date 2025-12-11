@@ -97,8 +97,8 @@ class EncoderConfig(base_config.BaseConfig):
                 )
             )
         if self.nan_handling:
-            encoder_sequence.append(NanHandlingEncoderStep())
-            in_keys_for_linear = ("main", "nan_indicators")
+            encoder_sequence.append(NanHandlingEncoderStep(keep_nans=False, out_keys=("main",)))
+            in_keys_for_linear = ("main",)
 
         if self.use_categorical_encoder:
             encoder_sequence.append(
@@ -434,7 +434,7 @@ class OrdinalEncoderStep(SeqEncStep):
             categorical_inds: Per-group categorical indices [[0], [0], [], ...]
             single_eval_pos: Position to split train/test
         """
-        x = torch.cat(x, dim=-1)
+        x = x[0]
         self.categorical_inds_ = categorical_inds or []
 
         if any(not isinstance(entry, list) for entry in self.categorical_inds_):
@@ -484,25 +484,27 @@ class OrdinalEncoderStep(SeqEncStep):
             x: Input tensor (seq_len, batch*groups, num_features)
             categorical_inds: Per-group categorical indices
         """
-        x = torch.cat(x, dim=-1).clone()
+        main_x = x[0].clone()
+        passthrough = x[1:]  # nan indicators or other inputs 
+
         categorical_inds = (
             categorical_inds if categorical_inds is not None else self.categorical_inds_
         )
 
         if not categorical_inds or all(len(inds) == 0 for inds in categorical_inds):
-            return (x,)
+            return (main_x, *passthrough)
 
         if any(not isinstance(entry, list) for entry in categorical_inds):
             raise ValueError("categorical_inds must be a list of lists (per-group).")
 
         if not self._group_encoders:
-            return (x,)
+            return (main_x, *passthrough)
 
         num_groups = len(categorical_inds)
-        if x.shape[1] % num_groups != 0:
+        if main_x.shape[1] % num_groups != 0:
             raise ValueError("batch*groups dimension must be divisible by num_groups")
-        batch_size = x.shape[1] // num_groups  # batch_size from (s, b*num_groups, f_per_group)
-        features_per_group = x.shape[-1]  # features per group
+        batch_size = main_x.shape[1] // num_groups  # batch_size from (s, b*num_groups, f_per_group)
+        features_per_group = main_x.shape[-1]  # features per group
 
         for batch_idx in range(batch_size):
             for group_idx, inds in enumerate(categorical_inds):
@@ -517,17 +519,17 @@ class OrdinalEncoderStep(SeqEncStep):
                     continue
 
                 sample_idx = batch_idx * num_groups + group_idx
-                group_features = x[:, sample_idx]  # (seq, features_per_group)
+                group_features = main_x[:, sample_idx]  # (seq, features_per_group)
                 cat_data = group_features[:, cat_features].reshape(-1, len(cat_features))
 
                 encoded = enc.transform(cat_data.cpu().numpy())
-                encoded = torch.from_numpy(encoded).to(x.device, x.dtype)
-                encoded = encoded.view(x.shape[0], len(cat_features))
+                encoded = torch.from_numpy(encoded).to(main_x.device, main_x.dtype)
+                encoded = encoded.view(main_x.shape[0], len(cat_features))
 
                 for idx, feat_idx in enumerate(cat_features):
-                    x[:, sample_idx, feat_idx] = encoded[:, idx]
+                    main_x[:, sample_idx, feat_idx] = encoded[:, idx]
 
-        return (x,)
+        return (main_x, *passthrough)
 
 class MixedFeatureEncoderStep(SeqEncStep):
     """Combines linear encoding for continuous and embeddings for categorical features.
@@ -709,6 +711,9 @@ class NanHandlingEncoderStep(SeqEncStep):
         # replace nans with the mean of the corresponding feature
         x = x.clone()  # clone to avoid inplace operations
         x[nan_mask] = self.feature_means_.unsqueeze(0).expand_as(x)[nan_mask]
+        
+        if not self.keep_nans:
+            return (x,)
 
         return x, nans_indicator
 

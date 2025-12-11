@@ -53,7 +53,7 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
             nan_handling=True, # currently only nan to mean imputation works
-            use_categorical_encoder=True
+            use_categorical_encoder=False
         ),
         y_encoder=EncoderConfig(
             nan_handling=True,
