@@ -72,16 +72,18 @@ class EncoderConfig(base_config.BaseConfig):
     def create_encoder(self, features, emsize):
         encoder_sequence = []
         in_keys_for_linear = ("main",)
-        if (
-            self.constant_normalization_mean is not None
-            or self.constant_normalization_std is not None
-        ):
+        
+        if self.use_categorical_encoder:
             encoder_sequence.append(
-                ConstantNormalizationInputEncoderStep(
-                    mean=self.constant_normalization_mean,
-                    std=self.constant_normalization_std,
+                OrdinalEncoderStep( # just perform a ordinal encoding but don't do more processing
+                    in_keys=in_keys_for_linear,
+                    out_keys=in_keys_for_linear,
                 )
             )
+            
+        if self.nan_handling:
+            encoder_sequence.append(NanHandlingEncoderStep(keep_nans=False, out_keys=("main",)))
+        
         if self.train_normalization:
             encoder_sequence.append(
                 InputNormalizationEncoderStep(
@@ -90,42 +92,24 @@ class EncoderConfig(base_config.BaseConfig):
                     remove_outliers=True,
                 )
             )
+        
+        
         if self.variable_num_features_normalization:
             encoder_sequence.append(
                 VariableNumFeaturesEncoderStep(
                     num_features=features,
                 )
             )
-        if self.nan_handling:
-            encoder_sequence.append(NanHandlingEncoderStep(keep_nans=False, out_keys=("main",)))
-            in_keys_for_linear = ("main",)
-
-        if self.use_categorical_encoder:
-            encoder_sequence.append(
-                OrdinalEncoderStep(
-                    in_keys=in_keys_for_linear,
-                    out_keys=in_keys_for_linear,
-                )
-            )
-            encoder_sequence.append(
-                MixedFeatureEncoderStep(
-                    num_features=features * len(in_keys_for_linear),
-                    emsize=emsize if self.hidden_size is None else self.hidden_size,
-                    max_categories=self.max_categories,
-                    in_keys=in_keys_for_linear,
-                    out_keys=("output" if self.hidden_size is None else "main",),
-                ),
-            )
-        else:
-            encoder_sequence.append(
-                LinearInputEncoderStep(
-                    num_features=features * len(in_keys_for_linear),
-                    emsize=emsize if self.hidden_size is None else self.hidden_size,
-                    in_keys=in_keys_for_linear,
-                    out_keys=("output" if self.hidden_size is None else "main",),
-                ),
-            )
         
+        encoder_sequence.append(
+            LinearInputEncoderStep(
+                num_features=features * len(in_keys_for_linear),
+                emsize=emsize if self.hidden_size is None else self.hidden_size,
+                in_keys=in_keys_for_linear,
+                out_keys=("output" if self.hidden_size is None else "main",),
+            ),
+        )
+    
         if self.hidden_size is not None:
             encoder_sequence.append(
                 LinearInputEncoderStep(
@@ -533,6 +517,8 @@ class OrdinalEncoderStep(SeqEncStep):
 
 class MixedFeatureEncoderStep(SeqEncStep):
     """Combines linear encoding for continuous and embeddings for categorical features.
+    
+    Currently does not work well!
     
     Uses per-group categorical_inds from the prior.
     """
