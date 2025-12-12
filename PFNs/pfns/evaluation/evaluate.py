@@ -33,7 +33,10 @@ def evaluate_model(
     
     for train_idx, test_idx in cv.split(X, y):
         start = time.time()
-        model.fit(X[train_idx], y[train_idx])
+        fit_kwargs = {}
+        if categorical_feats is not None:
+            fit_kwargs["categorical_feats"] = categorical_feats
+        model.fit(X[train_idx], y[train_idx], **fit_kwargs)
         fit_time = time.time() - start
         
         start = time.time()
