@@ -12,6 +12,9 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder
 from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
+from tabicl import TabICLClassifier
+import warnings
+from contextlib import contextmanager
 
 
 def _cat_list(categorical_feats) -> list[int]:
@@ -30,6 +33,18 @@ def _preprocessor(cat: list[int]) -> ColumnTransformer:
         ],
         remainder="passthrough",
     )
+
+
+@contextmanager
+def _ignore_sklearn_futurewarnings():
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="`BaseEstimator._validate_data` is deprecated",
+            category=FutureWarning,
+            module="sklearn.base",
+        )
+        yield
 
 
 class RandomForestBaseline:
@@ -161,10 +176,45 @@ class CatBoostBaseline:
             raise RuntimeError("Call fit() first.")
         return np.asarray(self.model.predict_proba(X))
 
+class TabICLBaseline:
+    name = "TabICL"
+
+    def __init__(self, **tabicl_kwargs):
+        self.tabicl_kwargs = tabicl_kwargs
+        self.model: Pipeline | None = None
+        self.classes_: np.ndarray | None = None
+
+    def fit(self, X: np.ndarray, y: np.ndarray, categorical_feats=None):
+        cat = _cat_list(categorical_feats)
+        self.classes_, y_mapped = _encode_labels(y)
+
+        self.model = Pipeline(
+            steps=[
+                ("preprocess", _preprocessor(cat)),
+                ("clf", TabICLClassifier(**self.tabicl_kwargs)),
+            ]
+        )
+        with _ignore_sklearn_futurewarnings():
+            self.model.fit(X, y_mapped)
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        if self.model is None or self.classes_ is None:
+            raise RuntimeError("Call fit() first.")
+        with _ignore_sklearn_futurewarnings():
+            y_pred = np.asarray(self.model.predict(X)).astype(np.int64)
+        return self.classes_[y_pred]
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        if self.model is None:
+            raise RuntimeError("Call fit() first.")
+        with _ignore_sklearn_futurewarnings():
+            return np.asarray(self.model.predict_proba(X))
 
 def get_baselines(n_jobs: int = 4, random_state: int = 42):
     return [
         RandomForestBaseline(n_jobs=n_jobs, random_state=random_state),
         XGBoostBaseline(n_jobs=n_jobs, random_state=random_state),
         CatBoostBaseline(n_jobs=n_jobs, random_state=random_state),
+        TabICLClassifier(),
     ]

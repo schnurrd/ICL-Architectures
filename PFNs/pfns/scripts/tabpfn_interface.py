@@ -407,7 +407,6 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         batch_size_inference: int = 32,
         subsample_features: bool = False,
         preprocess_transforms: list[str] = None,
-        categorical_feats: tuple[int, ...] = (),
     ):
         """
         Initializes the classifier and loads the model.
@@ -455,7 +454,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.batch_size_inference = batch_size_inference
         self.subsample_features = subsample_features
         self.preprocess_transforms = preprocess_transforms
-        self.categorical_feats = categorical_feats
+        self.categorical_feats: tuple[int, ...] = ()
 
         model_key = model_string + "|" + str(device)
         if model_key in self.models_in_memory:
@@ -495,7 +494,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.classes_ = cls
         return np.asarray(y, dtype=np.float64, order="C")
 
-    def fit(self, X, y, overwrite_warning=False):
+    def fit(self, X, y, categorical_feats=None, overwrite_warning=False):
         """
         Validates the training set and stores it.
 
@@ -504,6 +503,8 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         else:
         X should be of type torch.Tensors (y can be np.array or torch.Tensor)
         """
+        if categorical_feats is not None:
+            self.categorical_feats = tuple(categorical_feats)
         if self.no_grad:
             # Check that X and y have correct shape
             X, y = check_X_y(X, y, ensure_all_finite=False)

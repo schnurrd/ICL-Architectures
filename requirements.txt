@@ -10,4 +10,5 @@ gpytorch
 openml
 xgboost
 catboost
+tabicl
 flash-linear-attention

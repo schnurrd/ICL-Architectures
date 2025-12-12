@@ -2,7 +2,7 @@
 Simple Evaluation Framework for PFN Models
 """
 
-from .baselines import RandomForestBaseline, XGBoostBaseline, CatBoostBaseline, get_baselines
+from .baselines import RandomForestBaseline, XGBoostBaseline, CatBoostBaseline, TabICLBaseline, get_baselines
 from .evaluate import (
     evaluate_model,
     evaluate_on_openml,
@@ -13,6 +13,7 @@ __all__ = [
     "RandomForestBaseline",
     "XGBoostBaseline",
     "CatBoostBaseline",
+    "TabICLBaseline",
     "get_baselines",
     "evaluate_model",
     "evaluate_on_openml",
