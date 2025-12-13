@@ -100,7 +100,7 @@ def evaluate_on_openml(
         num_feats=max_features,
         max_num_classes=max_classes,
         return_capped=True,
-        filter_for_nan=True,
+        filter_for_nan=False,
     )
     
     all_results = []
