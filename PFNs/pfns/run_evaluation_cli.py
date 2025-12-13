@@ -35,7 +35,7 @@ def run_tabpfn_evaluation(
     n_jobs: int = 4,
     batch_size_inference: int = 32,
     n_ensemble_configurations: int = 32,
-    preprocess_transforms: list[str] | tuple[str, ...] = ("none", "power"),
+    preprocess_transforms: list[str] | tuple[str, ...] = ("none", "power", "robust"),
 ):
     """Run TabPFN (and optionally baselines) on the requested benchmark."""
     if device is None:
@@ -121,7 +121,7 @@ def main():
     parser.add_argument("--n_jobs", type=int, default=4, help="Number of CPU cores for baseline models (RF, XGBoost)")
     parser.add_argument("--batch_size_inference", type=int, default=32, help="Batch size for TabPFN inference. Lower values reduce memory usage without affecting accuracy")
     parser.add_argument("--n_ensemble_configurations", type=int, default=32, help="Number of ensemble configurations for TabPFN")
-    parser.add_argument("--preprocess_transforms", type=str, nargs='+', default=["none", "power"], help="Preprocessing transforms to ensemble over for TabPFN")
+    parser.add_argument("--preprocess_transforms", type=str, nargs='+', default=["none", "power", "robust"], help="Preprocessing transforms to ensemble over for TabPFN")
     args = parser.parse_args()
     
     results = run_tabpfn_evaluation(
