@@ -450,7 +450,7 @@ class OrdinalEncoderStep(SeqEncStep):
                 enc = OrdinalEncoder(
                     handle_unknown="use_encoded_value",
                     unknown_value=-1,
-                    encoded_missing_value=-1,
+                    encoded_missing_value=np.nan,
                     dtype=np.float32,
                 )
                 enc.fit(cat_data.cpu().numpy())
