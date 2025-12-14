@@ -56,7 +56,7 @@ class TabularModel(nn.Module):
             | None
         ) = None,
         cache_trainset_representation: bool = False,
-        seed: int | None = None,
+        seed: int | None = 0,
         style_encoder: nn.Module | None = None,
         y_style_encoder: nn.Module | None = None,
         attention_between_features: bool = True,
@@ -158,8 +158,9 @@ class TabularModel(nn.Module):
             self.feature_positional_embedding_embeddings = nn.Linear(ninp // 4, ninp)
 
         self.cached_feature_positional_embeddings: torch.Tensor | None = None
-        self.seed = seed if seed is not None else random.randint(0, 1_000_000)  # noqa: S311
 
+        self.seed = seed
+        
         self.style_encoder = style_encoder
         if y_style_encoder is not None:
             assert attention_between_features, "Attention between features must be True when using a y_style_encoder, otherwise only use a style_encoder."
@@ -626,51 +627,58 @@ class TabularModel(nn.Module):
             x += self.cached_embeddings[None, None]
             return x, y
 
-        with isolate_torch_rng(self.seed, device=x.device):
-            if self.feature_positional_embedding == "normal_rand_vec":
-                embs = torch.randn(
+        positional_embedding_rng = torch.Generator(device=x.device).manual_seed(self.seed)
+        
+        if self.feature_positional_embedding == "normal_rand_vec":
+            embs = torch.randn(
+                (x.shape[2], x.shape[3]),  # (num_groups, emsize)
+                device=x.device,
+                dtype=x.dtype,
+                generator=positional_embedding_rng,
+            )
+            x += embs[None, None]  # Broadcast across batch and seq_len
+        elif self.feature_positional_embedding == "uni_rand_vec":
+            embs = (
+                torch.rand(
                     (x.shape[2], x.shape[3]),  # (num_groups, emsize)
                     device=x.device,
                     dtype=x.dtype,
+                    generator=positional_embedding_rng,
                 )
-                x += embs[None, None]  # Broadcast across batch and seq_len
-            elif self.feature_positional_embedding == "uni_rand_vec":
-                embs = (
-                    torch.rand(
-                        (x.shape[2], x.shape[3]),  # (num_groups, emsize)
-                        device=x.device,
-                        dtype=x.dtype,
-                    )
-                    * 2
-                    - 1
+                * 2
+                - 1
+            )
+            x += embs[None, None]
+        elif self.feature_positional_embedding == "learned":
+            w = self.feature_positional_embedding_embeddings.weight
+            embs = w[
+                torch.randint(
+                    0,
+                    w.shape[0],
+                    (x.shape[2],),  # num_groups indices
+                    generator=positional_embedding_rng,
                 )
-                x += embs[None, None]
-            elif self.feature_positional_embedding == "learned":
-                w = self.feature_positional_embedding_embeddings.weight
-                embs = w[
-                    torch.randint(
-                        0,
-                        w.shape[0],
-                        (x.shape[2],),  # num_groups indices
-                    )
-                ]  # (num_groups, emsize)
-                x += embs[None, None]
-            elif self.feature_positional_embedding == "subspace":
-                # x.shape[2] is num_groups, x.shape[3] is emsize
-                # Generate (num_groups, emsize // 4) random vectors
-                rand_vecs_for_subspace = torch.randn(
-                    (x.shape[2], x.shape[3] // 4),
-                    device=x.device,
-                    dtype=x.dtype,
-                )
-                embs = self.feature_positional_embedding_embeddings(
-                    rand_vecs_for_subspace
-                )  # (num_groups, emsize)
-                x += embs[None, None]
-            elif self.feature_positional_embedding is None:
-                embs = None
-            else:
-                raise ValueError(f"Unknown {self.feature_positional_embedding=}")
+            ]  # (num_groups, emsize)
+            x += embs[None, None]
+        elif self.feature_positional_embedding == "subspace":
+            # x.shape[2] is num_groups, x.shape[3] is emsize
+            # Generate (num_groups, emsize // 4) random vectors
+            rand_vecs_for_subspace = torch.randn(
+                (x.shape[2], x.shape[3] // 4),
+                device=x.device,
+                dtype=x.dtype,
+                generator=positional_embedding_rng,
+            )
+            # print(f"beginning of rand_vecs_for_subspace:")
+            # print(rand_vecs_for_subspace[:, 0])
+            embs = self.feature_positional_embedding_embeddings(
+                rand_vecs_for_subspace
+            )  # (num_groups, emsize)
+            x += embs[None, None]
+        elif self.feature_positional_embedding is None:
+            embs = None
+        else:
+            raise ValueError(f"Unknown {self.feature_positional_embedding=}")
 
         self.cached_embeddings = None
         if cache_embeddings and embs is not None:

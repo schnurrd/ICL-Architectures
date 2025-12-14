@@ -25,9 +25,10 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
             "args": [
-                "--model_path", "PFNs/models_diff/1_gpu_10h_v2.pt/tabpfn_prior_config_1_gpu_10h_v2_0_no_seed", 
+                "--model_path", "PFNs/models_diff/1_gpu_10h_v3_larger_compute.pt/tabpfn_prior_config_1_gpu_10h_v3_large_compute_0_no_seed", 
                 "--only_tabpfn", 
-                "--max_features", "20"
+                "--max_features", "20",
+                "--max_samples", "1000",
             ]
         }
     ]

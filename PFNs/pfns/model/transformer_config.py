@@ -42,6 +42,7 @@ class ModelConfig(base_config.BaseConfig):
     nhid: tp.Optional[int] = None
     nlayers: tp.Optional[int] = None
     nhead: tp.Optional[int] = None
+    seed: int = 0
 
     def create_model(self) -> transformer.TabularModel:
         if self.nhid is not None or self.nlayers is not None or self.nhead is not None:
@@ -110,6 +111,7 @@ class ModelConfig(base_config.BaseConfig):
             y_style_encoder=y_style_encoder,
             batch_first=True,  # model is batch_first by default now
             feature_positional_embedding=self.feature_positional_embedding,
+            seed=self.seed,  # Seed is important for reproducibility of feature positional embeddings
             **(self.model_extra_args or {}),
         )
         model.criterion = criterion
