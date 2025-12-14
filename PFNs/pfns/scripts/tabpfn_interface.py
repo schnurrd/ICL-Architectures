@@ -492,7 +492,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                 % len(cls)
             )
         self.classes_ = cls
-        return np.asarray(y, dtype=np.float64, order="C")
+        return np.asarray(y, dtype=np.int64, order="C")
 
     def fit(self, X, y, categorical_feats=None, overwrite_warning=False):
         """
@@ -510,8 +510,6 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             X, y = check_X_y(X, y, ensure_all_finite=False)
         # Store the classes seen during fit
         y = self._validate_targets(y)
-        self.label_encoder = LabelEncoder()  # encodes y to 0,...,n_classes-1
-        y = self.label_encoder.fit_transform(y)
 
         self.X_ = X
         self.y_ = y

@@ -55,7 +55,6 @@ def evaluate_model(
         
         results.append({"accuracy": acc, "roc_auc": auc, "log_loss": ll, 
                         "fit_time": fit_time, "predict_time": predict_time})
-    
     return {k: np.mean([r[k] for r in results]) for k in results[0]}
 
 
