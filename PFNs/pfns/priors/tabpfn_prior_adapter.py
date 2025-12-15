@@ -80,9 +80,12 @@ class TabPFNPriorConfig(PriorConfig):
             batch = next(batch_iterator)  # get a single batch from the prior
             
             # if -100 in y resample batch
-            if -100 in batch["y"]:
-                print("Warning -100 in y, resampling batch from prior")
+            i = 1
+            while -100 in batch["y"]: # might be to harsh, maybe only resample if all are -100
                 batch = next(batch_iterator)
+                if i >= 2:
+                    print("Warning: Resampling batch due to -100 in y failed multiple times.")
+                i += 1
             
             # Normalize by used features should like note be necessary anymore
             #x = normalize_by_used_features_f(
