@@ -62,7 +62,7 @@ class TabPFNPriorConfig(PriorConfig):
             batch_iterator = iter(
                 build_tabpfn_prior(
                     prior_type=self.prior_type,
-                    num_steps=1,
+                    num_steps=1000, # we typically only need one. Only higher for the case of resampling
                     batch_size=batch_size,
                     num_datapoints_max=seq_len,
                     num_features=num_features,
@@ -78,6 +78,11 @@ class TabPFNPriorConfig(PriorConfig):
             )
 
             batch = next(batch_iterator)  # get a single batch from the prior
+            
+            # if -100 in y resample batch
+            if -100 in batch["y"]:
+                print("Warning -100 in y, resampling batch from prior")
+                batch = next(batch_iterator)
             
             # Normalize by used features should like note be necessary anymore
             #x = normalize_by_used_features_f(
