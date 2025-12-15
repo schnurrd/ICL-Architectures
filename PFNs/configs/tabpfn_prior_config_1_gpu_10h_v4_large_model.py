@@ -38,7 +38,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
     
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=2,
+        batch_size=8,
         min_single_eval_pos=24,
         max_seq_len=1000,
         min_num_features=2,
@@ -58,9 +58,9 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=256,
+        emsize=512,
         backbone=TransformerBackboneConfig(
-            nhid=256 * 4,
+            nhid=512 * 4,
             nlayers=12,
             nhead=8,
         ),
@@ -71,7 +71,7 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=1.5e-4,
+        lr=1e-4,
         weight_decay=0.01,
     )
 
@@ -82,11 +82,11 @@ def get_config(config_index: int = 0) -> MainConfig:
         batch_shape_sampler=batch_shape,
         epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=1000,
+        steps_per_epoch=250,
         n_targets_per_input=1,
         train_mixed_precision=True,
         scheduler="cosine_decay",
         progress_bar=True,
         num_workers=4,
-        aggregate_k_gradients=4,
+        aggregate_k_gradients=1,
     )
