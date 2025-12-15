@@ -103,6 +103,16 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
     }).round(4)
     summary = summary.sort_values('accuracy_mean', ascending=False)
 
+    print("\nLaTeX table rows:")
+    for model in summary.index:
+        row = summary.loc[model]
+        acc_str = f"{row['accuracy_mean']:.4f} ± {row['accuracy_std']:.4f}"
+        auc_str = f"{row['roc_auc_mean']:.4f} ± {row['roc_auc_std']:.4f}"
+        fit_str = f"{row['fit_time_mean']:.2f}"
+        pred_str = f"{row['predict_time_mean']:.2f}"
+        print(f"{model} & {acc_str} & {auc_str} & {fit_str} & {pred_str} \\\\")
+
+    print("\nFormatted Table:")
     print(f"{'Model':<20} {'Accuracy':>18} {'ROC-AUC':>18} {'Fit (s)':>14} {'Pred (s)':>14}")
     print(f"{'':20} {'mean ± std':>18} {'mean ± std':>18} {'mean':>14} {'mean':>14}")
     print("-" * 95)
