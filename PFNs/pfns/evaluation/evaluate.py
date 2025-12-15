@@ -1,7 +1,3 @@
-"""
-Simple Evaluation Utilities - reuses tabular_datasets.py for OpenML loading
-"""
-
 from __future__ import annotations
 import time
 import numpy as np
