@@ -83,14 +83,24 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
     print(f"SUMMARY: {title}")
     print("=" * 95)
 
-    summary = results.groupby('model').agg({
+    # Compute per-dataset mean and std, then aggregate across datasets for each model
+    per_dataset = results.groupby(['model', 'dataset']).agg({
         'accuracy': ['mean', 'std'],
         'roc_auc': ['mean', 'std'],
         'fit_time': ['mean'],
         'predict_time': ['mean'],
-    }).round(4)
+    })
+    per_dataset.columns = ['_'.join(col).strip() for col in per_dataset.columns.values]
+    per_dataset = per_dataset.reset_index()
 
-    summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
+    summary = per_dataset.groupby('model').agg({
+        'accuracy_mean': 'mean',
+        'accuracy_std': 'mean',  # mean std over datasets
+        'roc_auc_mean': 'mean',
+        'roc_auc_std': 'mean',
+        'fit_time_mean': 'mean',
+        'predict_time_mean': 'mean',
+    }).round(4)
     summary = summary.sort_values('accuracy_mean', ascending=False)
 
     print(f"{'Model':<20} {'Accuracy':>18} {'ROC-AUC':>18} {'Fit (s)':>14} {'Pred (s)':>14}")

@@ -2,7 +2,7 @@ from __future__ import annotations
 import time
 import numpy as np
 import pandas as pd
-from typing import List, Dict
+from typing import List, Any
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, roc_auc_score, log_loss
 
@@ -16,8 +16,8 @@ def evaluate_model(
     n_splits: int = 5,
     random_state: int = 42,
     categorical_feats: list[int] | tuple[int, ...] | None = None,
-) -> Dict[str, float]:
-    """Evaluate a model with cross-validation."""
+) -> list[dict[str, Any]]:
+    """Evaluate a model with cross-validation. Returns per-split metrics (no aggregation)."""
     X = np.nan_to_num(np.asarray(X, dtype=np.float32), nan=0.0)
     y = np.asarray(y, dtype=np.int64)
 
@@ -25,7 +25,7 @@ def evaluate_model(
         model.categorical_feats = tuple(categorical_feats)
     
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-    results = []
+    results: list[dict[str, Any]] = []
     
     for train_idx, test_idx in cv.split(X, y):
         start = time.time()
@@ -49,9 +49,9 @@ def evaluate_model(
               roc_auc_score(y[test_idx], y_proba, multi_class="ovr", average="weighted")
         ll = log_loss(y[test_idx], y_proba)
         
-        results.append({"accuracy": acc, "roc_auc": auc, "log_loss": ll, 
+        results.append({"split": len(results), "accuracy": acc, "roc_auc": auc, "log_loss": ll, 
                         "fit_time": fit_time, "predict_time": predict_time})
-    return {k: np.mean([r[k] for r in results]) for k in results[0]}
+    return results
 
 
 def compare_models(
@@ -62,21 +62,28 @@ def compare_models(
     n_splits: int = 5,
     categorical_feats: list[int] | tuple[int, ...] | None = None,
 ) -> pd.DataFrame:
-    """Compare multiple models on a single dataset."""
-    results = []
+    """Compare multiple models on a single dataset (returns per-split rows)."""
+    results: list[dict[str, Any]] = []
     for model, name in zip(models, model_names):
         print(f"Evaluating {name}...")
-        result = evaluate_model(
+        split_results = evaluate_model(
             model,
             X,
             y,
             n_splits=n_splits,
             categorical_feats=categorical_feats,
         )
-        result["model"] = name
-        results.append(result)
-        print(f"  Accuracy: {result['accuracy']:.4f}")
-    return pd.DataFrame(results)[["model", "accuracy", "roc_auc", "log_loss", "fit_time"]]
+        for row in split_results:
+            row.update({"model": name})
+        results.extend(split_results)
+
+        mean_acc = float(np.mean([r["accuracy"] for r in split_results])) if split_results else float("nan")
+        print(f"  Mean accuracy over splits: {mean_acc:.4f}")
+
+    df = pd.DataFrame(results)
+    desired_cols = ["model", "split", "accuracy", "roc_auc", "log_loss", "fit_time", "predict_time"]
+    cols = [c for c in desired_cols if c in df.columns] + [c for c in df.columns if c not in desired_cols]
+    return df[cols]
 
 
 def evaluate_on_openml(
@@ -98,7 +105,7 @@ def evaluate_on_openml(
         filter_for_nan=False,
     )
     
-    all_results = []
+    all_results: list[dict[str, Any]] = []
     for name, X, y, categorical_feats, _, _ in datasets:
         print(f"\n{'='*75}")
         print(f"{name}: {X.shape[0]} samples, {X.shape[1]} features")
@@ -107,17 +114,27 @@ def evaluate_on_openml(
         print(f"{'-'*20} {'-'*10} {'-'*10} {'-'*10} {'-'*10}")
         for model, model_name in zip(models, model_names):
             try:
-                result = evaluate_model(
+                split_results = evaluate_model(
                     model,
                     X.numpy(),
                     y.numpy(),
                     n_splits=n_splits,
                     categorical_feats=categorical_feats,
                 )
-                result.update({"model": model_name, "dataset": name})
-                all_results.append(result)
-                print(f"{model_name:<20} {result['accuracy']:>10.4f} {result['roc_auc']:>10.4f} {result['fit_time']:>10.2f} {result['predict_time']:>10.2f}")
+                for row in split_results:
+                    row.update({"model": model_name, "dataset": name})
+                all_results.extend(split_results)
+
+                mean_acc = float(np.mean([r["accuracy"] for r in split_results])) if split_results else float("nan")
+                mean_auc = float(np.mean([r["roc_auc"] for r in split_results])) if split_results else float("nan")
+                mean_fit = float(np.mean([r["fit_time"] for r in split_results])) if split_results else float("nan")
+                mean_pred = float(np.mean([r["predict_time"] for r in split_results])) if split_results else float("nan")
+                print(f"{model_name:<20} {mean_acc:>10.4f} {mean_auc:>10.4f} {mean_fit:>10.2f} {mean_pred:>10.2f}")
             except Exception as e:
                 print(f"{model_name:<20} {'Error':>10} - {e}")
     
-    return pd.DataFrame(all_results)[["dataset", "model", "accuracy", "roc_auc", "log_loss", "fit_time", "predict_time"]] if all_results else pd.DataFrame()
+    if not all_results:
+        return pd.DataFrame()
+
+    return pd.DataFrame(all_results)
+
