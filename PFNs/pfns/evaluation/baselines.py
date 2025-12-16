@@ -6,6 +6,7 @@ Ordinal-encodes categorical columns via ColumnTransformer for all models.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
@@ -19,12 +20,33 @@ from contextlib import contextmanager
 
 
 def _cat_list(categorical_feats) -> list[int]:
-    return [int(i) for i in categorical_feats] if categorical_feats else []
+    if not categorical_feats:
+        return []
+    return list(sorted({int(i) for i in categorical_feats}))
 
 
 def _encode_labels(y):
     classes, y_mapped = np.unique(y, return_inverse=True)
     return classes, y_mapped.astype(np.int64)
+
+def to_dataframe(X: np.ndarray, categorical_features: list[int]) -> pd.DataFrame:
+    """
+    Convert numpy array X into a pandas DataFrame suitable for e.g. TabICL.
+    Categorical columns are explicitly cast to pandas 'category' dtype.
+    """
+    df = pd.DataFrame(X)
+    cat = sorted({int(i) for i in categorical_features or []})
+
+    for j in cat:
+        col = df.iloc[:, j]
+
+        if pd.api.types.is_float_dtype(col):
+            s = col.where(col.isna(), col.round().astype("Int64"))
+            df[df.columns[j]] = s.astype("category")
+        else:
+            df[df.columns[j]] = col.astype("category")
+
+    return df
 
 
 def _preprocessor(cat: list[int], n_features: int) -> ColumnTransformer:
@@ -193,35 +215,33 @@ class TabICLBaseline:
 
     def __init__(self, **tabicl_kwargs):
         self.tabicl_kwargs = tabicl_kwargs
-        self.model: Pipeline | None = None
+        self.model = TabICLClassifier(**tabicl_kwargs)
         self.classes_: np.ndarray | None = None
+        self.cat_: list[int] | None = None
 
     def fit(self, X: np.ndarray, y: np.ndarray, categorical_feats=None):
-        cat = _cat_list(categorical_feats)
         self.classes_, y_mapped = _encode_labels(y)
+        self.cat_ = _cat_list(categorical_feats)
 
-        self.model = Pipeline(
-            steps=[
-                ("preprocess", _preprocessor(cat, X.shape[1])),
-                ("clf", TabICLClassifier(**self.tabicl_kwargs)),
-            ]
-        )
+        X_df = to_dataframe(X, self.cat_)
         with _ignore_sklearn_futurewarnings():
-            self.model.fit(X, y_mapped)
+            self.model.fit(X_df, y_mapped)
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        if self.model is None or self.classes_ is None:
+        if self.classes_ is None or self.cat_ is None:
             raise RuntimeError("Call fit() first.")
+        X_df = to_dataframe(X, self.cat_)
         with _ignore_sklearn_futurewarnings():
-            y_pred = np.asarray(self.model.predict(X)).astype(np.int64)
+            y_pred = np.asarray(self.model.predict(X_df)).astype(np.int64)
         return self.classes_[y_pred]
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        if self.model is None:
+        if self.cat_ is None:
             raise RuntimeError("Call fit() first.")
+        X_df = to_dataframe(X, self.cat_)
         with _ignore_sklearn_futurewarnings():
-            return np.asarray(self.model.predict_proba(X))
+            return np.asarray(self.model.predict_proba(X_df))
 
 def get_baselines(n_jobs: int = 4, random_state: int = 42):
     return [
