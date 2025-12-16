@@ -1,64 +1,97 @@
 import os
-from pathlib import Path
-
+import warnings
 import numpy as np
 import openml
 import pandas as pd
 import torch
-from sklearn.preprocessing import OrdinalEncoder
 import logging
+import hashlib
+
+from pathlib import Path
+from typing import List
+
 logging.getLogger("openml.datasets.functions").setLevel(logging.ERROR)
 
-# Set OpenML cache directory to avoid re-downloading datasets
 openml.config.set_root_cache_directory(
-    os.environ.get("OPENML_CACHE_DIRECTORY", Path(__file__).parent / "openml")
+    os.environ.get("OPENML_CACHE_DIRECTORY", str(Path(__file__).parent / "openml"))
 )
-import warnings
 
-def get_openml_classification(did, max_samples, multiclass=True, shuffled=True):
-    dataset = openml.datasets.get_dataset(did)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        X, y, categorical_indicator, attribute_names = dataset.get_data(
-            dataset_format="array", target=dataset.default_target_attribute
-        )
+def _local_cache_dir() -> Path:
+    d = Path(os.environ.get("OPENML_LOCAL_CACHE_DIRECTORY", str(Path(__file__).parent / "openml_local_cache")))
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
-    if not multiclass:
-        X = X[y < 2]
-        y = y[y < 2]
+def _dataset_cache_path(did: int) -> Path:
+    return _local_cache_dir() / f"openml_{did}_raw.npz"
 
-    if multiclass and not shuffled:
-        raise NotImplementedError(
-            "This combination of multiclass and shuffling isn't implemented"
-        )
+def _openml_list_cache_path(dids: List[int]) -> Path:
+    h = hashlib.sha1(str(tuple(sorted(map(int, dids)))).encode()).hexdigest()[:16]
+    return _local_cache_dir() / f"openml_list_{h}.parquet"
 
-    if not isinstance(X, np.ndarray) or not isinstance(y, np.ndarray):
-        print("Not a NP Array, skipping")
-        return None, None, None, None
+def load_openml_list_cached(dids: List[int]) -> pd.DataFrame:
+    cache_file = _openml_list_cache_path(dids)
+    if cache_file.exists():
+        return pd.read_parquet(cache_file)
 
-    if not shuffled:
-        sort = np.argsort(y) if y.mean() < 0.5 else np.argsort(-y)
-        pos = int(y.sum()) if y.mean() < 0.5 else int((1 - y).sum())
-        X, y = X[sort][-pos * 2 :], y[sort][-pos * 2 :]
-        y = torch.tensor(y).reshape(2, -1).transpose(0, 1).reshape(-1).flip([0]).float()
-        X = (
-            torch.tensor(X)
-            .reshape(2, -1, X.shape[1])
-            .transpose(0, 1)
-            .reshape(-1, X.shape[1])
-            .flip([0])
-            .float()
-        )
+    df = openml.datasets.list_datasets(dids, output_format="dataframe")
+    df.to_parquet(cache_file, index=False)
+    return df
+
+def _cat_idx_from_indicator(categorical_indicator, n_features: int) -> List[int]:
+    ci = np.asarray(categorical_indicator)
+    if ci.dtype == bool:
+        if ci.shape[0] != n_features:
+            raise ValueError("categorical_indicator mask has wrong length")
+        return np.where(ci)[0].astype(np.int64).tolist()
+    return ci.astype(np.int64).tolist()
+
+def _encode_labels(y: np.ndarray):
+    _, y_mapped = np.unique(y, return_inverse=True)
+    return y_mapped.astype(np.int64)
+
+def get_openml_classification(did, seed=42):
+    cache_file = _dataset_cache_path(int(did))
+
+    if cache_file.exists():
+        data = np.load(cache_file, allow_pickle=False)
+        X, y = data["X"], data["y"]
+        cat_idx = data["cat_idx"].astype(np.int64).tolist()
+        attribute_names = data["attribute_names"].astype(str).tolist()
     else:
-        order = np.arange(y.shape[0])
-        np.random.seed(13)
-        np.random.shuffle(order)
-        X, y = torch.tensor(X[order]), torch.tensor(y[order])
-    if max_samples:
-        X, y = X[:max_samples], y[:max_samples]
+        dataset = openml.datasets.get_dataset(int(did))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            X, y, categorical_indicator, attribute_names = dataset.get_data(
+                dataset_format="array", target=dataset.default_target_attribute
+            )
 
-    return X, y, np.where(categorical_indicator)[0].tolist(), attribute_names
+        if not isinstance(X, np.ndarray) or not isinstance(y, np.ndarray):
+            print("Not a NP Array, skipping")
+            return None, None, None, None
+        
+        cat_idx = _cat_idx_from_indicator(categorical_indicator, n_features=X.shape[1])
+        attribute_names = list(attribute_names)
+        
+        np.savez_compressed(
+            cache_file,
+            X=X,
+            y=y,
+            cat_idx=np.asarray(cat_idx, dtype=np.int64),
+            attribute_names=np.asarray(attribute_names, dtype=str),
+        )
 
+    y_enc = _encode_labels(np.asarray(y))
+
+    # shuffle dataset
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(len(y_enc))
+    X = np.asarray(X)[order]
+    y_enc = y_enc[order]
+    
+    X_t = torch.as_tensor(X, dtype=torch.float32)
+    y_t = torch.as_tensor(y_enc, dtype=torch.int64)
+
+    return X_t, y_t, cat_idx, attribute_names
 
 def load_openml_list(
     dids,
@@ -66,13 +99,11 @@ def load_openml_list(
     num_feats=100,
     min_samples=100,
     max_samples=400,
-    multiclass=True,
     max_num_classes=10,
-    shuffled=True,
-    return_capped=False,
+    return_capped=True,
 ):
     datasets = []
-    openml_list = openml.datasets.list_datasets(dids, output_format="dataframe")
+    openml_list = load_openml_list_cached(dids)
     print(f"Number of datasets: {len(openml_list)}")
 
     if filter_for_nan:
@@ -95,12 +126,39 @@ def load_openml_list(
             raise Exception("Regression not supported")
         else:
             X, y, categorical_feats, attribute_names = get_openml_classification(
-                int(entry.did),
-                max_samples,
-                multiclass=multiclass,
-                shuffled=shuffled,
+                int(entry.did)
             )
         if X is None:
+            print("Warning: Could not load dataset, skipping.")
+            continue
+        
+        num_classes = int(torch.unique(y).numel())
+        if num_classes > max_num_classes:
+            if return_capped:
+                y_np = y.cpu().numpy()
+                vals, counts = np.unique(y_np, return_counts=True)
+                keep_vals_t = torch.as_tensor(sorted(vals[np.argsort(-counts)[:max_num_classes]]), device=y.device, dtype=y.dtype)
+                keep = torch.isin(y, keep_vals_t)
+                X = X[keep]
+                y = y[keep]
+                modifications["classes_capped"] = True
+            else:
+                print("Too many classes")
+                continue
+        
+        if X.shape[0] > max_samples:
+            if return_capped:
+                X = X[0 : max_samples, :]
+                y = y[0 : max_samples]
+                modifications["samples_capped"] = True
+            else:
+                print("Too many samples")
+                continue
+        
+        assert min_samples <= max_samples, "min_samples must be <= max_samples"
+        
+        if X.shape[0] < min_samples:
+            print("Too few samples left")
             continue
 
         if X.shape[1] > num_feats:
@@ -110,21 +168,6 @@ def load_openml_list(
                 modifications["feats_capped"] = True
             else:
                 print("Too many features")
-                continue
-        if X.shape[0] == max_samples:
-            modifications["samples_capped"] = True
-
-        if X.shape[0] < min_samples:
-            print("Too few samples left")
-            continue
-
-        if len(np.unique(y)) > max_num_classes:
-            if return_capped:
-                X = X[y < np.unique(y)[max_num_classes]]
-                y = y[y < np.unique(y)[max_num_classes]]
-                modifications["classes_capped"] = True
-            else:
-                print("Too many classes")
                 continue
 
         datasets += [

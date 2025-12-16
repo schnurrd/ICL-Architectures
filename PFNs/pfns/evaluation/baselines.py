@@ -9,6 +9,7 @@ import numpy as np
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OrdinalEncoder
 from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
@@ -26,12 +27,23 @@ def _encode_labels(y):
     return classes, y_mapped.astype(np.int64)
 
 
-def _preprocessor(cat: list[int]) -> ColumnTransformer:
+def _preprocessor(cat: list[int], n_features: int) -> ColumnTransformer:
+    cat_set = set(cat)
+    num = [i for i in range(n_features) if i not in cat_set]
+
+    cat_pipe = Pipeline([
+        ("impute", SimpleImputer(strategy="most_frequent")),
+        ("enc", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)),
+    ])
+    num_pipe = Pipeline([
+        ("impute", SimpleImputer(strategy="mean")),
+    ])
     return ColumnTransformer(
         transformers=[
-            ("cat", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1), cat),
+            ("cat", cat_pipe, cat),
+            ("num", num_pipe, num),
         ],
-        remainder="passthrough",
+        remainder="drop",
     )
 
 
@@ -58,7 +70,7 @@ class RandomForestBaseline:
         cat = _cat_list(categorical_feats)
         self.model = Pipeline(
             steps=[
-                ("preprocess", _preprocessor(cat)),
+                ("preprocess", _preprocessor(cat, X.shape[1])),
                 (
                     "clf",
                     RandomForestClassifier(
@@ -99,7 +111,7 @@ class XGBoostBaseline:
 
         self.model = Pipeline(
             steps=[
-                ("preprocess", _preprocessor(cat)),
+                ("preprocess", _preprocessor(cat, X.shape[1])),
                 (
                     "clf",
                     XGBClassifier(
@@ -146,7 +158,7 @@ class CatBoostBaseline:
 
         self.model = Pipeline(
             steps=[
-                ("preprocess", _preprocessor(cat)),
+                ("preprocess", _preprocessor(cat, X.shape[1])),
                 (
                     "clf",
                     CatBoostClassifier(
@@ -190,7 +202,7 @@ class TabICLBaseline:
 
         self.model = Pipeline(
             steps=[
-                ("preprocess", _preprocessor(cat)),
+                ("preprocess", _preprocessor(cat, X.shape[1])),
                 ("clf", TabICLClassifier(**self.tabicl_kwargs)),
             ]
         )
@@ -216,5 +228,5 @@ def get_baselines(n_jobs: int = 4, random_state: int = 42):
         RandomForestBaseline(n_jobs=n_jobs, random_state=random_state),
         XGBoostBaseline(n_jobs=n_jobs, random_state=random_state),
         CatBoostBaseline(n_jobs=n_jobs, random_state=random_state),
-        TabICLClassifier(),
+        TabICLBaseline(random_state=random_state),
     ]
