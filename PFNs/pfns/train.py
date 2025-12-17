@@ -434,9 +434,15 @@ def train_or_evaluate_epoch(
         batch: prior.Batch = batch  # for IDE support
         # batch.x.shape == (batch_size, seq_len, num_features)
         if not c.model.attention_between_features:
+            num_features = batch.x.shape[2]
             assert (
-                c.model.features_per_group == batch.x.shape[2]
-            ), "features_per_group must match the number of features in the input, if attention_between_features is False"
+                num_features <= c.model.features_per_group
+            ), (
+                "When attention_between_features is False, the model requires a single "
+                "feature group. Set features_per_group to be >= the batch's number of "
+                f"features (typically max_num_features). Got {num_features=} and "
+                f"{c.model.features_per_group=}."
+            )
         targets = batch.target_y.to(device)
         single_eval_pos = batch.single_eval_pos
 

@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Pre-training",
+            "name": "Python Debugger: Pre-training Transformer",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
@@ -18,7 +18,20 @@
             ]
         },
         {
-            "name": "Python Debugger: Evaluation",
+            "name": "Python Debugger: Pre-training FLA",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "args": [
+                "PFNs/configs/tabpfn_prior_config_gla_test.py", // tabpfn_prior_config_1_gpu_10h tabpfn_prior_config_very_large_gla
+                "--checkpoint-save-load-prefix", "PFNs/models_diff/gla_confi.pt",
+                "--tensorboard-path", "PFNs/tensorboards", "--overwrite"
+            ]
+        },
+        {
+            "name": "Python Debugger: Evaluation Transformer",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_evaluation_cli.py",
@@ -26,6 +39,20 @@
             "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
             "args": [
                 "--model_path", "PFNs/models_diff/1_gpu_10h_v3_group_20_batch_8.pt/tabpfn_prior_config_1_gpu_10h_v3_group_20_batch_8_0_no_seed", 
+                "--only_tabpfn", 
+                "--max_features", "20",
+                "--max_samples", "1000",
+            ]
+        },
+        {
+            "name": "Python Debugger: Evaluation Transformer",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_evaluation_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "args": [
+                "--model_path", "PFNs/models_diff/gla_conf.pt/tabpfn_prior_config_gla_test_0_no_seed", 
                 "--only_tabpfn", 
                 "--max_features", "20",
                 "--max_samples", "1000",

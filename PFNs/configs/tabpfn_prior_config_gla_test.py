@@ -25,20 +25,19 @@ def get_config(config_index: int = 0) -> MainConfig:
     """
 
     max_num_classes = 10
-    max_num_features = 25
+    max_num_features = 20
 
     prior = TabPFNPriorConfig(
         prior_type="mlp",
         max_num_classes=max_num_classes,
         max_num_features=max_num_features,
         flexible=True,
-        differentiable=False,
+        differentiable=True,
     )
 
     batch_shape = BatchShapeSamplerConfig(
         batch_size=2,
         min_single_eval_pos=24,
-        # Shorter contexts to keep seq_len * num_tokens manageable in interleaved mode
         max_seq_len=1000,
         min_num_features=2,
         max_num_features=max_num_features,
@@ -57,26 +56,20 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        # TabFlex-like linear attention setup: row attention via GLA + column mixer
         emsize=320,
         backbone=FLABackboneConfig(
             model_type="gla",
-            nhid=320 * 4,
             nlayers=8,
             nhead=4,
+            intermediate_size=320 * 4,
+            dropout=0.1,
             activation="swish",
-            mix_tokens=True,
-            layout="separate_tokens",
-            token_mixer_type="attention",  # column mixing
-            token_mixer_layers=2,
-            token_mixer_dropout=0.1,
-            token_mixer_mlp_factor=2.0,
-            drop_path=0.1,  # light stochastic depth as in TabFlex
-            feature_layer_norm=False,
+            norm_eps=1e-6,
+            use_cache=False,
         ),
-        # No feature grouping to mirror TabFlex column tokens
-        features_per_group=1,
-        attention_between_features=True,
+        features_per_group=20,
+        attention_between_features=False,
+        feature_positional_embedding=None,
     )
 
     optimizer = OptimizerConfig(
