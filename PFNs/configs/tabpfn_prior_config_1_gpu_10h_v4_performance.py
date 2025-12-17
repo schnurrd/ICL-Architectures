@@ -33,12 +33,12 @@ def get_config(config_index: int = 0) -> MainConfig:
         max_num_features=max_num_features,          
         flexible=True,                 
         differentiable=True,
-        return_categorical_mask=False,
-        nan_handling=False,
+        return_categorical_mask=True,
+        nan_handling=True,
     )
     
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=2,
+        batch_size=8,
         min_single_eval_pos=24,
         max_seq_len=1000,
         min_num_features=2,
@@ -51,27 +51,27 @@ def get_config(config_index: int = 0) -> MainConfig:
         encoder=EncoderConfig(
             variable_num_features_normalization=True,
             nan_handling=True, # currently only nan to mean imputation works
-            use_categorical_encoder=False
+            use_categorical_encoder=True
         ),
         y_encoder=EncoderConfig(
             nan_handling=True,
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=256,
+        emsize=512,
         backbone=TransformerBackboneConfig(
-            nhid=256 * 4,
+            nhid=512 * 4,
             nlayers=12,
             nhead=8,
         ),
-        features_per_group=1,
+        features_per_group=20,
         attention_between_features=True,
         feature_positional_embedding="subspace",
     )
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=1.5e-4,
+        lr=7.5e-5,
         weight_decay=0.01,
     )
 
@@ -82,11 +82,11 @@ def get_config(config_index: int = 0) -> MainConfig:
         batch_shape_sampler=batch_shape,
         epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=1000,
+        steps_per_epoch=2000,
         n_targets_per_input=1,
         train_mixed_precision=True,
         scheduler="cosine_decay",
         progress_bar=True,
-        num_workers=4,
-        aggregate_k_gradients=4,
+        num_workers=8,
+        aggregate_k_gradients=2,
     )
