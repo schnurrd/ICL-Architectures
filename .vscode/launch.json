@@ -45,7 +45,7 @@
             ]
         },
         {
-            "name": "Python Debugger: Evaluation Transformer",
+            "name": "Python Debugger: Evaluation FLA",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_evaluation_cli.py",

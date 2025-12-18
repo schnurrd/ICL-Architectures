@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import warnings
+from contextlib import contextmanager
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
@@ -15,8 +17,9 @@ from sklearn.preprocessing import OrdinalEncoder
 from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
 from tabicl import TabICLClassifier
-import warnings
-from contextlib import contextmanager
+from tabpfn import TabPFNClassifier
+from tabpfn.constants import ModelVersion
+
 
 
 def _cat_list(categorical_feats) -> list[int]:
@@ -213,9 +216,10 @@ class CatBoostBaseline:
 class TabICLBaseline:
     name = "TabICL"
 
-    def __init__(self, **tabicl_kwargs):
+    def __init__(self, random_state: int = 42, **tabicl_kwargs):
+        self.random_state = random_state
         self.tabicl_kwargs = tabicl_kwargs
-        self.model = TabICLClassifier(**tabicl_kwargs)
+        self.model = TabICLClassifier(random_state=random_state, **tabicl_kwargs)
         self.classes_: np.ndarray | None = None
         self.cat_: list[int] | None = None
 
@@ -242,6 +246,25 @@ class TabICLBaseline:
         X_df = to_dataframe(X, self.cat_)
         with _ignore_sklearn_futurewarnings():
             return np.asarray(self.model.predict_proba(X_df))
+        
+        
+class TabPFNV2_5Baseline:
+    name = "TabPFNv2.5"
+    
+    def __init__(self, random_state: int = 42):
+        self.random_state = random_state
+        self.model = None
+    
+    def fit(self, X: np.ndarray, y: np.ndarray, categorical_feats=None):
+        self.model = TabPFNClassifier(categorical_features_indices=categorical_feats)
+        self.model.fit(X, y)
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return self.model.predict(X)
+    
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        return self.model.predict_proba(X)
 
 def get_baselines(n_jobs: int = 4, random_state: int = 42):
     return [
@@ -249,4 +272,5 @@ def get_baselines(n_jobs: int = 4, random_state: int = 42):
         XGBoostBaseline(n_jobs=n_jobs, random_state=random_state),
         CatBoostBaseline(n_jobs=n_jobs, random_state=random_state),
         TabICLBaseline(random_state=random_state),
+        TabPFNV2_5Baseline(random_state=random_state),
     ]

@@ -391,6 +391,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
     """Refactored TabPFN Classifier with separated preprocessing and model."""
 
     models_in_memory = {}
+    name = "OurModel"
 
     def __init__(
         self,

@@ -12,3 +12,4 @@ xgboost
 catboost
 tabicl
 flash-linear-attention
+tabpfn

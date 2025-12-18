@@ -10,11 +10,8 @@ import argparse
 
 from pfns.scripts.tabpfn_interface import TabPFNClassifier
 from pfns.evaluation import (
-    RandomForestBaseline,
-    XGBoostBaseline,
-    CatBoostBaseline,
-    TabICLBaseline,
-    evaluate_on_openml
+    evaluate_on_openml,
+    get_baselines,
 )
 from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
 from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENCHMARK
@@ -55,12 +52,9 @@ def run_tabpfn_evaluation(
 
     models = [tabpfn] if only_tabpfn else [
         tabpfn,
-        RandomForestBaseline(n_jobs=n_jobs),
-        XGBoostBaseline(n_jobs=n_jobs),
-        CatBoostBaseline(n_jobs=n_jobs),
-        TabICLBaseline(),
+        *get_baselines(n_jobs=n_jobs)
     ]
-    model_names = ["TabPFN"] if only_tabpfn else ["TabPFN", "RandomForest", "XGBoost", "CatBoost", "TabICL"]
+    model_names = [model.name for model in models]
 
     results = evaluate_on_openml(
         models=models,
