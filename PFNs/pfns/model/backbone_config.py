@@ -214,7 +214,7 @@ class FLABackboneConfig(BackboneConfig):
     intermediate_size: int | None = None  # defaults to 4*ninp if None
     dropout: float = 0.1
     activation: tp.Literal["gelu", "relu", "swish", "silu"] = "gelu"
-    norm_eps: float = 1e-6
+    norm_eps: float = 1e-5 # 1e-6 lead to NaNs in the output of the GLA model
     use_cache: bool = False
 
     
