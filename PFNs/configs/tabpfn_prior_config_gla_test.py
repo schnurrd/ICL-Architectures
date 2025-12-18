@@ -38,7 +38,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
 
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=8,
+        batch_size=16,
         min_single_eval_pos=24,
         max_seq_len=1000,
         min_num_features=2,
@@ -66,7 +66,7 @@ def get_config(config_index: int = 0) -> MainConfig:
             intermediate_size=320 * 4,
             dropout=0.1,
             activation="swish",
-            norm_eps=1e-6,
+            norm_eps=1e-4, # increase in size if nans occur
             use_cache=False,
         ),
         features_per_group=20,
@@ -76,7 +76,7 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=1e-4,
+        lr=7.5e-5,
         weight_decay=0.01,
     )
 
@@ -87,11 +87,11 @@ def get_config(config_index: int = 0) -> MainConfig:
         batch_shape_sampler=batch_shape,
         epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=500,
+        steps_per_epoch=250,
         n_targets_per_input=1,
         train_mixed_precision=True,
         scheduler="cosine_decay",
         progress_bar=True,
-        num_workers=4,
+        num_workers=8,
         aggregate_k_gradients=1
     )
