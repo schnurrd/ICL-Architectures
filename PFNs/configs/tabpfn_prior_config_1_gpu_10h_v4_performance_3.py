@@ -62,7 +62,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         emsize=192,
         backbone=TransformerBackboneConfig(
             nhid=192 * 2,
-            nlayers=24,
+            nlayers=22,
             nhead=3,
         ),
         features_per_group=3,
