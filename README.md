@@ -10,7 +10,7 @@ Unified framework for comparing model architectures in in-context learning acros
   - [CLI evaluation interface](#cli-evaluation-interface)
     - [Usage](#usage-1)
     - [Command Line Arguments](#command-line-arguments-1)
-  - [Tensorboard support](#tensorboard-support)
+  - [wandb support](#wandb-support)
   - [Configuration Files](#configuration-files)
 - [Currently known issues / TODOs](#currently-known-issues--todos)
 - [Repository (PFNs) explanation](#repository-pfns-explanation)
@@ -64,7 +64,7 @@ python PFNs/pfns/run_training_cli.py PFNs/configs/tabpfn_prior_config.py \
     --compile \
     --checkpoint-save-load-prefix PFNs/models_diff/test.pt \
     --checkpoint-save-load-suffix no_seed \
-    --tensorboard-path PFNs/tensorboards \
+    --wandb \
     --config-index 0
 ```
 
@@ -75,7 +75,7 @@ CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 PFNs/pfns/run_training_cli.
     PFNs/configs/tabpfn_prior_config_very_large_2_gpu.py \
     --checkpoint-save-load-prefix PFNs/models_diff/large_config_2_gpu.pt \
     --checkpoint-save-load-suffix no_seed \
-    --tensorboard-path PFNs/tensorboards \
+    --wandb \
     --config-index 0
 ```
 
@@ -85,9 +85,9 @@ CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 PFNs/pfns/run_training_cli.
 - `config_file` (required): Path to the Python configuration file that defines a `config` variable
 - `--device`: Device to use for training (e.g., 'cuda:0', 'cpu'). If not specified, will auto-detect.
 - `--compile`: Use torch.compile for the model (requires PyTorch 2.0+)
-- `--checkpoint-save-load-prefix`: Path to save/load checkpoint and for tensorboard.
+- `--checkpoint-save-load-prefix`: Path to save/load checkpoint (and default wandb dir).
 - `--checkpoint-save-load-suffix`: Suffix to add to the checkpoint save/load path. this can e.g. be the seed.
-- `--tensorboard-path`: Path to save tensorboard. If not provided, will use the checkpoint save/load prefix or the path in the config file.
+- `--wandb` / `--no-wandb`: Enable/disable wandb logging (wandb settings come from the config file).
 - `--config-index`: Index of the config to use. This is used to select a config from the config file.
 - `--overwrite`: Start fresh even if a checkpoint/config exists at the target path (do not load, overwrite on save).
 
@@ -120,13 +120,10 @@ python PFNs/pfns/run_evaluation_cli.py \
 - `--n_jobs`: Number of CPU cores for baseline models (RandomForest, XGBoost). Default: 4. Use this to limit CPU usage on shared machines
 - `--batch_size_inference`: Batch size for TabPFN inference (default: 32). Lower values reduce GPU memory usage without affecting accuracy - useful for memory-constrained environments
 
-## Tensorboard support
+## wandb support
 
-Tensorboard can be added via the `tensorboard_path` CLI parameter or by setting it in the `MainConfig`. The training logs can then be viewed by starting the tensorboard with: 
-
-```bash
-tensorboard --logdir TENSORBOARD_PATH
-```
+wandb is configured via `MainConfig.wandb`. The CLI only toggles logging via `--wandb` / `--no-wandb`.
+For restricted environments, set `mode="offline"` in the config file (or `WANDB_MODE=offline`) and sync later with `wandb sync`.
 
 ## Configuration Files  
 
@@ -171,7 +168,7 @@ Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for 
     - **test_priors**: prior.PriorConfig objects to use for validation during training
     - **validation_period**: How often to run validation (in epochs)
 - Logging:
-    - **verbose**, **progress_bar**, **tensorboard_path**: Logging options
+    - **verbose**, **progress_bar**, **wandb**: Logging options
 - Data loading
     - **dataloader_class**, **num_workers**
 

@@ -13,3 +13,4 @@ catboost
 tabicl
 flash-linear-attention
 tabpfn
+wandb

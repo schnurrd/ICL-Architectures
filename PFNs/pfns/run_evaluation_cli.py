@@ -77,25 +77,7 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
     print(f"SUMMARY: {title}")
     print("=" * 95)
 
-    # Compute per-dataset mean and std, then aggregate across datasets for each model
-    per_dataset = results.groupby(['model', 'dataset']).agg({
-        'accuracy': ['mean', 'std'],
-        'roc_auc': ['mean', 'std'],
-        'fit_time': ['mean'],
-        'predict_time': ['mean'],
-    })
-    per_dataset.columns = ['_'.join(col).strip() for col in per_dataset.columns.values]
-    per_dataset = per_dataset.reset_index()
-
-    summary = per_dataset.groupby('model').agg({
-        'accuracy_mean': 'mean',
-        'accuracy_std': 'mean',  # mean std over datasets
-        'roc_auc_mean': 'mean',
-        'roc_auc_std': 'mean',
-        'fit_time_mean': 'mean',
-        'predict_time_mean': 'mean',
-    }).round(4)
-    summary = summary.sort_values('accuracy_mean', ascending=False)
+    summary = summarize_results(results)
 
     print("\nLaTeX table rows:")
     for model in summary.index:
@@ -118,6 +100,41 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
         pred_str = f"{row['predict_time_mean']:.2f}"
         print(f"{model:<20} {acc_str:>18} {auc_str:>18} {fit_str:>14} {pred_str:>14}")
     print("=" * 95)
+
+
+def compute_per_dataset_stats(results):
+    if results.empty:
+        return None
+
+    per_dataset = results.groupby(["model", "dataset"]).agg(
+        {
+            "accuracy": ["mean", "std"],
+            "roc_auc": ["mean", "std"],
+            "fit_time": ["mean"],
+            "predict_time": ["mean"],
+        }
+    )
+    per_dataset.columns = ["_".join(col).strip() for col in per_dataset.columns.values]
+    per_dataset = per_dataset.reset_index()
+    return per_dataset
+
+
+def summarize_results(results):
+    if results.empty:
+        return None
+
+    per_dataset = compute_per_dataset_stats(results)
+    summary = per_dataset.groupby("model").agg(
+        {
+            "accuracy_mean": "mean",
+            "accuracy_std": "mean",
+            "roc_auc_mean": "mean",
+            "roc_auc_std": "mean",
+            "fit_time_mean": "mean",
+            "predict_time_mean": "mean",
+        }
+    ).round(4)
+    return summary.sort_values("accuracy_mean", ascending=False)
 
 
 def main():

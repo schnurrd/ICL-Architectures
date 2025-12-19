@@ -6,10 +6,13 @@ training loop with a TabPFN-v1 style transformer backbone.
 
 from __future__ import annotations
 
+import os
+
 from pfns.model.backbone_config import TransformerBackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
+from pfns.run_logger import WandbConfig
 from pfns.train import (
     BatchShapeSamplerConfig,
     MainConfig,
@@ -26,6 +29,7 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     max_num_classes = 10
     max_num_features = 20
+    
 
     prior = TabPFNPriorConfig(
         prior_type="mlp",       
@@ -74,6 +78,14 @@ def get_config(config_index: int = 0) -> MainConfig:
         lr=1.5e-4,
         weight_decay=0.01,
     )
+    
+    wandb_config = WandbConfig(
+        entity="icl_arch",
+        project="tabpfn_transformer",
+        name=f"tabpfn_transformer_1_gpu_10h_v4_{config_index}",
+        mode="online",
+        log_every_n_steps=10,
+    )
 
     return MainConfig(
         priors=[prior],
@@ -87,6 +99,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         train_mixed_precision=True,
         scheduler="cosine_decay",
         progress_bar=True,
+        wandb=wandb_config,
         num_workers=4,
         aggregate_k_gradients=1,
     )

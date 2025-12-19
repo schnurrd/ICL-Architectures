@@ -10,8 +10,14 @@ import sys
 from pathlib import Path
 
 import pfns.train
-from pfns.run_evaluation_cli import run_tabpfn_evaluation, print_results_summary
+from pfns.run_evaluation_cli import (
+    run_tabpfn_evaluation,
+    print_results_summary,
+    summarize_results,
+    compute_per_dataset_stats,
+)
 from pfns.utils import get_default_device
+from pfns.run_logger import WandbConfig, create_run_manager
 
 
 def parse_args():
@@ -45,7 +51,7 @@ def parse_args():
         "--checkpoint-save-load-prefix",
         type=str,
         default=None,
-        help="Path to save/load checkpoint and for tensorboard.",
+        help="Path to save/load checkpoint (and default wandb dir).",
     )
 
     parser.add_argument(
@@ -56,13 +62,10 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--tensorboard-path",
-        type=str,
+        "--wandb",
+        action=argparse.BooleanOptionalAction,
         default=None,
-        help=(
-            "Path to save tensorboard. If not provided, will use the "
-            "checkpoint save/load prefix or the path in the config file."
-        ),
+        help="Enable/disable wandb logging (configured via the config file).",
     )
 
     parser.add_argument(
@@ -163,8 +166,6 @@ def main():
             args.checkpoint_save_load_prefix is not None
         ), "checkpoint_save_load_prefix is required when checkpoint_save_load_suffix is provided"
 
-    config_tensorboard_path_is_none = config.tensorboard_path is None
-
     # Override checkpoint paths if specified via CLI
     if args.checkpoint_save_load_prefix is not None:
         assert (
@@ -173,7 +174,6 @@ def main():
         assert (
             config.train_state_dict_load_path is None
         ), "train_state_dict_load_path is already set"
-        assert config_tensorboard_path_is_none, "tensorboard_path is already set"
 
         # Add suffix if it exists
         suffix = f"_{args.config_index}"
@@ -187,19 +187,50 @@ def main():
                 **config.__dict__,
                 "train_state_dict_save_path": path + "/checkpoint.pt",
                 "train_state_dict_load_path": path + "/checkpoint.pt",
-                "tensorboard_path": path + "/tensorboard",
             }
         )
         os.makedirs(path, exist_ok=True)
 
-    if args.tensorboard_path is not None:
-        assert config_tensorboard_path_is_none, "tensorboard_path is already set"
+    # If no wandb dir is set but we have a train_state_dict_save_path, set wandb dir to this directory
+    if config.wandb is not None and config.wandb.dir is None and config.train_state_dict_save_path is not None:
         config = config.__class__(
             **{
                 **config.__dict__,
-                "tensorboard_path": args.tensorboard_path,
+                "wandb": WandbConfig(
+                    **{
+                        **config.wandb.__dict__,
+                        "dir": os.path.dirname(config.train_state_dict_save_path),
+                    }
+                ),
             }
         )
+
+    if args.wandb is not None: # Wandb CLI flag overrides config file
+        if args.wandb:  # enable wandb if requrested via cli
+            if config.wandb is None:
+                raise ValueError(
+                    "--wandb was set, but config.wandb is None. Configure wandb in the config file."
+                )
+            if config.wandb.mode == "disabled":  # overrides config file
+                config = config.__class__(
+                    **{
+                        **config.__dict__,
+                        "wandb": WandbConfig(
+                            **{
+                                **config.wandb.__dict__,
+                                "mode": "online",
+                            }
+                        ),
+                    }
+                )
+        else:  # disable wandb if requested via cli
+            existing = config.wandb or WandbConfig()
+            config = config.__class__(
+                **{
+                    **config.__dict__,
+                    "wandb": WandbConfig(**{**existing.__dict__, "mode": "disabled"}),
+                }
+            )
 
     # We overwrite the config with the one from the checkpoint if it exists
     # as there is some randomness in the config and we want to use the exact
@@ -215,12 +246,27 @@ def main():
     print(f"  Device: {args.device or 'auto-detect'}")
     print(f"  Mixed precision: {config.train_mixed_precision}")
 
+    run_manager = create_run_manager(
+        config.wandb,
+        full_config=config.to_dict(),
+        run_id=config.wandb_run_id,
+    )
+    if run_manager.run_id is not None and config.wandb_run_id != run_manager.run_id:
+        config = config.__class__(
+            **{**config.__dict__, "wandb_run_id": run_manager.run_id}
+        )
+    should_run_eval = config.train_state_dict_save_path is not None
+    if run_manager.run_id is not None:
+        print("wandb logging enabled.")
+
     try:
         result = pfns.train.train(
             c=config,
             device=args.device,
             compile=args.compile,
             overwrite=args.overwrite,
+            logger=run_manager,
+            finish_logger=not should_run_eval,
         )
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
@@ -249,26 +295,36 @@ def main():
         "max_features=20, max_samples=1000, max_classes=10)..."
     )
 
-    results = run_tabpfn_evaluation(
-        base_path=base_path,
-        checkpoint_name=checkpoint_name,
-        device=eval_device,
-        benchmark="opencc",
-        max_samples=1000,
-        max_features=20,
-        max_classes=10,
-        n_splits=5,
-        only_tabpfn=True,
-        n_jobs=4,
-        batch_size_inference=16,
-        n_ensemble_configurations=32,
-        preprocess_transforms=["none", "power", "robust"],
-    )
+    try:
+        results = run_tabpfn_evaluation(
+            base_path=base_path,
+            checkpoint_name=checkpoint_name,
+            device=eval_device,
+            benchmark="opencc",
+            max_samples=1000,
+            max_features=20,
+            max_classes=10,
+            n_splits=5,
+            only_tabpfn=True,
+            n_jobs=4,
+            batch_size_inference=16,
+            n_ensemble_configurations=32,
+            preprocess_transforms=["none", "power", "robust"],
+        )
 
-    print_results_summary(
-        results,
-        title="Aggregated Results Across All Datasets (TabPFN only)",
-    )
+        print_results_summary(
+            results,
+            title="Aggregated Results Across All Datasets (TabPFN only)",
+        )
+        summary = summarize_results(results)
+        per_dataset = compute_per_dataset_stats(results)
+        run_manager.log_evaluation(
+            results=results,
+            summary=summary,
+            per_dataset=per_dataset,
+        )
+    finally:
+        run_manager.finish()
 
 
 if __name__ == "__main__":

@@ -12,13 +12,13 @@ import einops
 import torch
 from torch import nn
 from torch.amp import autocast, GradScaler
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from . import base_config, utils
 from .batch_shape_sampler import BatchShapeSamplerConfig
 from .model.transformer_config import ModelConfig
 from .optimizer import OptimizerConfig
+from .run_logger import NullRunManager, RunManager, WandbConfig
 
 from .priors import data_loading, prior, utils as priors_utils
 
@@ -64,7 +64,8 @@ class MainConfig(base_config.BaseConfig):
     # Logging
     verbose: bool = True
     progress_bar: bool = False
-    tensorboard_path: tp.Optional[str] = None
+    wandb: WandbConfig | None = None
+    wandb_run_id: str | None = None
 
     # Data loading
     dataloader_class: str | None = None
@@ -77,6 +78,9 @@ def train(
     reusable_config: bool = True,
     compile: bool = False,
     overwrite: bool = False,
+    logger: RunManager | None = None,
+    log_every_n_steps: int | None = None,
+    finish_logger: bool = True,
     # Handy functions to override when not working with a standard file system
     save_object_function: tp.Callable | None = None,  # defaults to torch.save
     load_object_function: tp.Callable | None = None,  # defaults to torch.load
@@ -98,11 +102,15 @@ def train(
     using_dist, rank, device = init_dist(device)
     print(f"ALL: Using device {device}.")
 
-    # Initialize Tensorboard writer
-    writer = None
-    if c.tensorboard_path is not None and rank == 0:
-        writer = SummaryWriter(c.tensorboard_path)
-        print(f"Tensorboard logging to: {c.tensorboard_path}")
+    if logger is None:
+        logger = NullRunManager()
+    if rank != 0:
+        logger = NullRunManager()
+        finish_logger = False
+    if log_every_n_steps is None:
+        log_every_n_steps = c.wandb.log_every_n_steps if c.wandb is not None else 10
+    if getattr(logger, "run_id", None) is not None and c.wandb_run_id != logger.run_id:
+        c = c.__class__(**{**c.__dict__, "wandb_run_id": logger.run_id})
 
     # Resolve dataloader_class string to actual class
     if c.dataloader_class is None:
@@ -261,8 +269,9 @@ def train(
                     rank=rank,
                     using_dist=using_dist,
                     training=True,
-                    writer=writer,
+                    logger=logger,
                     epoch=epoch,
+                    log_every_n_steps=log_every_n_steps,
                 )
                 total_loss = epoch_result.loss
                 data_loader.importance_sampling_infos = (
@@ -293,8 +302,9 @@ def train(
                         rank=rank,
                         using_dist=using_dist,
                         training=False,
-                        writer=None,  # Don't log step-level info for validation
+                        logger=None,  # Don't log step-level info for validation
                         epoch=epoch,
+                        log_every_n_steps=log_every_n_steps,
                     )
                     val_score_str = f"| eval mean loss {val_epoch_result.loss:5.2f} "
 
@@ -328,35 +338,31 @@ def train(
                 )
                 print("-" * 89)
 
-            # Log epoch metrics to Tensorboard
-            if writer:
-                writer.add_scalar("epoch/train_loss", epoch_result.loss, epoch)
-                writer.add_scalar("epoch/epoch_time", epoch_time, epoch)
-                writer.add_scalar("epoch/data_time", epoch_result.data_time, epoch)
-                writer.add_scalar("epoch/step_time", epoch_result.step_time, epoch)
-                writer.add_scalar(
-                    "epoch/forward_time", epoch_result.forward_time, epoch
-                )
-                writer.add_scalar("epoch/nan_share", epoch_result.nan_share, epoch)
-                writer.add_scalar(
-                    "epoch/ignore_share", epoch_result.ignore_share, epoch
-                )
+            global_step_end = epoch * len(data_loader)
+            logger_payload: dict[str, tp.Any] = {
+                "trainer/epoch": epoch,
+                "trainer/global_step": global_step_end,
+                "epoch/train_loss": epoch_result.loss,
+                "epoch/epoch_time": epoch_time,
+                "epoch/data_time": epoch_result.data_time,
+                "epoch/step_time": epoch_result.step_time,
+                "epoch/forward_time": epoch_result.forward_time,
+                "epoch/nan_share": epoch_result.nan_share,
+                "epoch/ignore_share": epoch_result.ignore_share,
+                "epoch/learning_rate": current_lr,
+            }
+            if device.startswith("cuda"):
+                logger_payload["epoch/max_gpu_memory_gb"] = max_gpu_mem_gb
+                logger_payload["epoch/gpu_utilization"] = gpu_utilization
 
-                # Log learning rate
-                writer.add_scalar("epoch/learning_rate", current_lr, epoch)
+            if c.validation_period is not None and (
+                (epoch % c.validation_period == 0)
+                or (epoch == c.epochs)
+                or (epoch == 1)
+            ):
+                logger_payload["epoch/val_loss"] = val_epoch_result.loss
 
-                # Log GPU memory if available
-                if device.startswith("cuda"):
-                    writer.add_scalar("epoch/max_gpu_memory_gb", max_gpu_mem_gb, epoch)
-                    writer.add_scalar("epoch/gpu_utilization", gpu_utilization, epoch)
-
-                # Log validation loss if available
-                if c.validation_period is not None and (
-                    (epoch % c.validation_period == 0)
-                    or (epoch == c.epochs)
-                    or (epoch == 1)
-                ):
-                    writer.add_scalar("epoch/val_loss", val_epoch_result.loss, epoch)
+            logger.log(logger_payload, step=global_step_end)
 
             if scheduler is not None:
                 scheduler.step()
@@ -381,8 +387,8 @@ def train(
             if isinstance(model, torch.nn.parallel.DistributedDataParallel):
                 model = model.module
                 data_loader = None
-            if writer:
-                writer.close()
+            if finish_logger:
+                logger.finish()
     return {
         "total_loss": total_loss,
         "model": model.to("cpu"),
@@ -402,8 +408,9 @@ def train_or_evaluate_epoch(
     rank: int,
     using_dist: bool,
     training: bool = True,
-    writer: SummaryWriter | None = None,
+    logger: RunManager | None = None,
     epoch: int = 1,
+    log_every_n_steps: int = 10,
 ):
     """
     Train or evaluate one epoch.
@@ -585,12 +592,19 @@ def train_or_evaluate_epoch(
                 }
             )
 
-        # Log step-level metrics every 10 steps for training
-        if writer and training and (batch_index % 10 == 0):
+        # Log step-level metrics periodically for training
+        if logger and training and (batch_index % log_every_n_steps == 0):
             global_step = (epoch - 1) * len(dl) + batch_index
-            writer.add_scalar("step/data_time", time_to_get_batch, global_step)
-            writer.add_scalar("step/step_time", step_time, global_step)
-            writer.add_scalar("step/mean_loss", mean_loss, global_step)
+            logger.log(
+                {
+                    "trainer/epoch": epoch,
+                    "trainer/global_step": global_step,
+                    "step/data_time": time_to_get_batch,
+                    "step/step_time": step_time,
+                    "step/mean_loss": mean_loss,
+                },
+                step=global_step,
+            )
 
         before_get_batch = time.time()
 
