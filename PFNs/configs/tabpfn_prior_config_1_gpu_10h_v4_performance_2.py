@@ -65,7 +65,7 @@ def get_config(config_index: int = 0) -> MainConfig:
             nlayers=12,
             nhead=8,
         ),
-        features_per_group=3,
+        features_per_group=2,
         attention_between_features=True,
         feature_positional_embedding="subspace",
     )
