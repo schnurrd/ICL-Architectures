@@ -10,6 +10,7 @@ from pfns.model.backbone_config import FLABackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
+from pfns.run_logger import WandbConfig
 from pfns.train import (
     BatchShapeSamplerConfig,
     MainConfig,
@@ -61,16 +62,16 @@ def get_config(config_index: int = 0) -> MainConfig:
         emsize=320,
         backbone=FLABackboneConfig(
             model_type="gla",
-            nlayers=8,
+            nlayers=24,
             nhead=4,
-            intermediate_size=320 * 4,
+            intermediate_size=320 * 2,
             dropout=0.1,
             activation="swish",
             norm_eps=1e-4, # increase in size if nans occur
             use_cache=False,
         ),
         features_per_group=20,
-        attention_between_features=False,
+        attention_between_features="subspace",
         feature_positional_embedding=None,
     )
 
@@ -78,6 +79,14 @@ def get_config(config_index: int = 0) -> MainConfig:
         optimizer="adamw",
         lr=7.5e-5,
         weight_decay=0.01,
+    )
+    
+    wandb_config = WandbConfig(
+        entity="icl_arch",
+        project="fla_models",
+        name=f"gla_test_{config_index}",
+        mode="online",
+        log_every_n_steps=10,
     )
 
     return MainConfig(
@@ -92,6 +101,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         train_mixed_precision=True,
         scheduler="cosine_decay",
         progress_bar=True,
+        wandb=wandb_config,
         num_workers=8,
         aggregate_k_gradients=1
     )

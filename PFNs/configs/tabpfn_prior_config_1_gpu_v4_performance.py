@@ -10,6 +10,7 @@ from pfns.model.backbone_config import TransformerBackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
+from pfns.run_logger import WandbConfig
 from pfns.train import (
     BatchShapeSamplerConfig,
     MainConfig,
@@ -25,7 +26,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     """
 
     max_num_classes = 10
-    max_num_features = 100
+    max_num_features = 20
 
     prior = TabPFNPriorConfig(
         prior_type="mlp",       
@@ -58,9 +59,9 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=256,
+        emsize=512,
         backbone=TransformerBackboneConfig(
-            nhid=256 * 4,
+            nhid=512 * 4,
             nlayers=12,
             nhead=8,
         ),
@@ -71,8 +72,16 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=1.5e-4,
+        lr=7.5e-5,
         weight_decay=0.01,
+    )
+    
+    wandb_config = WandbConfig(
+        entity="icl_arch",
+        project="tabpfn_transformer",
+        name=f"transformer_1_gpu_v4_performance_1_{config_index}",
+        mode="online",
+        log_every_n_steps=10,
     )
 
     return MainConfig(
@@ -82,11 +91,12 @@ def get_config(config_index: int = 0) -> MainConfig:
         batch_shape_sampler=batch_shape,
         epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=250,
+        steps_per_epoch=2000,
         n_targets_per_input=1,
         train_mixed_precision=True,
         scheduler="cosine_decay",
         progress_bar=True,
-        num_workers=4,
-        aggregate_k_gradients=1,
+        wandb=wandb_config,
+        num_workers=8,
+        aggregate_k_gradients=2,
     )

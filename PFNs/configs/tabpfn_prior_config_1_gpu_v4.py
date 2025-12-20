@@ -27,6 +27,7 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     max_num_classes = 10
     max_num_features = 20
+    
 
     prior = TabPFNPriorConfig(
         prior_type="mlp",       
@@ -39,7 +40,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
     
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=4,
+        batch_size=8,
         min_single_eval_pos=24,
         max_seq_len=1000,
         min_num_features=2,
@@ -59,27 +60,27 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=192,
+        emsize=256,
         backbone=TransformerBackboneConfig(
-            nhid=192 * 2,
-            nlayers=24,
-            nhead=3,
+            nhid=256 * 4,
+            nlayers=12,
+            nhead=8,
         ),
-        features_per_group=3,
+        features_per_group=20,
         attention_between_features=True,
         feature_positional_embedding="subspace",
     )
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=7.5e-5,
+        lr=1.5e-4,
         weight_decay=0.01,
     )
     
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="tabpfn_transformer",
-        name=f"tabpfn_transformer_1_gpu_10h_v4_performance_3_{config_index}",
+        name=f"transformer_1_gpu_v4_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
@@ -89,14 +90,14 @@ def get_config(config_index: int = 0) -> MainConfig:
         optimizer=optimizer,
         model=model,
         batch_shape_sampler=batch_shape,
-        epochs=400,
-        warmup_epochs=20,
-        steps_per_epoch=2000,
+        epochs=200,
+        warmup_epochs=10,
+        steps_per_epoch=250,
         n_targets_per_input=1,
         train_mixed_precision=True,
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
-        num_workers=8,
-        aggregate_k_gradients=4,
+        num_workers=4,
+        aggregate_k_gradients=1,
     )
