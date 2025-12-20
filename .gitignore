@@ -209,3 +209,6 @@ marimo/_lsp/
 __marimo__/
 PFNs/pfns/datasets/openml/
 PFNs/pfns/datasets/openml_local_cache/
+
+
+wandb/
