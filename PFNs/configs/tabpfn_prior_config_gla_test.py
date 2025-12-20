@@ -71,8 +71,8 @@ def get_config(config_index: int = 0) -> MainConfig:
             use_cache=False,
         ),
         features_per_group=20,
-        attention_between_features="subspace",
-        feature_positional_embedding=None,
+        attention_between_features=False,
+        feature_positional_embedding="subspace",
     )
 
     optimizer = OptimizerConfig(
