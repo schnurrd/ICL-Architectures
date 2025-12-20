@@ -226,7 +226,7 @@ class FLABackboneConfig(BackboneConfig):
         d_ff = self.intermediate_size or (4 * ninp)
         ConfigClass, ModelClass = FLA_MODEL_REGISTRY[self.model_type]
         
-        assert attention_between_features == True, "FLA backbones currently do not support attention between features"
+        assert attention_between_features == False, "FLA backbones currently do not support attention between features"
 
         config = ConfigClass(
             hidden_size=ninp,
