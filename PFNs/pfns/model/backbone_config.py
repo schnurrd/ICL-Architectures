@@ -226,7 +226,7 @@ class FLABackboneConfig(BackboneConfig):
         d_ff = self.intermediate_size or (4 * ninp)
         ConfigClass, ModelClass = FLA_MODEL_REGISTRY[self.model_type]
         
-        assert attention_between_features == False, "FLA backbones currently do not support attention between features"
+        assert attention_between_features == True, "FLA backbones currently do not support attention between features"
 
         config = ConfigClass(
             hidden_size=ninp,
@@ -262,7 +262,7 @@ class FLABackbone(Backbone):
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
-        # self.post = SimpleFFNBlock(d_model=d_model, d_ff=d_ff, dropout=dropout, activation=activation)
+        self.post = SimpleFFNBlock(d_model=d_model, d_ff=d_ff, dropout=dropout, activation=activation)
     
     def _run_fla(
         self,
@@ -307,8 +307,8 @@ class FLABackbone(Backbone):
 
         x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
         
-        out = self._run_fla(x_batched)
-        # out = self.post(x_batched, attn_out)
+        attn_out = self._run_fla(x_batched)
+        out = self.post(x_batched, attn_out)
         
         out = out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
         return out
