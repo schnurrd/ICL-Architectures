@@ -335,6 +335,7 @@ def train(
                     + f"| max gpu mem {f'{max_gpu_mem_gb:.1f}' if max_gpu_mem_gb is not None else 'N/A'} GiB "
                     + f"| gpu utilization {f'{gpu_utilization:.1f}' if gpu_utilization is not None else 'N/A'} %"
                     + f"| nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f} "
+                    + f"| grad norm mean {epoch_result.grad_norm_mean:5.2f}"
                 )
                 print("-" * 89)
 
@@ -350,6 +351,7 @@ def train(
                 "epoch/nan_share": epoch_result.nan_share,
                 "epoch/ignore_share": epoch_result.ignore_share,
                 "epoch/learning_rate": current_lr,
+                "epoch/grad_norm_mean": epoch_result.grad_norm_mean,
             }
             if device.startswith("cuda"):
                 logger_payload["epoch/max_gpu_memory_gb"] = max_gpu_mem_gb
@@ -536,10 +538,11 @@ def train_or_evaluate_epoch(
                         info_used_with_gradient_magnitudes=batch.info_used_with_gradient_magnitudes,
                     )
 
-                    # todo i should run metrics on this
-                    torch.nn.utils.clip_grad_norm_(
+                    # Returns the pre-clip norm
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
                         model.parameters(), 1.0
                     )  # noop if no grads available
+                    metrics.update_grad_norm(float(grad_norm))
 
                     if batch.gradient_multipliers is not None:  # this None by default
                         assert (
@@ -595,16 +598,16 @@ def train_or_evaluate_epoch(
         # Log step-level metrics periodically for training
         if logger and training and (batch_index % log_every_n_steps == 0):
             global_step = (epoch - 1) * len(dl) + batch_index
-            logger.log(
-                {
-                    "trainer/epoch": epoch,
-                    "trainer/global_step": global_step,
-                    "step/data_time": time_to_get_batch,
-                    "step/step_time": step_time,
-                    "step/mean_loss": mean_loss,
-                },
-                step=global_step,
-            )
+            logger_payload = {
+                "trainer/epoch": epoch,
+                "trainer/global_step": global_step,
+                "step/data_time": time_to_get_batch,
+                "step/step_time": step_time,
+                "step/mean_loss": mean_loss,
+            }
+            if batch_index % c.aggregate_k_gradients == c.aggregate_k_gradients - 1:
+                logger_payload["step/grad_norm"] = float(grad_norm)
+            logger.log(logger_payload, step=global_step)
 
         before_get_batch = time.time()
 

@@ -11,6 +11,7 @@ class EpochResult(tp.NamedTuple):
     step_time: float  # total time per step
     nan_share: float  # share of NaN values
     ignore_share: float  # share of ignored values (-100)
+    grad_norm_mean: float  # mean of grad norms for the epoch
     importance_sampling_infos: list  # gradient magnitude info
 
 
@@ -23,6 +24,8 @@ class Metrics:
     forward_time: float = 0.0
     step_time: float = 0.0
     time_to_get_batch: float = 0.0
+    grad_norm_sum: float = 0.0
+    grad_norm_steps: int = 0
 
     @torch.no_grad()
     def update(
@@ -42,6 +45,10 @@ class Metrics:
         self.step_time += step_time
         self.time_to_get_batch += time_to_get_batch
 
+    def update_grad_norm(self, grad_norm: float) -> None:
+        self.grad_norm_sum += grad_norm
+        self.grad_norm_steps += 1
+
     def get_epoch_result(self, importance_sampling_infos: list[tuple]):
         return EpochResult(
             loss=self.total_loss / self.steps_per_epoch,
@@ -50,6 +57,7 @@ class Metrics:
             step_time=self.step_time / self.steps_per_epoch,
             nan_share=self.nan_steps.cpu().item() / self.steps_per_epoch,
             ignore_share=self.ignore_steps.cpu().item() / self.steps_per_epoch,
+            grad_norm_mean=self.grad_norm_sum / max(1, self.grad_norm_steps),
             importance_sampling_infos=importance_sampling_infos,
         )
 
