@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 
 import os
 import time
@@ -335,7 +336,8 @@ def train(
                     + f"| max gpu mem {f'{max_gpu_mem_gb:.1f}' if max_gpu_mem_gb is not None else 'N/A'} GiB "
                     + f"| gpu utilization {f'{gpu_utilization:.1f}' if gpu_utilization is not None else 'N/A'} %"
                     + f"| nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f} "
-                    + f"| grad norm mean {epoch_result.grad_norm_mean:5.2f}"
+                    + f"| grad norm ema mean {epoch_result.grad_norm_ema_mean:5.2f}"
+                    + f"| grad norm infinite steps fraction {epoch_result.grad_norm_infinite_steps_fraction:5.2f}"
                 )
                 print("-" * 89)
 
@@ -351,7 +353,8 @@ def train(
                 "epoch/nan_share": epoch_result.nan_share,
                 "epoch/ignore_share": epoch_result.ignore_share,
                 "epoch/learning_rate": current_lr,
-                "epoch/grad_norm_mean": epoch_result.grad_norm_mean,
+                "epoch/grad_norm_ema_mean": epoch_result.grad_norm_ema_mean,
+                "epoch/grad_norm_infinite_steps_fraction": epoch_result.grad_norm_infinite_steps_fraction,
             }
             if device.startswith("cuda"):
                 logger_payload["epoch/max_gpu_memory_gb"] = max_gpu_mem_gb
@@ -427,7 +430,8 @@ def train_or_evaluate_epoch(
     metrics = Metrics(steps_per_epoch=len(dl))
 
     importance_sampling_infos = []
-
+    grad_norm_ema = 0.0 # not ideal as we currently reset it every epoch
+    
     before_get_batch = time.time()
     assert (
         len(dl) % c.aggregate_k_gradients == 0
@@ -442,6 +446,7 @@ def train_or_evaluate_epoch(
     for batch_index, batch in enumerate(dl):
         batch: prior.Batch = batch  # for IDE support
         # batch.x.shape == (batch_size, seq_len, num_features)
+        grad_norm_infinite_steps_batch = 0
         if not c.model.attention_between_features:
             num_features = batch.x.shape[2]
             assert (
@@ -539,10 +544,18 @@ def train_or_evaluate_epoch(
                     )
 
                     # Returns the pre-clip norm
-                    grad_norm = torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), 1.0
-                    )  # noop if no grads available
-                    metrics.update_grad_norm(float(grad_norm))
+                    grad_norm = float(
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    )
+                    if math.isfinite(grad_norm):
+                        GRAD_NORM_DECAY = 0.9
+                        grad_norm_ema = (
+                            GRAD_NORM_DECAY * grad_norm_ema
+                            + (1.0 - GRAD_NORM_DECAY) * grad_norm
+                        )
+                    else:
+                        grad_norm_infinite_steps_batch += 1
+                    
 
                     if batch.gradient_multipliers is not None:  # this None by default
                         assert (
@@ -578,6 +591,8 @@ def train_or_evaluate_epoch(
                     forward_time=forward_time,
                     step_time=step_time,
                     time_to_get_batch=time_to_get_batch,
+                    grad_norm_ema=grad_norm_ema,
+                    grad_norm_infinite_steps=grad_norm_infinite_steps_batch,
                 )
 
             except Exception as e:
@@ -586,6 +601,9 @@ def train_or_evaluate_epoch(
                 raise (e)
 
         mean_loss = metrics.total_loss / (batch_index + 1)
+        mean_infinite_steps = (
+            metrics.grad_norm_infinite_steps / (batch_index + 1)
+        )
         if tqdm_iter:
             tqdm_iter.set_postfix(
                 {
@@ -595,19 +613,20 @@ def train_or_evaluate_epoch(
                 }
             )
 
-        # Log step-level metrics periodically for training
         if logger and training and (batch_index % log_every_n_steps == 0):
             global_step = (epoch - 1) * len(dl) + batch_index
-            logger_payload = {
-                "trainer/epoch": epoch,
-                "trainer/global_step": global_step,
-                "step/data_time": time_to_get_batch,
-                "step/step_time": step_time,
-                "step/mean_loss": mean_loss,
-            }
-            if batch_index % c.aggregate_k_gradients == c.aggregate_k_gradients - 1:
-                logger_payload["step/grad_norm"] = float(grad_norm)
-            logger.log(logger_payload, step=global_step)
+            logger.log(
+                {
+                    "trainer/epoch": epoch,
+                    "trainer/global_step": global_step,
+                    "step/data_time": time_to_get_batch,
+                    "step/step_time": step_time,
+                    "step/mean_loss": mean_loss,
+                    "step/grad_norm_ema": grad_norm_ema,
+                    "step/grad_norm_infinite_steps": mean_infinite_steps,
+                },
+                step=global_step,
+            )
 
         before_get_batch = time.time()
 

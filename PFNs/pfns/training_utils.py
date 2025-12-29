@@ -11,7 +11,8 @@ class EpochResult(tp.NamedTuple):
     step_time: float  # total time per step
     nan_share: float  # share of NaN values
     ignore_share: float  # share of ignored values (-100)
-    grad_norm_mean: float  # mean of grad norms for the epoch
+    grad_norm_ema_mean: float  # mean of grad norms for the epoch
+    grad_norm_infinite_steps_fraction: float  # fraction of non-finite grad norm steps
     importance_sampling_infos: list  # gradient magnitude info
 
 
@@ -24,8 +25,8 @@ class Metrics:
     forward_time: float = 0.0
     step_time: float = 0.0
     time_to_get_batch: float = 0.0
-    grad_norm_sum: float = 0.0
-    grad_norm_steps: int = 0
+    grad_norm_ema: float = 0.0
+    grad_norm_infinite_steps: int = 0
 
     @torch.no_grad()
     def update(
@@ -36,6 +37,8 @@ class Metrics:
         forward_time: float,
         step_time: float,
         time_to_get_batch: float,
+        grad_norm_ema: float,
+        grad_norm_infinite_steps: int,
     ):
         self.total_loss += loss.cpu().detach().item()
 
@@ -44,11 +47,9 @@ class Metrics:
         self.forward_time += forward_time
         self.step_time += step_time
         self.time_to_get_batch += time_to_get_batch
-
-    def update_grad_norm(self, grad_norm: float) -> None:
-        self.grad_norm_sum += grad_norm
-        self.grad_norm_steps += 1
-
+        self.grad_norm_ema += grad_norm_ema
+        self.grad_norm_infinite_steps += grad_norm_infinite_steps
+        
     def get_epoch_result(self, importance_sampling_infos: list[tuple]):
         return EpochResult(
             loss=self.total_loss / self.steps_per_epoch,
@@ -57,7 +58,8 @@ class Metrics:
             step_time=self.step_time / self.steps_per_epoch,
             nan_share=self.nan_steps.cpu().item() / self.steps_per_epoch,
             ignore_share=self.ignore_steps.cpu().item() / self.steps_per_epoch,
-            grad_norm_mean=self.grad_norm_sum / max(1, self.grad_norm_steps),
+            grad_norm_ema_mean=self.grad_norm_ema / self.steps_per_epoch,
+            grad_norm_infinite_steps_fraction=self.grad_norm_infinite_steps / self.steps_per_epoch,
             importance_sampling_infos=importance_sampling_infos,
         )
 
