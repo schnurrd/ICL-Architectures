@@ -543,6 +543,7 @@ def train_or_evaluate_epoch(
                         info_used_with_gradient_magnitudes=batch.info_used_with_gradient_magnitudes,
                     )
 
+                    skip_optimizer_step = False
                     # Returns the pre-clip norm
                     grad_norm = float(
                         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -555,9 +556,14 @@ def train_or_evaluate_epoch(
                         )
                     else:
                         grad_norm_infinite_steps_batch += 1
-                    
+                        if training:
+                            if scaler:
+                                scaler.update()
+                            optimizer.zero_grad()
+                        print("Non-finite grad norm encountered, skipping update...")
+                        skip_optimizer_step = True
 
-                    if batch.gradient_multipliers is not None:  # this None by default
+                    if (not skip_optimizer_step) and batch.gradient_multipliers is not None:  # this None by default
                         assert (
                             training
                         ), "Gradient multipliers are only supported for training"
@@ -574,7 +580,7 @@ def train_or_evaluate_epoch(
                             for w in model.parameters():
                                 w.grad = w.grad * batch.gradient_multipliers.view(-1)[0]
 
-                    if training:
+                    if training and not skip_optimizer_step:
                         if scaler:
                             scaler.step(optimizer)
                             scaler.update()
