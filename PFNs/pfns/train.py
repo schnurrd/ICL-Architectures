@@ -29,6 +29,7 @@ from .training_utils import (
     move_y_style_and_check_shape,
     set_model_to,
     update_importance_sampling_infos,
+    compute_update_ratio
 )
 from .utils import get_cosine_schedule_with_warmup, init_dist
 
@@ -338,6 +339,7 @@ def train(
                     + f"| nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f} "
                     + f"| grad norm ema mean {epoch_result.grad_norm_ema_mean:5.2f}"
                     + f"| grad norm infinite steps fraction {epoch_result.grad_norm_infinite_steps_fraction:5.2f}"
+                    + f"| model parameter update ratio exceeded fraction {epoch_result.model_parameter_update_ratio_exceeded_fraction:5.2f}"
                 )
                 print("-" * 89)
 
@@ -355,6 +357,7 @@ def train(
                 "epoch/learning_rate": current_lr,
                 "epoch/grad_norm_ema_mean": epoch_result.grad_norm_ema_mean,
                 "epoch/grad_norm_infinite_steps_fraction": epoch_result.grad_norm_infinite_steps_fraction,
+                "epoch/model_parameter_update_ratio_exceeded_fraction": epoch_result.model_parameter_update_ratio_exceeded_fraction,
             }
             if device.startswith("cuda"):
                 logger_payload["epoch/max_gpu_memory_gb"] = max_gpu_mem_gb
@@ -447,6 +450,7 @@ def train_or_evaluate_epoch(
         batch: prior.Batch = batch  # for IDE support
         # batch.x.shape == (batch_size, seq_len, num_features)
         grad_norm_infinite_steps_batch = 0
+        model_parameter_update_ratio_exceeded = 0
         if not c.model.attention_between_features:
             num_features = batch.x.shape[2]
             assert (
@@ -534,59 +538,68 @@ def train_or_evaluate_epoch(
                     if scaler:
                         # we unscale s.t. we can clip grads right
                         scaler.unscale_(optimizer)
-
-                    update_importance_sampling_infos(
-                        importance_sampling_infos=importance_sampling_infos,
-                        model=model,
-                        optimizer=optimizer,
-                        loss=loss.cpu().item(),
-                        info_used_with_gradient_magnitudes=batch.info_used_with_gradient_magnitudes,
-                    )
-
-                    skip_optimizer_step = False
-                    # Returns the pre-clip norm
-                    grad_norm = float(
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                    )
-                    if math.isfinite(grad_norm):
+                    
+                    grad_norm = float(torch.nn.utils.get_total_norm(model.parameters()))
+                    
+                    MAX_PARAM_UPDATE_RATIO = 5e-3 # if grad norm is higher than this, we skip the step
+                    param_update_ratio = compute_update_ratio(model, optimizer)
+                    
+                    if math.isfinite(grad_norm) and param_update_ratio <= MAX_PARAM_UPDATE_RATIO:
                         GRAD_NORM_DECAY = 0.9
                         grad_norm_ema = (
                             GRAD_NORM_DECAY * grad_norm_ema
                             + (1.0 - GRAD_NORM_DECAY) * grad_norm
                         )
-                    else:
+                        
+                        update_importance_sampling_infos(
+                            importance_sampling_infos=importance_sampling_infos,
+                            model=model,
+                            optimizer=optimizer,
+                            loss=loss.cpu().item(),
+                            info_used_with_gradient_magnitudes=batch.info_used_with_gradient_magnitudes,
+                        )
+
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+                        if batch.gradient_multipliers is not None:  # this None by default
+                            assert (
+                                training
+                            ), "Gradient multipliers are only supported for training"
+                            assert (
+                                c.aggregate_k_gradients == 1
+                            ), "Scaling grads is only supported if you don't do grad acc."
+                            assert all(
+                                batch.gradient_multipliers.view(-1)[0]
+                                == batch.gradient_multipliers.view(-1)[i]
+                                for i in range(batch.gradient_multipliers.numel())
+                            ), "we don't scale losses for now to be able to try the interaction with gradient clipping, and thus we can only support the same scaler"
+                            # todo make print to see that this is actually running
+                            with torch.no_grad():
+                                for w in model.parameters():
+                                    w.grad = w.grad * batch.gradient_multipliers.view(-1)[0]
+
+                        if training:
+                            if scaler:
+                                scaler.step(optimizer)
+                                scaler.update()
+                            else:
+                                optimizer.step()
+                            optimizer.zero_grad()
+                            
+                    elif not math.isfinite(grad_norm):
                         grad_norm_infinite_steps_batch += 1
                         if training:
                             if scaler:
                                 scaler.update()
                             optimizer.zero_grad()
                         print("Non-finite grad norm encountered, skipping update...")
-                        skip_optimizer_step = True
-
-                    if (not skip_optimizer_step) and batch.gradient_multipliers is not None:  # this None by default
-                        assert (
-                            training
-                        ), "Gradient multipliers are only supported for training"
-                        assert (
-                            c.aggregate_k_gradients == 1
-                        ), "Scaling grads is only supported if you don't do grad acc."
-                        assert all(
-                            batch.gradient_multipliers.view(-1)[0]
-                            == batch.gradient_multipliers.view(-1)[i]
-                            for i in range(batch.gradient_multipliers.numel())
-                        ), "we don't scale losses for now to be able to try the interaction with gradient clipping, and thus we can only support the same scaler"
-                        # todo make print to see that this is actually running
-                        with torch.no_grad():
-                            for w in model.parameters():
-                                w.grad = w.grad * batch.gradient_multipliers.view(-1)[0]
-
-                    if training and not skip_optimizer_step:
-                        if scaler:
-                            scaler.step(optimizer)
-                            scaler.update()
-                        else:
-                            optimizer.step()
-                        optimizer.zero_grad()
+                    else:
+                        model_parameter_update_ratio_exceeded += 1
+                        if training:
+                            if scaler:
+                                scaler.update()
+                            optimizer.zero_grad()
+                        print("Model parameter update ratio exceeded, skipping update...")
 
                 step_time = time.time() - before_forward
 
@@ -599,6 +612,7 @@ def train_or_evaluate_epoch(
                     time_to_get_batch=time_to_get_batch,
                     grad_norm_ema=grad_norm_ema,
                     grad_norm_infinite_steps=grad_norm_infinite_steps_batch,
+                    model_parameter_update_ratio_exceeded=model_parameter_update_ratio_exceeded,
                 )
 
             except Exception as e:

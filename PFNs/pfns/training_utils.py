@@ -1,4 +1,5 @@
 import typing as tp
+import math
 from dataclasses import dataclass
 
 import torch
@@ -13,6 +14,7 @@ class EpochResult(tp.NamedTuple):
     ignore_share: float  # share of ignored values (-100)
     grad_norm_ema_mean: float  # mean of grad norms for the epoch
     grad_norm_infinite_steps_fraction: float  # fraction of non-finite grad norm steps
+    model_parameter_update_ratio_exceeded_fraction: float  # fraction of steps where parameter update ratio exceeded the threshold
     importance_sampling_infos: list  # gradient magnitude info
 
 
@@ -27,6 +29,7 @@ class Metrics:
     time_to_get_batch: float = 0.0
     grad_norm_ema: float = 0.0
     grad_norm_infinite_steps: int = 0
+    model_parameter_update_ratio_exceeded: int = 0
 
     @torch.no_grad()
     def update(
@@ -39,6 +42,7 @@ class Metrics:
         time_to_get_batch: float,
         grad_norm_ema: float,
         grad_norm_infinite_steps: int,
+        model_parameter_update_ratio_exceeded: int,
     ):
         self.total_loss += loss.cpu().detach().item()
 
@@ -49,6 +53,7 @@ class Metrics:
         self.time_to_get_batch += time_to_get_batch
         self.grad_norm_ema += grad_norm_ema
         self.grad_norm_infinite_steps += grad_norm_infinite_steps
+        self.model_parameter_update_ratio_exceeded += model_parameter_update_ratio_exceeded
         
     def get_epoch_result(self, importance_sampling_infos: list[tuple]):
         return EpochResult(
@@ -60,9 +65,40 @@ class Metrics:
             ignore_share=self.ignore_steps.cpu().item() / self.steps_per_epoch,
             grad_norm_ema_mean=self.grad_norm_ema / self.steps_per_epoch,
             grad_norm_infinite_steps_fraction=self.grad_norm_infinite_steps / self.steps_per_epoch,
+            model_parameter_update_ratio_exceeded_fraction=self.model_parameter_update_ratio_exceeded / self.steps_per_epoch,
             importance_sampling_infos=importance_sampling_infos,
         )
 
+
+@torch.no_grad()
+def compute_update_ratio(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    eps: float = 1e-6,
+) -> float:
+    """
+    Estimate the relative parameter update size for the next optimizer step.
+
+    Returns:
+        ||delta(θ)|| / (||θ|| + eps)
+    """
+    lr = optimizer.param_groups[0]["lr"]
+
+    update_norm_sq = 0.0   # ||delta(θ)||^2
+    param_norm_sq = 0.0    # ||θ||^2
+
+    for param in model.parameters():
+        if param.grad is None:
+            continue
+
+        grad = param.grad.float()
+        update_norm_sq += (lr * grad).pow(2).sum().item()
+        param_norm_sq += param.data.float().pow(2).sum().item()
+
+    update_norm = math.sqrt(update_norm_sq)
+    param_norm = math.sqrt(param_norm_sq)
+
+    return update_norm / (param_norm + eps)
 
 @torch.no_grad()
 def update_importance_sampling_infos(
