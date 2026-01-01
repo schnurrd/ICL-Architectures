@@ -95,6 +95,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         steps_per_epoch=2000*8,
         n_targets_per_input=1,
         train_mixed_precision=True,
+        skip_grad_norm_spike_factor=1000.0,
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
