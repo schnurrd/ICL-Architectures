@@ -74,30 +74,19 @@ class Metrics:
 def compute_update_ratio(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
-    eps: float = 1e-6,
+    current_grad_norm: float,
+    eps: float = 1e-5,
 ) -> float:
-    """
-    Estimate the relative parameter update size for the next optimizer step.
-
-    Returns:
-        ||delta(θ)|| / (||θ|| + eps)
-    """
     lr = optimizer.param_groups[0]["lr"]
 
-    update_norm_sq = 0.0   # ||delta(θ)||^2
-    param_norm_sq = 0.0    # ||θ||^2
+    update_norm = lr * current_grad_norm
+    param_norm_sq = torch.tensor(0.0, device=next(model.parameters()).device)
 
     for param in model.parameters():
-        if param.grad is None:
-            continue
+        if param.grad is not None:
+            param_norm_sq += param.pow(2).sum()
 
-        grad = param.grad.float()
-        update_norm_sq += (lr * grad).pow(2).sum().item()
-        param_norm_sq += param.data.float().pow(2).sum().item()
-
-    update_norm = math.sqrt(update_norm_sq)
-    param_norm = math.sqrt(param_norm_sq)
-
+    param_norm = param_norm_sq.sqrt().item()
     return update_norm / (param_norm + eps)
 
 @torch.no_grad()

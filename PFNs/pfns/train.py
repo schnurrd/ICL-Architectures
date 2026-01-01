@@ -539,10 +539,10 @@ def train_or_evaluate_epoch(
                         # we unscale s.t. we can clip grads right
                         scaler.unscale_(optimizer)
                     
-                    grad_norm = float(torch.nn.utils.get_total_norm(model.parameters()))
+                    grad_norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf')))
                     
                     MAX_PARAM_UPDATE_RATIO = 5e-3 # if grad norm is higher than this, we skip the step
-                    param_update_ratio = compute_update_ratio(model, optimizer)
+                    param_update_ratio = compute_update_ratio(model, optimizer, grad_norm)
                     
                     if math.isfinite(grad_norm) and param_update_ratio <= MAX_PARAM_UPDATE_RATIO:
                         GRAD_NORM_DECAY = 0.9
@@ -585,21 +585,17 @@ def train_or_evaluate_epoch(
                             else:
                                 optimizer.step()
                             optimizer.zero_grad()
-                            
-                    elif not math.isfinite(grad_norm):
-                        grad_norm_infinite_steps_batch += 1
-                        if training:
-                            if scaler:
-                                scaler.update()
-                            optimizer.zero_grad()
-                        print("Non-finite grad norm encountered, skipping update...")
                     else:
-                        model_parameter_update_ratio_exceeded += 1
+                        if not math.isfinite(grad_norm):
+                            grad_norm_infinite_steps_batch += 1
+                            print("Non-finite grad norm encountered, skipping update...")
+                        else:
+                            model_parameter_update_ratio_exceeded += 1
+                            print("Model parameter update ratio exceeded, skipping update...")
                         if training:
                             if scaler:
                                 scaler.update()
                             optimizer.zero_grad()
-                        print("Model parameter update ratio exceeded, skipping update...")
 
                 step_time = time.time() - before_forward
 
