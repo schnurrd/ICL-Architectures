@@ -50,6 +50,7 @@ class MainConfig(base_config.BaseConfig):
     aggregate_k_gradients: int = 1 # for gradient accumulation
     n_targets_per_input: int = 1 # how many targets to sample per input during training
     train_mixed_precision: bool = True
+    skip_grad_norm_spike_factor: float = 5.0  # skip step if grad norm > factor * grad_norm_ema
 
     # LR Scheduler
     scheduler: str = "cosine_decay"
@@ -544,7 +545,7 @@ def train_or_evaluate_epoch(
                     grad_norm_tensor = torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf'))
                     grad_norm = grad_norm_tensor.item()
                     
-                    is_spike = grad_norm > 5 * grad_norm_ema
+                    is_spike = grad_norm > c.skip_grad_norm_spike_factor * grad_norm_ema
                     in_warmup = epoch <= c.warmup_epochs
                     
                     if math.isfinite(grad_norm) and (in_warmup or not is_spike):
