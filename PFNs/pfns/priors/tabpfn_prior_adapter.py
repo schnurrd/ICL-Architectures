@@ -35,6 +35,7 @@ class TabPFNPriorConfig(PriorConfig):
     max_num_features: int = 20
     return_categorical_mask: bool = False
     nan_handling: bool = False
+    different_generating_model_per_dataset: bool = False
 
     def create_get_batch_method(self) -> Callable[..., Batch]:
         def get_batch(
@@ -63,7 +64,7 @@ class TabPFNPriorConfig(PriorConfig):
                 build_tabpfn_prior(
                     prior_type=self.prior_type,
                     num_steps=1000, # we typically only need one. Only higher for the case of resampling
-                    batch_size=batch_size,
+                    batch_size=batch_size if not self.different_generating_model_per_dataset else 1,
                     num_datapoints_max=seq_len,
                     num_features=num_features,
                     max_num_classes=self.max_num_classes,
@@ -86,6 +87,27 @@ class TabPFNPriorConfig(PriorConfig):
                 if i >= 2:
                     print("Warning: Resampling batch due to -100 in y failed multiple times.")
                 i += 1
+
+            if self.different_generating_model_per_dataset:
+                batches = [batch]
+                for _ in range(batch_size - 1):
+                    next_batch = next(batch_iterator)
+                    i = 1
+                    while -100 in next_batch["y"]:
+                        next_batch = next(batch_iterator)
+                        if i >= 2:
+                            print("Warning: Resampling batch due to -100 in y failed multiple times.")
+                        i += 1
+                    batches.append(next_batch)
+                batch = {
+                    "x": torch.cat([item["x"] for item in batches], dim=0),
+                    "y": torch.cat([item["y"] for item in batches], dim=0),
+                    "target_y": torch.cat([item["target_y"] for item in batches], dim=0),
+                }
+                if "categorical_mask" in batches[0]:
+                    batch["categorical_mask"] = torch.cat(
+                        [item["categorical_mask"] for item in batches], dim=0
+                    )
             
             # Normalize by used features should like note be necessary anymore
             #x = normalize_by_used_features_f(
