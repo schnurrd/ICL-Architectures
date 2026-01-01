@@ -541,7 +541,7 @@ def train_or_evaluate_epoch(
                     
                     grad_norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf')))
                     
-                    MAX_PARAM_UPDATE_RATIO = 5e-3 # if grad norm is higher than this, we skip the step
+                    MAX_PARAM_UPDATE_RATIO = 1e-4 # if grad norm is higher than this, we skip the step
                     param_update_ratio = compute_update_ratio(model, optimizer, grad_norm)
                     
                     if math.isfinite(grad_norm) and param_update_ratio <= MAX_PARAM_UPDATE_RATIO:
