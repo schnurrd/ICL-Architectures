@@ -274,6 +274,7 @@ def train(
                     logger=logger,
                     epoch=epoch,
                     log_every_n_steps=log_every_n_steps,
+                    last_epoch_result=epoch_result if epoch > start_epoch else None,
                 )
                 total_loss = epoch_result.loss
                 data_loader.importance_sampling_infos = (
@@ -339,7 +340,7 @@ def train(
                     + f"| nan share {epoch_result.nan_share:5.2f} ignore share (for classification tasks) {epoch_result.ignore_share:5.4f} "
                     + f"| grad norm ema mean {epoch_result.grad_norm_ema_mean:5.2f}"
                     + f"| grad norm infinite steps fraction {epoch_result.grad_norm_infinite_steps_fraction:5.2f}"
-                    + f"| model parameter update ratio exceeded fraction {epoch_result.model_parameter_update_ratio_exceeded_fraction:5.2f}"
+                    + f"| grad norm ema exceeded fraction {epoch_result.grad_norm_ema_exceeded_fraction:5.2f}"
                 )
                 print("-" * 89)
 
@@ -357,7 +358,7 @@ def train(
                 "epoch/learning_rate": current_lr,
                 "epoch/grad_norm_ema_mean": epoch_result.grad_norm_ema_mean,
                 "epoch/grad_norm_infinite_steps_fraction": epoch_result.grad_norm_infinite_steps_fraction,
-                "epoch/model_parameter_update_ratio_exceeded_fraction": epoch_result.model_parameter_update_ratio_exceeded_fraction,
+                "epoch/grad_norm_ema_exceeded_fraction": epoch_result.grad_norm_ema_exceeded_fraction,
             }
             if device.startswith("cuda"):
                 logger_payload["epoch/max_gpu_memory_gb"] = max_gpu_mem_gb
@@ -419,6 +420,7 @@ def train_or_evaluate_epoch(
     logger: RunManager | None = None,
     epoch: int = 1,
     log_every_n_steps: int = 10,
+    last_epoch_result: Metrics | None = None,
 ):
     """
     Train or evaluate one epoch.
@@ -433,7 +435,7 @@ def train_or_evaluate_epoch(
     metrics = Metrics(steps_per_epoch=len(dl))
 
     importance_sampling_infos = []
-    grad_norm_ema = 0.0 # not ideal as we currently reset it every epoch
+    grad_norm_ema = 0.0 if last_epoch_result is None else last_epoch_result.grad_norm_ema_mean
     
     before_get_batch = time.time()
     assert (
@@ -450,7 +452,7 @@ def train_or_evaluate_epoch(
         batch: prior.Batch = batch  # for IDE support
         # batch.x.shape == (batch_size, seq_len, num_features)
         grad_norm_infinite_steps_batch = 0
-        model_parameter_update_ratio_exceeded = 0
+        grad_norm_ema_exceeded = 0
         if not c.model.attention_between_features:
             num_features = batch.x.shape[2]
             assert (
@@ -539,13 +541,14 @@ def train_or_evaluate_epoch(
                         # we unscale s.t. we can clip grads right
                         scaler.unscale_(optimizer)
                     
-                    grad_norm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf')))
+                    grad_norm_tensor = torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf'))
+                    grad_norm = grad_norm_tensor.item()
                     
-                    MAX_PARAM_UPDATE_RATIO = 1e-4 # if grad norm is higher than this, we skip the step
-                    param_update_ratio = compute_update_ratio(model, optimizer, grad_norm)
+                    is_spike = grad_norm > 5 * grad_norm_ema
+                    in_warmup = epoch <= c.warmup_epochs
                     
-                    if math.isfinite(grad_norm) and param_update_ratio <= MAX_PARAM_UPDATE_RATIO:
-                        GRAD_NORM_DECAY = 0.9
+                    if math.isfinite(grad_norm) and (in_warmup or not is_spike):
+                        GRAD_NORM_DECAY = 0.95
                         grad_norm_ema = (
                             GRAD_NORM_DECAY * grad_norm_ema
                             + (1.0 - GRAD_NORM_DECAY) * grad_norm
@@ -559,7 +562,7 @@ def train_or_evaluate_epoch(
                             info_used_with_gradient_magnitudes=batch.info_used_with_gradient_magnitudes,
                         )
 
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                        torch.nn.utils.clip_grads_with_norm_(model.parameters(), 1.0, total_norm=grad_norm_tensor)
 
                         if batch.gradient_multipliers is not None:  # this None by default
                             assert (
@@ -590,8 +593,8 @@ def train_or_evaluate_epoch(
                             grad_norm_infinite_steps_batch += 1
                             print("Non-finite grad norm encountered, skipping update...")
                         else:
-                            model_parameter_update_ratio_exceeded += 1
-                            print("Model parameter update ratio exceeded, skipping update...")
+                            grad_norm_ema_exceeded += 1
+                            print("Grad norm EMA exceeded threshold, skipping update...")
                         if training:
                             if scaler:
                                 scaler.update()
@@ -608,7 +611,7 @@ def train_or_evaluate_epoch(
                     time_to_get_batch=time_to_get_batch,
                     grad_norm_ema=grad_norm_ema,
                     grad_norm_infinite_steps=grad_norm_infinite_steps_batch,
-                    model_parameter_update_ratio_exceeded=model_parameter_update_ratio_exceeded,
+                    grad_norm_ema_exceeded=grad_norm_ema_exceeded,
                 )
 
             except Exception as e:

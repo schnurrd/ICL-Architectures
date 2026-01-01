@@ -14,7 +14,7 @@ class EpochResult(tp.NamedTuple):
     ignore_share: float  # share of ignored values (-100)
     grad_norm_ema_mean: float  # mean of grad norms for the epoch
     grad_norm_infinite_steps_fraction: float  # fraction of non-finite grad norm steps
-    model_parameter_update_ratio_exceeded_fraction: float  # fraction of steps where parameter update ratio exceeded the threshold
+    grad_norm_ema_exceeded_fraction: float  # fraction of steps where grad norm EMA exceeded the threshold
     importance_sampling_infos: list  # gradient magnitude info
 
 
@@ -29,7 +29,7 @@ class Metrics:
     time_to_get_batch: float = 0.0
     grad_norm_ema: float = 0.0
     grad_norm_infinite_steps: int = 0
-    model_parameter_update_ratio_exceeded: int = 0
+    grad_norm_ema_exceeded: int = 0
 
     @torch.no_grad()
     def update(
@@ -42,7 +42,7 @@ class Metrics:
         time_to_get_batch: float,
         grad_norm_ema: float,
         grad_norm_infinite_steps: int,
-        model_parameter_update_ratio_exceeded: int,
+        grad_norm_ema_exceeded: int,
     ):
         self.total_loss += loss.cpu().detach().item()
 
@@ -53,7 +53,7 @@ class Metrics:
         self.time_to_get_batch += time_to_get_batch
         self.grad_norm_ema += grad_norm_ema
         self.grad_norm_infinite_steps += grad_norm_infinite_steps
-        self.model_parameter_update_ratio_exceeded += model_parameter_update_ratio_exceeded
+        self.grad_norm_ema_exceeded += grad_norm_ema_exceeded
         
     def get_epoch_result(self, importance_sampling_infos: list[tuple]):
         return EpochResult(
@@ -65,7 +65,7 @@ class Metrics:
             ignore_share=self.ignore_steps.cpu().item() / self.steps_per_epoch,
             grad_norm_ema_mean=self.grad_norm_ema / self.steps_per_epoch,
             grad_norm_infinite_steps_fraction=self.grad_norm_infinite_steps / self.steps_per_epoch,
-            model_parameter_update_ratio_exceeded_fraction=self.model_parameter_update_ratio_exceeded / self.steps_per_epoch,
+            grad_norm_ema_exceeded_fraction=self.grad_norm_ema_exceeded / self.steps_per_epoch,
             importance_sampling_infos=importance_sampling_infos,
         )
 
