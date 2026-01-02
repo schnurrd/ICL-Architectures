@@ -548,11 +548,16 @@ def train_or_evaluate_epoch(
                     is_spike = grad_norm > c.skip_grad_norm_spike_factor * grad_norm_ema
                     in_warmup = epoch <= c.warmup_epochs
                     
-                    if math.isfinite(grad_norm) and (in_warmup or not is_spike):
+                    if grad_norm_ema == 0.0:
+                        grad_norm_ema = grad_norm  # initialize ema
+                    
+                    if math.isfinite(grad_norm):
                         GRAD_NORM_DECAY = 0.95
+                        
+                        updated_grad_norm = grad_norm if in_warmup else min(grad_norm, c.skip_grad_norm_spike_factor * grad_norm_ema)
                         grad_norm_ema = (
                             GRAD_NORM_DECAY * grad_norm_ema
-                            + (1.0 - GRAD_NORM_DECAY) * grad_norm
+                            + (1.0 - GRAD_NORM_DECAY) * updated_grad_norm
                         )
                         
                         update_importance_sampling_infos(
@@ -563,7 +568,12 @@ def train_or_evaluate_epoch(
                             info_used_with_gradient_magnitudes=batch.info_used_with_gradient_magnitudes,
                         )
 
-                        torch.nn.utils.clip_grads_with_norm_(model.parameters(), 1.0, total_norm=grad_norm_tensor)
+                        grad_norm_clip_value = 1.0
+                        if is_spike and not in_warmup:
+                            grad_norm_ema_exceeded += 1
+                            grad_norm_clip_value = min(grad_norm_clip_value, c.skip_grad_norm_spike_factor * grad_norm_ema)
+                            
+                        torch.nn.utils.clip_grads_with_norm_(model.parameters(), grad_norm_clip_value, total_norm=grad_norm_tensor)
 
                         if batch.gradient_multipliers is not None:  # this None by default
                             assert (
@@ -590,12 +600,7 @@ def train_or_evaluate_epoch(
                                 optimizer.step()
                             optimizer.zero_grad()
                     else:
-                        if not math.isfinite(grad_norm):
-                            grad_norm_infinite_steps_batch += 1
-                            print("Non-finite grad norm encountered, skipping update...")
-                        else:
-                            grad_norm_ema_exceeded += 1
-                            print("Grad norm EMA exceeded threshold, skipping update...")
+                        grad_norm_infinite_steps_batch += 1
                         if training:
                             if scaler:
                                 scaler.update()
