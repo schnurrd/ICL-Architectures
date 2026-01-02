@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pfns import base_config
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.transformer import LayerStack
+from pfns.model.linear_attention import LinearAttention
 import torch
 from torch import nn
 
@@ -311,4 +312,65 @@ class FLABackbone(Backbone):
         out = self.post(x_batched, attn_out)
         
         out = out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
+        return out
+
+
+
+@dataclass(frozen=True)
+class LinearAttentionBackboneConfig(BackboneConfig):
+    """Configuration for a Linear Attention backbone."""
+    nlayers: int = 6
+    nhead: int = 2
+    nhid: int = 200
+    dropout: float = 0.1
+    activation: tp.Literal["gelu", "relu", "swish", "silu"] = "gelu"
+    feature_attention_softmax: bool = False
+
+    def create_backbone(
+        self,
+        ninp: int,
+        attention_between_features: bool,
+        **kwargs: tp.Any,
+    ) -> Backbone:
+        if LinearAttention is None:
+            raise ImportError("LinearAttention module not found. Please implement or install it in pfns.model.linear_attention.")
+
+        layers = nn.ModuleList([
+            LinearAttention(
+                d_model=ninp,
+                nhead=self.nhead,
+                dim_feedforward=self.nhid,
+                dropout=self.dropout,
+                activation=self.activation,
+                attention_between_features=attention_between_features,
+                feature_attention_softmax=self.feature_attention_softmax,
+            )
+            for _ in range(self.nlayers)
+        ])
+        return LinearAttentionBackbone(layers)
+
+
+class LinearAttentionBackbone(Backbone):
+    """Stack of LinearAttention layers as a backbone."""
+    def __init__(self, layers: nn.ModuleList):
+        super().__init__()
+        self.layers = layers
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        single_eval_pos: int | None = None,
+        half_layers: bool = False,
+        cache_trainset_representation: bool = False,
+        **kwargs: tp.Any,
+    ) -> torch.Tensor:
+        # x: (batch, seq, num_tokens, embed_dim)
+        out = x
+        assert half_layers is False, "half_layers not supported in LinearAttention backbone"
+        assert (
+            cache_trainset_representation is False
+        ), "cache_trainset_representation not supported in LinearAttention backbone"
+        for layer in self.layers:
+            out = layer(out, single_eval_pos=single_eval_pos)
         return out
