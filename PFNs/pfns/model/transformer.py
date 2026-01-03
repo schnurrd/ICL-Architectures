@@ -130,8 +130,8 @@ class TabularModel(nn.Module):
         assert transformer_layers is not None, "Must provide pre-built transformer_layers for TabularModel."
         self.transformer_layers = transformer_layers
         
-        # Register hook for backward compatibility with old checkpoint format
-        # Old: transformer_layers.layers.X -> New: transformer_layers.layer_stack.layers.X
+        # Register hook for backward compatibility with checkpoint formats.
+        # Handles old: transformer_layers.layers.X <-> new: transformer_layers.layer_stack.layers.X
         self._register_load_state_dict_pre_hook(self._remap_old_checkpoint_keys)
         
         initialized_decoder_dict = {}
@@ -166,23 +166,36 @@ class TabularModel(nn.Module):
             assert attention_between_features, "Attention between features must be True when using a y_style_encoder, otherwise only use a style_encoder."
         self.y_style_encoder = y_style_encoder
 
-    @staticmethod
-    def _remap_old_checkpoint_keys(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
-        """Pre-hook to remap old checkpoint keys for backward compatibility.
-        
-        Old checkpoints: transformer_layers.layers.X...
-        New structure: transformer_layers.layer_stack.layers.X...
-        """
-        keys_to_remap = [k for k in state_dict.keys() if k.startswith(prefix + "transformer_layers.layers.")]
-        
-        if keys_to_remap:
+    def _remap_old_checkpoint_keys(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        """Pre-hook to remap checkpoint keys for backward compatibility."""
+        old_prefix = prefix + "transformer_layers.layers."
+        new_prefix = prefix + "transformer_layers.layer_stack.layers."
+
+        has_old = any(k.startswith(old_prefix) for k in state_dict.keys())
+        has_new = any(k.startswith(new_prefix) for k in state_dict.keys())
+
+        expects_new = hasattr(self.transformer_layers, "layer_stack")
+        expects_old = hasattr(self.transformer_layers, "layers") and not expects_new
+
+        if has_old and expects_new:
+            keys_to_remap = [k for k in state_dict.keys() if k.startswith(old_prefix)]
             for old_key in keys_to_remap:
-                new_key = old_key.replace(
-                    prefix + "transformer_layers.layers.",
-                    prefix + "transformer_layers.layer_stack.layers.",
-                    1
-                )
+                new_key = old_key.replace(old_prefix, new_prefix, 1)
                 state_dict[new_key] = state_dict.pop(old_key)
+        elif has_new and expects_old:
+            keys_to_remap = [k for k in state_dict.keys() if k.startswith(new_prefix)]
+            for new_key in keys_to_remap:
+                old_key = new_key.replace(new_prefix, old_prefix, 1)
+                state_dict[old_key] = state_dict.pop(new_key)
 
     def forward(
         self,

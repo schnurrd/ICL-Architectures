@@ -487,7 +487,7 @@ def train_or_evaluate_epoch(
             time_to_get_batch = time.time() - before_get_batch
             before_forward = time.time()
             try:
-                with autocast(device.split(":")[0], enabled=scaler is not None):
+                with autocast(device.split(":")[0], enabled=scaler is not None, dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16):
                     categorical_inds = None
                     if hasattr(batch, 'categorical_mask') and batch.categorical_mask is not None:
                         mask = batch.categorical_mask

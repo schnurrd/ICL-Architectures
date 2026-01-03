@@ -14,7 +14,7 @@ class LinearAttention(nn.Module):
         nhead,
         dim_feedforward,
         dropout=0.1,
-        activation="gelu",
+        activation="relu",
         attention_between_features=False,
         feature_attention_softmax: bool = False,
     ):
@@ -23,7 +23,6 @@ class LinearAttention(nn.Module):
         self.nhead = nhead
         assert d_model % nhead == 0, "d_model must be divisible by nhead."
         self.head_dim = d_model // nhead
-        self.scale = self.head_dim ** -0.5
         self.attention_between_features = attention_between_features
         self.feature_attention_softmax = feature_attention_softmax
         self.dropout = nn.Dropout(dropout)
@@ -44,7 +43,7 @@ class LinearAttention(nn.Module):
         num_norms = 3 if attention_between_features else 2
         self.norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(num_norms)])
         if dim_feedforward is None:
-            dim_feedforward = 2 * d_model
+            dim_feedforward = 4 * d_model
 
         if activation == "gelu":
             activation_fn = nn.GELU()
@@ -128,7 +127,7 @@ class LinearAttention(nn.Module):
 
         if attention_across_features:
             assert s_q == s_kv, "We do not support mismatched sequence lengths."
-            q = q_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim) * self.scale
+            q = q_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim)
             k = k_proj(kv_x).view(b, s_kv, n, self.nhead, self.head_dim)
             v = v_proj(kv_x).view(b, s_kv, n, self.nhead, self.head_dim)
             if self.feature_attention_softmax:
@@ -136,7 +135,7 @@ class LinearAttention(nn.Module):
             else:
                 out = self._linear_attention_features(q, k, v)
         else:
-            q = q_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim) * self.scale
+            q = q_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim)
             k = k_proj(kv_x).view(b, s_kv, n, self.nhead, self.head_dim)
             v = v_proj(kv_x).view(b, s_kv, n, self.nhead, self.head_dim)
             out = self._linear_attention_items(q, k, v)
@@ -160,14 +159,26 @@ class LinearAttention(nn.Module):
             x = self.norms[norm_idx](x + attn_feat)
             norm_idx += 1
 
-        attn_item = self._apply_attention(
-            x,
+        train_x = x[:, :single_eval_pos]
+        test_x = x[:, single_eval_pos:]
+        attn_train = self._apply_attention(
+            train_x,
             q_proj=self.q_proj_item,
             k_proj=self.k_proj_item,
             v_proj=self.v_proj_item,
             out_proj=self.out_proj_item,
-            kv_x=(x[:, :single_eval_pos] if single_eval_pos is not None and single_eval_pos > 0 else None),
+            kv_x=train_x,
         )
+        attn_test = self._apply_attention(
+            test_x,
+            q_proj=self.q_proj_item,
+            k_proj=self.k_proj_item,
+            v_proj=self.v_proj_item,
+            out_proj=self.out_proj_item,
+            kv_x=train_x,
+        )
+        attn_item = torch.cat([attn_train, attn_test], dim=1)
+        
         x = self.norms[norm_idx](x + attn_item)
         norm_idx += 1
 
