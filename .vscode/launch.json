@@ -14,7 +14,7 @@
             "args": [
                 "PFNs/configs/tabpfn_prior_config_1_gpu_v4.py", 
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite"
+                "--overwrite", "--no-wandb"
             ]
         },
         {
@@ -27,7 +27,7 @@
             "args": [
                 "PFNs/configs/tabpfn_prior_config_gla_test.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite"
+                "--overwrite", "--no-wandb"
             ]
         },
         {
