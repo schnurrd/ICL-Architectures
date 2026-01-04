@@ -79,7 +79,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="tabpfn_transformer",
-        name=f"transformer_1_gpu_v4_performance_1_long_{config_index}",
+        name=f"transformer_1_gpu_v4_performance_long_low_lr_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
