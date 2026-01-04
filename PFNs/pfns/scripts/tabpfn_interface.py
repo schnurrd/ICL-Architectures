@@ -26,6 +26,7 @@ from pfns.utils import (
     normalize_by_used_features_f,
     normalize_data,
     remove_outliers,
+    strip_compiled_state_dict_prefix,
 )
 from pfns.base_config import BaseConfig
 from pfns.train import MainConfig
@@ -691,9 +692,7 @@ def load_model_workflow(name, base_path, device="cpu"):
     
     model = config.model.create_model()
     model_state = checkpoint["model_state_dict"]
-
-    # Handle state dicts saved from torch.compile() models
-    model_state = {k.removeprefix("_orig_mod."): v for k, v in model_state.items()}
+    model_state, _ = strip_compiled_state_dict_prefix(model_state)
 
     model.load_state_dict(model_state, strict=True)
     model.to(device)

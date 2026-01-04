@@ -220,6 +220,17 @@ def torch_nanmean(x, axis=0, return_nanshare=False):
     return value / num
 
 
+def strip_compiled_state_dict_prefix(
+    state_dict: dict[str, object],
+) -> tuple[dict[str, object], str | None]:
+    prefixes = ("_orig_mod.", "module._orig_mod.")
+    for prefix in prefixes:
+        if state_dict and all(key.startswith(prefix) for key in state_dict.keys()):
+            stripped = {key[len(prefix):]: value for key, value in state_dict.items()}
+            return stripped, prefix
+    return state_dict, None
+
+
 def torch_nanstd(x, axis=0):
     num = torch.where(torch.isnan(x), torch.full_like(x, 0), torch.full_like(x, 1)).sum(
         axis=axis

@@ -783,7 +783,20 @@ def load_checkpoint(
         checkpoint = load_function(train_state_dict_load_path, map_location=device)
         if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
             # New format with model, optimizer state and epoch
-            model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+            state_dict = checkpoint["model_state_dict"]
+            try:
+                model.load_state_dict(state_dict, strict=True)
+            except RuntimeError:
+                stripped_state_dict, prefix = utils.strip_compiled_state_dict_prefix(
+                    state_dict
+                )
+                if prefix is None:
+                    raise
+                print(
+                    "Detected compiled model weights. "
+                    f"Stripping '{prefix}' from state_dict keys."
+                )
+                model.load_state_dict(stripped_state_dict, strict=True)
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
             start_epoch = checkpoint["epoch"] + 1
             print(f"Resuming from epoch {start_epoch}")
