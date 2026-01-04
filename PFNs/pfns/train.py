@@ -50,6 +50,7 @@ class MainConfig(base_config.BaseConfig):
     aggregate_k_gradients: int = 1 # for gradient accumulation
     n_targets_per_input: int = 1 # how many targets to sample per input during training
     train_mixed_precision: bool = True
+    train_mixed_precision_dtype: str | None = "fp16"
     skip_grad_norm_spike_factor: float = 5.0  # skip step if grad norm > factor * grad_norm_ema
 
     # LR Scheduler
@@ -406,6 +407,24 @@ def train(
     }
 
 
+def _resolve_autocast_dtype(device: str, dtype_spec: str | None) -> torch.dtype:
+    dtype_spec = (dtype_spec or "fp16").lower()
+    if dtype_spec == "auto":
+        return torch.float16 if device.startswith("cuda") else torch.bfloat16
+    if dtype_spec in ("fp16", "float16"):
+        return torch.float16
+    if dtype_spec in ("bf16", "bfloat16"):
+        if device.startswith("cuda") and not torch.cuda.is_bf16_supported():
+            raise ValueError(
+                "Requested bf16 autocast but CUDA device does not support bf16."
+            )
+        return torch.bfloat16
+    raise ValueError(
+        f"Unsupported train_mixed_precision_dtype '{dtype_spec}'. "
+        "Use 'auto', 'bf16', or 'fp16'."
+    )
+
+
 # we could think about removing c as arg here to make the dep's clearer
 def train_or_evaluate_epoch(
     c: MainConfig,
@@ -437,6 +456,11 @@ def train_or_evaluate_epoch(
 
     importance_sampling_infos = []
     grad_norm_ema = 0.0 if last_epoch_result is None else last_epoch_result.grad_norm_ema_mean
+    autocast_dtype = (
+        _resolve_autocast_dtype(device, c.train_mixed_precision_dtype)
+        if scaler is not None
+        else torch.float32
+    )
     
     before_get_batch = time.time()
     assert (
@@ -487,7 +511,11 @@ def train_or_evaluate_epoch(
             time_to_get_batch = time.time() - before_get_batch
             before_forward = time.time()
             try:
-                with autocast(device.split(":")[0], enabled=scaler is not None, dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16):
+                with autocast(
+                    device.split(":")[0],
+                    enabled=scaler is not None,
+                    dtype=autocast_dtype,
+                ):
                     categorical_inds = None
                     if hasattr(batch, 'categorical_mask') and batch.categorical_mask is not None:
                         mask = batch.categorical_mask
