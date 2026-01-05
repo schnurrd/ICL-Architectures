@@ -75,6 +75,11 @@ class MainConfig(base_config.BaseConfig):
     dataloader_class: str | None = None
     num_workers: tp.Optional[int] = None
 
+    # Debugging
+    debug_spike_save_path: str | None = None
+    debug_spike_threshold: float = 3.0
+    debug_spike_max_saves: int = 3
+
 
 def train(
     c: MainConfig,
@@ -379,7 +384,7 @@ def train(
                 scheduler.step()
 
             # Save model state dict after each epoch if path is provided (on rank 0)
-            if c.train_state_dict_save_path is not None and rank == 0:
+            if c.train_state_dict_save_path is not None and rank == 0 and epoch_result.loss < .8:
                 save_checkpoint(
                     model,
                     optimizer,
@@ -445,6 +450,23 @@ def train_or_evaluate_epoch(
     """
     Train or evaluate one epoch.
     """
+    def _tensor_stats(name: str, tensor: torch.Tensor) -> str:
+        tensor = tensor.detach()
+        finite = torch.isfinite(tensor)
+        nan_pct = (~finite & torch.isnan(tensor)).float().mean().item() * 100.0
+        inf_pct = (~finite & torch.isinf(tensor)).float().mean().item() * 100.0
+        if finite.any():
+            finite_tensor = tensor[finite]
+            return (
+                f"{name}: shape={tuple(tensor.shape)} dtype={tensor.dtype} "
+                f"min={finite_tensor.min().item():.4g} max={finite_tensor.max().item():.4g} "
+                f"mean={finite_tensor.mean().item():.4g} std={finite_tensor.std().item():.4g} "
+                f"nan%={nan_pct:.2f} inf%={inf_pct:.2f}"
+            )
+        return (
+            f"{name}: shape={tuple(tensor.shape)} dtype={tensor.dtype} "
+            f"all-nonfinite nan%={nan_pct:.2f} inf%={inf_pct:.2f}"
+        )
     if training:
         assert optimizer is not None, "Optimizer must be provided for training"
     else:
@@ -456,6 +478,7 @@ def train_or_evaluate_epoch(
 
     importance_sampling_infos = []
     grad_norm_ema = 0.0 if last_epoch_result is None else last_epoch_result.grad_norm_ema_mean
+    spike_save_count = 0
     autocast_dtype = (
         _resolve_autocast_dtype(device, c.train_mixed_precision_dtype)
         if scaler is not None
@@ -557,6 +580,79 @@ def train_or_evaluate_epoch(
                         ),  # loss per sequence without nanmean, if any loss in a sequence is nan, the whole sequence is ignored
                         return_nanshare=True,
                     )  # loss and nan_share are both scalar tensors
+                    loss_is_finite = torch.isfinite(loss).item()
+                    if (not loss_is_finite) or (loss.item() > c.debug_spike_threshold):
+                        print("Loss spike detected")
+                        print(f"loss={loss.item():.6g} nan_share={nan_share:.4g}")
+                        print(f"single_eval_pos={single_eval_pos} n_targets_per_input={c.n_targets_per_input}")
+                        print(f"categorical_inds={categorical_inds}")
+                        print(_tensor_stats("batch.x", batch.x))
+                        print(_tensor_stats("batch.y", batch.y))
+                        print(_tensor_stats("targets", targets))
+                        print(_tensor_stats("output", output))
+                        if isinstance(criterion, nn.CrossEntropyLoss):
+                            targets_flat = targets.detach().reshape(-1)
+                            valid_targets = targets_flat[targets_flat != -100]
+                            if valid_targets.numel() > 0:
+                                print(
+                                    f"targets: min={valid_targets.min().item()} "
+                                    f"max={valid_targets.max().item()} "
+                                    f"ignore%={float((targets_flat == -100).float().mean().item() * 100):.2f}"
+                                )
+                                num_classes = output.shape[-1]
+                                class_counts = torch.bincount(
+                                    valid_targets.long(),
+                                    minlength=num_classes,
+                                )
+                                print(f"class_counts={class_counts.tolist()}")
+                                with torch.no_grad():
+                                    probs = torch.softmax(
+                                        output.detach().reshape(-1, num_classes),
+                                        dim=-1,
+                                    )
+                                    max_prob = probs.max(dim=-1).values
+                                    entropy = -(probs * (probs + 1e-8).log()).sum(dim=-1)
+                                print(
+                                    f"probs: max_prob mean={max_prob.mean().item():.4g} "
+                                    f"max={max_prob.max().item():.4g} "
+                                    f"entropy mean={entropy.mean().item():.4g}"
+                                )
+                        if (
+                            training
+                            and rank == 0
+                            and c.train_state_dict_save_path is not None
+                            and spike_save_count < c.debug_spike_max_saves
+                        ):
+                            checkpoint_dir = os.path.dirname(c.train_state_dict_save_path)
+                            os.makedirs(checkpoint_dir, exist_ok=True)
+                            save_path = os.path.join(
+                                checkpoint_dir,
+                                f"spike_epoch{epoch}_step{batch_index}.pt",
+                            )
+                            spike_payload = {
+                                "epoch": epoch,
+                                "batch_index": batch_index,
+                                "loss": loss.detach().cpu().item(),
+                                "nan_share": float(nan_share),
+                                "single_eval_pos": single_eval_pos,
+                                "n_targets_per_input": c.n_targets_per_input,
+                                "categorical_mask": getattr(batch, "categorical_mask", None),
+                                "info_used_with_gradient_magnitudes": getattr(
+                                    batch, "info_used_with_gradient_magnitudes", None
+                                ),
+                                "x": batch.x.detach().cpu(),
+                                "y": batch.y.detach().cpu(),
+                                "target_y": batch.target_y.detach().cpu(),
+                                "style": None if batch.style is None else batch.style.detach().cpu(),
+                                "y_style": None if batch.y_style is None else batch.y_style.detach().cpu(),
+                                "rng_state": torch.random.get_rng_state(),
+                                "cuda_rng_state": torch.cuda.get_rng_state_all()
+                                if device.startswith("cuda")
+                                else None,
+                            }
+                            torch.save(spike_payload, save_path)
+                            spike_save_count += 1
+                            print(f"Saved spike batch to {save_path}")
                     loss_scaled = loss / c.aggregate_k_gradients
 
                 if scaler:
@@ -572,6 +668,7 @@ def train_or_evaluate_epoch(
                     
                     grad_norm_tensor = torch.nn.utils.clip_grad_norm_(model.parameters(), float('inf'))
                     grad_norm = grad_norm_tensor.item()
+                    update_ratio = compute_update_ratio(model, optimizer, grad_norm)
                     
                     is_spike = grad_norm > c.skip_grad_norm_spike_factor * grad_norm_ema
                     in_warmup = epoch <= c.warmup_epochs
@@ -600,7 +697,13 @@ def train_or_evaluate_epoch(
                         if is_spike and not in_warmup:
                             grad_norm_ema_exceeded += 1
                             grad_norm_clip_value = min(grad_norm_clip_value, c.skip_grad_norm_spike_factor * grad_norm_ema)
-                            
+                            print(
+                                f"Grad norm spike detected: grad_norm={grad_norm:.6g} "
+                                f"ema={grad_norm_ema:.6g} lr={optimizer.param_groups[0]['lr']} "
+                                f"update_ratio={update_ratio:.6g}"
+                            )
+                            if scaler is not None:
+                                print(f"amp_scale={scaler.get_scale()}")
                         torch.nn.utils.clip_grads_with_norm_(model.parameters(), grad_norm_clip_value, total_norm=grad_norm_tensor)
 
                         if batch.gradient_multipliers is not None:  # this None by default
