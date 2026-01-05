@@ -383,7 +383,7 @@ def train(
             if scheduler is not None:
                 scheduler.step()
 
-            if epoch_result.loss > .8:
+            if epoch_result.loss > .8 and epoch > 15:
                 raise ValueError(f"Aborting training due to high loss: {epoch_result.loss}")
             # Save model state dict after each epoch if path is provided (on rank 0)
             if c.train_state_dict_save_path is not None and rank == 0 and epoch_result.loss < .8:
