@@ -78,7 +78,7 @@ class MainConfig(base_config.BaseConfig):
     # Debugging
     debug_spike_save_path: str | None = None
     debug_spike_threshold: float = 3.0
-    debug_spike_max_saves: int = 3
+    debug_spike_max_saves: int = 10
 
 
 def train(
@@ -383,6 +383,8 @@ def train(
             if scheduler is not None:
                 scheduler.step()
 
+            if epoch_result.loss > .8:
+                raise ValueError(f"Aborting training due to high loss: {epoch_result.loss}")
             # Save model state dict after each epoch if path is provided (on rank 0)
             if c.train_state_dict_save_path is not None and rank == 0 and epoch_result.loss < .8:
                 save_checkpoint(
