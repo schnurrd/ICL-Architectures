@@ -17,6 +17,7 @@ from sklearn.preprocessing import OrdinalEncoder
 from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
 from tabicl import TabICLClassifier
+from ticl.prediction.tabflex import TabFlex
 from tabpfn import TabPFNClassifier
 from tabpfn.constants import ModelVersion
 
@@ -266,6 +267,37 @@ class TabPFNV2_5Baseline:
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         return self.model.predict_proba(X)
 
+class TabFlexBaseline:
+    name = "TabFlex"
+    
+    def __init__(self, random_state: int = 42):
+        self.random_state = random_state
+        self.model = None
+        self.classes_: np.ndarray | None = None
+        self.cat_: list[int] | None = None
+    
+    def fit(self, X: np.ndarray, y: np.ndarray, categorical_feats=None):
+        self.classes_, y_mapped = _encode_labels(y)
+        self.cat_ = _cat_list(categorical_feats)
+        X_df = to_dataframe(X, self.cat_)
+        self.model = TabFlex(random_state=self.random_state)
+        self.model.fit(X_df, y_mapped)
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        if self.model is None or self.classes_ is None or self.cat_ is None:
+            raise RuntimeError("Call fit() first.")
+        X_df = to_dataframe(X, self.cat_)
+        y_pred = np.asarray(self.model.predict(X_df)).astype(np.int64)
+        return self.classes_[y_pred]
+    
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        if self.model is None or self.cat_ is None:
+            raise RuntimeError("Call fit() first.")
+        X_df = to_dataframe(X, self.cat_)
+        return np.asarray(self.model.predict_proba(X_df))
+
+
 def get_baselines(n_jobs: int = 4, random_state: int = 42):
     return [
         RandomForestBaseline(n_jobs=n_jobs, random_state=random_state),
@@ -273,4 +305,5 @@ def get_baselines(n_jobs: int = 4, random_state: int = 42):
         CatBoostBaseline(n_jobs=n_jobs, random_state=random_state),
         TabICLBaseline(random_state=random_state),
         TabPFNV2_5Baseline(random_state=random_state),
+        TabFlexBaseline(random_state=random_state),
     ]
