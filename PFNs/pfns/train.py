@@ -623,7 +623,7 @@ def train_or_evaluate_epoch(
                             training
                             and rank == 0
                             and c.train_state_dict_save_path is not None
-                            and spike_save_count < c.debug_spike_max_saves
+                            and spike_save_count < 100
                         ):
                             checkpoint_dir = os.path.dirname(c.train_state_dict_save_path)
                             os.makedirs(checkpoint_dir, exist_ok=True)
@@ -654,7 +654,7 @@ def train_or_evaluate_epoch(
                             }
                             torch.save(spike_payload, save_path)
                             spike_save_count += 1
-                            print(f"Saved spike batch to {save_path}")
+                            print(f"Saved spike batch to {save_path} count number {spike_save_count}")
                     loss_scaled = loss / c.aggregate_k_gradients
 
                 if scaler:
