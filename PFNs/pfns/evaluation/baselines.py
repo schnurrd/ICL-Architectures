@@ -280,7 +280,7 @@ class TabFlexBaseline:
         self.classes_, y_mapped = _encode_labels(y)
         self.cat_ = _cat_list(categorical_feats)
         X_df = to_dataframe(X, self.cat_)
-        self.model = TabFlex(random_state=self.random_state)
+        self.model = TabFlex()
         self.model.fit(X_df, y_mapped)
         return self
 
