@@ -67,6 +67,11 @@ def parse_args():
         default=None,
         help="Enable/disable wandb logging (configured via the config file).",
     )
+    parser.add_argument(
+        "--new-wandb-id",
+        action="store_true",
+        help="Start a new wandb run ID when resuming from a checkpoint.",
+    )
 
     parser.add_argument(
         "--config-index",
@@ -239,6 +244,8 @@ def main():
         config = pfns.train.load_config(
             config.train_state_dict_load_path,
         )
+        if args.new_wandb_id and config.wandb_run_id is not None:
+            config = config.__class__(**{**config.__dict__, "wandb_run_id": None})
 
     print("Starting training with configuration:")
     print(f"  Epochs: {config.epochs}")
