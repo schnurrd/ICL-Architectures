@@ -8,7 +8,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import warnings
+import io
 from contextlib import contextmanager
+from contextlib import redirect_stderr, redirect_stdout
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.pipeline import Pipeline
@@ -82,6 +84,35 @@ def _ignore_sklearn_futurewarnings():
             category=FutureWarning,
             module="sklearn.base",
         )
+        warnings.filterwarnings(
+            "ignore",
+            message="'force_all_finite' was renamed to 'ensure_all_finite' in 1.6 and will be removed in 1.8\\.",
+            category=FutureWarning,
+            module="sklearn.utils.deprecation",
+        )
+        yield
+
+
+@contextmanager
+def _ignore_tabflex_warnings():
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*autocast.*deprecated.*",
+            category=FutureWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            category=FutureWarning,
+            module="ticl\\.prediction\\..*",
+        )
+        yield
+
+
+@contextmanager
+def _suppress_output():
+    buf = io.StringIO()
+    with redirect_stdout(buf), redirect_stderr(buf):
         yield
 
 
@@ -281,21 +312,24 @@ class TabFlexBaseline:
         self.cat_ = _cat_list(categorical_feats)
         X_df = to_dataframe(X, self.cat_)
         self.model = TabFlex()
-        self.model.fit(X_df, y_mapped)
+        with _ignore_tabflex_warnings(), _ignore_sklearn_futurewarnings(), _suppress_output():
+            self.model.fit(X_df, y_mapped)
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         if self.model is None or self.classes_ is None or self.cat_ is None:
             raise RuntimeError("Call fit() first.")
         X_df = to_dataframe(X, self.cat_)
-        y_pred = np.asarray(self.model.predict(X_df)).astype(np.int64)
+        with _ignore_tabflex_warnings(), _ignore_sklearn_futurewarnings(), _suppress_output():
+            y_pred = np.asarray(self.model.predict(X_df)).astype(np.int64)
         return self.classes_[y_pred]
     
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         if self.model is None or self.cat_ is None:
             raise RuntimeError("Call fit() first.")
         X_df = to_dataframe(X, self.cat_)
-        return np.asarray(self.model.predict_proba(X_df))
+        with _ignore_tabflex_warnings(), _ignore_sklearn_futurewarnings(), _suppress_output():
+            return np.asarray(self.model.model.predict_proba(X_df))
 
 
 def get_baselines(n_jobs: int = 4, random_state: int = 42):
