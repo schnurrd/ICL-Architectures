@@ -79,7 +79,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="tabpfn_transformer",
-        name=f"transformer_1_gpu_v4_performance_long_less_batch_skipping_{config_index}",
+        name=f"transformer_1_gpu_v4_performance_long_debug_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
@@ -94,10 +94,14 @@ def get_config(config_index: int = 0) -> MainConfig:
         steps_per_epoch=2000,
         n_targets_per_input=1,
         train_mixed_precision=True,
-        skip_grad_norm_spike_factor=10.0,
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
         num_workers=8,
         aggregate_k_gradients=2,
+        debug_spike_enabled=True,
+        debug_spike_threshold=3.0,
+        loss_jump_enabled=True,
+        restart_on_loss_jump=True,
+        skip_grad_norm_spike_factor=2.0,
     )

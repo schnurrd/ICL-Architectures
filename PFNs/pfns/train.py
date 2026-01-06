@@ -637,7 +637,7 @@ def train_or_evaluate_epoch(
                         grad_norm_ema = grad_norm  # initialize ema
                     
                     if math.isfinite(grad_norm):
-                        GRAD_NORM_DECAY = 0.95
+                        GRAD_NORM_DECAY = 0.99
                         
                         updated_grad_norm = grad_norm if in_warmup else min(grad_norm, c.skip_grad_norm_spike_factor * grad_norm_ema)
                         grad_norm_ema = (
