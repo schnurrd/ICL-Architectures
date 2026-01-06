@@ -18,6 +18,19 @@
             ]
         },
         {
+            "name": "Python Debugger: Pre-training Transformer Long",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "args": [
+                "PFNs/configs/tabpfn_prior_config_1_gpu_v4_performance_long.py", 
+                "--checkpoint-save-load-prefix", "PFNs/models_diff",
+                "--no-wandb"
+            ]
+        },
+        {
             "name": "Python Debugger: Pre-training FLA",
             "type": "debugpy",
             "request": "launch",
@@ -69,6 +82,18 @@
                 "--only_tabpfn", 
                 "--max_features", "20",
                 "--max_samples", "1000",
+            ]
+        },
+        {
+            "name": "Python Debugger: Model Spike Analysis",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/scripts/analyze_spike_batch.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "args": [
+                "--checkpoint", "PFNs/models_diff/tabpfn_prior_config_1_gpu_v4_performance_long_2_2/checkpoint.pt", 
+                "--spike", "PFNs/models_diff/tabpfn_prior_config_1_gpu_v4_performance_long_2_2/spike_epoch58_step120.pt",
             ]
         }
     ]

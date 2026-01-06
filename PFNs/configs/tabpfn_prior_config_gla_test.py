@@ -62,13 +62,12 @@ def get_config(config_index: int = 0) -> MainConfig:
         emsize=320,
         backbone=FLABackboneConfig(
             model_type="gla",
-            nlayers=24,
+            nlayers=12,
             nhead=4,
             intermediate_size=320 * 2,
             dropout=0.1,
             activation="swish",
             norm_eps=1e-4, # increase in size if nans occur
-            use_cache=False,
         ),
         features_per_group=20,
         attention_between_features=False,
