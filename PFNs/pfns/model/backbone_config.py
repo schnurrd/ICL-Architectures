@@ -208,17 +208,15 @@ class SimpleFFNBlock(nn.Module):
 @dataclass(frozen=True)
 class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
-    
+
     model_type: tp.Literal["gla", "retnet"] = "gla"
     nlayers: int = 6
     nhead: int = 4
-    intermediate_size: int | None = None  # defaults to 4*ninp if None
+    intermediate_size: int | None = None
     dropout: float = 0.1
     activation: tp.Literal["gelu", "relu", "swish", "silu"] = "gelu"
-    norm_eps: float = 1e-5 # 1e-6 lead to NaNs in the output of the GLA model
-    use_cache: bool = False
+    norm_eps: float = 1e-5
 
-    
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
             raise ValueError(f"Unknown model_type: {self.model_type}. Available: {list(FLA_MODEL_REGISTRY)}")
@@ -226,8 +224,10 @@ class FLABackboneConfig(BackboneConfig):
     def create_backbone(self, ninp: int, attention_between_features: bool, **kwargs: tp.Any) -> "Backbone":
         d_ff = self.intermediate_size or (4 * ninp)
         ConfigClass, ModelClass = FLA_MODEL_REGISTRY[self.model_type]
-        
-        assert attention_between_features == False, "FLA backbones currently do not support attention between features"
+
+        assert attention_between_features is False, (
+            "FLA backbones currently do not support attention between features"
+        )
 
         config = ConfigClass(
             hidden_size=ninp,
@@ -236,7 +236,7 @@ class FLABackboneConfig(BackboneConfig):
             intermediate_size=d_ff,
             hidden_act=self.activation,
             norm_eps=self.norm_eps,
-            use_cache=self.use_cache,
+            use_cache=True,
         )
         fla_model = ModelClass(config)
 
@@ -251,9 +251,9 @@ class FLABackboneConfig(BackboneConfig):
 
 class FLABackbone(Backbone):
     """Wrapper for FLA models to conform to Backbone interface."""
-    
+
     def __init__(
-        self, 
+        self,
         fla_model: nn.Module,
         *,
         d_model: int,
@@ -264,21 +264,60 @@ class FLABackbone(Backbone):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
         self.post = SimpleFFNBlock(d_model=d_model, d_ff=d_ff, dropout=dropout, activation=activation)
-    
+
     def _run_fla(
         self,
         x: torch.Tensor,
+        *,
+        past_key_values: tp.Any | None = None,
+    ) -> tuple[torch.Tensor, tp.Any | None]:
+        kwargs = {"inputs_embeds": x, "use_cache": True}
+        if past_key_values is not None:
+            kwargs["past_key_values"] = past_key_values
+        try:
+            out = self.fla(**kwargs)
+        except TypeError as exc:
+            raise TypeError(
+                "FLA model does not support cache usage; required for independent evaluation."
+            ) from exc
+
+        if hasattr(out, "last_hidden_state"):
+            hidden = out.last_hidden_state
+        elif isinstance(out, (tuple, list)):
+            hidden = out[0]
+        else:
+            hidden = out
+
+        past = None
+        if hasattr(out, "past_key_values"):
+            past = out.past_key_values
+        elif isinstance(out, (tuple, list)) and len(out) > 1:
+            past = out[1]
+
+        return hidden, past
+
+    def _run_test_with_cache(
+        self,
+        test_x: torch.Tensor,
+        past_key_values: tp.Any | None,
     ) -> torch.Tensor:
-        """Run the FLA model on input x.
-        
-        Args:
-            x: Input tensor of shape (batch * num_tokens, seq_len, embed_dim)
-            
-        Returns:
-            Output tensor of shape (batch * num_tokens, seq_len, embed_dim)
         """
-        out = self.fla(inputs_embeds=x)
-        return out.last_hidden_state if hasattr(out, "last_hidden_state") else out
+        Sequentially processes the test sequence one token at a time.
+        """
+        if test_x.numel() == 0:
+            return test_x
+
+        output_tokens = []
+        seq_len = test_x.size(1)
+        for t in range(seq_len):
+            current_input = test_x[:, t : t + 1, :]  # shape (batch, 1, dim)
+            output, past_key_values = self._run_fla(
+                current_input, past_key_values=past_key_values
+            )
+            output_tokens.append(output)
+        output = torch.cat(output_tokens, dim=1)
+            
+        return output
     
     def forward(
         self,
@@ -302,18 +341,32 @@ class FLABackbone(Backbone):
             Output tensor of shape (batch, seq, num_tokens, embed)
         """
         assert half_layers is False, "half_layers not supported in FLA backbone"
-        assert cache_trainset_representation is False, "cache_trainset_representation not supported in FLA backbone"
-        
-        batch_size, seq_len, num_tokens, embed_dim = x.shape
+        assert cache_trainset_representation is False, (
+            "cache_trainset_representation not supported in FLA backbone"
+        )
+        assert single_eval_pos is not None, "single_eval_pos must be provided for FLA backbone"
 
+        batch_size, seq_len, num_tokens, embed_dim = x.shape
+        # Input x is usually [Batch, SeqLen, NumTokens, Dim]
+        # FLA expects [Batch, SeqLen, Dim] -> so we flatten NumTokens into Batch
         x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
-        
-        attn_out = self._run_fla(x_batched)
+
+        train_len = min(single_eval_pos, seq_len)
+        train_x = x_batched[:, :train_len]
+        test_x = x_batched[:, train_len:]
+
+        train_out, past = self._run_fla(train_x)
+        if past is None:
+            raise RuntimeError(
+                "FLA model returned no past_key_values; cache is required for independent evaluation."
+            )
+            
+        test_out = self._run_test_with_cache(test_x, past)
+        attn_out = torch.cat([train_out, test_out], dim=1)
+
         out = self.post(x_batched, attn_out)
-        
         out = out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
         return out
-
 
 
 @dataclass(frozen=True)
