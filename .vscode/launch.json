@@ -95,6 +95,14 @@
                 "--checkpoint", "PFNs/models_diff/tabpfn_prior_config_1_gpu_v4_performance_long_2_2/checkpoint.pt", 
                 "--spike", "PFNs/models_diff/tabpfn_prior_config_1_gpu_v4_performance_long_2_2/spike_epoch58_step120.pt",
             ]
+        },
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python"
         }
     ]
 }

@@ -173,38 +173,6 @@ class TransformerBackbone(Backbone):
         )
 
 
-class SimpleFFNBlock(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, dropout: float, activation: str = "gelu"):
-        super().__init__()
-        self.dropout = nn.Dropout(dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-
-        act = activation.lower()
-        if act == "gelu":
-            self.act = nn.GELU()
-        elif act == "relu":
-            self.act = nn.ReLU()
-        elif act in ("swish", "silu"):
-            self.act = nn.SiLU()
-        else:
-            raise ValueError(f"Unsupported activation: {activation}")
-
-        self.ff = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            self.act,
-            nn.Dropout(dropout),
-            nn.Linear(d_ff, d_model),
-            nn.Dropout(dropout),
-        )
-
-    def forward(self, x: torch.Tensor, attn_out: torch.Tensor) -> torch.Tensor:
-        x = x + self.dropout(attn_out)
-        y = x = self.norm1(x)
-        y = self.ff(y)
-        return self.norm2(x + y)
-
-
 @dataclass(frozen=True)
 class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
@@ -263,7 +231,6 @@ class FLABackbone(Backbone):
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
-        self.post = SimpleFFNBlock(d_model=d_model, d_ff=d_ff, dropout=dropout, activation=activation)
 
     def _run_fla(
         self,
@@ -302,6 +269,45 @@ class FLABackbone(Backbone):
         past_key_values: tp.Any | None,
     ) -> torch.Tensor:
         """
+        Run the FLA model on test inputs using cached past key values in parallel.
+        """
+        if test_x.numel() == 0:
+            return test_x
+
+        if past_key_values is None:
+            output, _ = self._run_fla(test_x)
+            return output
+
+        batch_size, seq_len, embed_dim = test_x.shape
+
+        def _repeat_past(past: tp.Any, repeat: int) -> tp.Any:
+            if torch.is_tensor(past):
+                return past.repeat_interleave(repeat, dim=0)
+            elif hasattr(past, "layers"):
+                for layer in past.layers:
+                    state = getattr(layer, "state", None)
+                    if not isinstance(state, dict):
+                        continue
+                    for key, value in state.items():
+                        if torch.is_tensor(value):
+                            state[key] = value.repeat_interleave(repeat, dim=0)
+                return past
+            else:
+                raise ValueError("Unsupported past_key_values structure for repetition.")
+
+        expanded_past = _repeat_past(past_key_values, seq_len)
+        test_x_flat = test_x.contiguous().view(batch_size * seq_len, 1, embed_dim)
+        output, _ = self._run_fla(test_x_flat, past_key_values=expanded_past)
+        output = output.view(batch_size, seq_len, embed_dim)
+            
+        return output
+    
+    def _run_test_with_cache_naive(
+        self,
+        test_x: torch.Tensor,
+        past_key_values: tp.Any | None,
+    ) -> torch.Tensor:
+        """
         Sequentially processes the test sequence one token at a time.
         """
         if test_x.numel() == 0:
@@ -311,7 +317,7 @@ class FLABackbone(Backbone):
         seq_len = test_x.size(1)
         for t in range(seq_len):
             current_input = test_x[:, t : t + 1, :]  # shape (batch, 1, dim)
-            output, past_key_values = self._run_fla(
+            output, _ = self._run_fla(
                 current_input, past_key_values=past_key_values
             )
             output_tokens.append(output)
@@ -364,7 +370,7 @@ class FLABackbone(Backbone):
         test_out = self._run_test_with_cache(test_x, past)
         attn_out = torch.cat([train_out, test_out], dim=1)
 
-        out = self.post(x_batched, attn_out)
+        out = attn_out
         out = out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
         return out
 
