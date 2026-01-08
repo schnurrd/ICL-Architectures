@@ -83,7 +83,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
-        name=f"gla_test_{config_index}",
+        name=f"gla_perofrmance_long_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
@@ -98,6 +98,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         steps_per_epoch=16000,
         n_targets_per_input=1,
         train_mixed_precision=True,
+        train_mixed_precision_dtype="bf16",
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,

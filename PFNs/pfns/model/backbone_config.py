@@ -353,8 +353,8 @@ class FLABackbone(Backbone):
         assert single_eval_pos is not None, "single_eval_pos must be provided for FLA backbone"
 
         batch_size, seq_len, num_tokens, embed_dim = x.shape
-        # Input x is usually [Batch, SeqLen, NumTokens, Dim]
-        # FLA expects [Batch, SeqLen, Dim] -> so we flatten NumTokens into Batch
+        # Input x is usually [Batch, SeqLen, NumTokens, EmSize]
+        # FLA expects [Batch, SeqLen, EmSize] -> so we flatten NumTokens into Batch
         x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
 
         train_len = min(single_eval_pos, seq_len)
@@ -370,8 +370,7 @@ class FLABackbone(Backbone):
         test_out = self._run_test_with_cache(test_x, past)
         attn_out = torch.cat([train_out, test_out], dim=1)
 
-        out = attn_out
-        out = out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
+        out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
         return out
 
 

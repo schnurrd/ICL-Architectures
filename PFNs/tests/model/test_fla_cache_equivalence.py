@@ -56,7 +56,7 @@ def test_fla_test_cache_matches_naive():
 
         _, past_3 = backbone._run_fla(train_x)
         assert past_3 is not None
-        perm = torch.roll(torch.arange(test_len, device=device), shifts=1)
+        perm = torch.randperm(test_len, device=device)
         test_x_swapped = test_x[:, perm, :]
         out_swapped = backbone._run_test_with_cache(test_x_swapped, past_3)
         inv_perm = torch.argsort(perm)

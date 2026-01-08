@@ -98,6 +98,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         steps_per_epoch=250,
         n_targets_per_input=1,
         train_mixed_precision=True,
+        train_mixed_precision_dtype="bf16",
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
