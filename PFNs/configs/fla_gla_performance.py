@@ -68,6 +68,15 @@ def get_config(config_index: int = 0) -> MainConfig:
             dropout=0.1,
             activation="swish",
             norm_eps=1e-4, # increase in size if nans occur
+            config_kwargs={
+                "hidden_size": 320,
+                "num_hidden_layers": 12,
+                "num_heads": 4,
+                "intermediate_size": 320 * 2,
+                "hidden_act": "swish",
+                "norm_eps": 1e-4,
+                "use_cache": True,
+            },
         ),
         features_per_group=20,
         attention_between_features=False,

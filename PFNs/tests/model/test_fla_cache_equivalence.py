@@ -13,6 +13,15 @@ def _build_backbone() -> torch.nn.Module:
         nhead=2,
         activation="swish",
         dropout=0.0,
+        config_kwargs={
+            "hidden_size": 8,
+            "num_hidden_layers": 2,
+            "num_heads": 2,
+            "intermediate_size": 32,
+            "hidden_act": "swish",
+            "norm_eps": 1e-5,
+            "use_cache": True,
+        },
     )
     backbone = config.create_backbone(ninp=8, attention_between_features=False)
     backbone.eval()

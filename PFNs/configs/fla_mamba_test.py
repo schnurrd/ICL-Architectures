@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Training config that uses the standalone tabpfn_prior package with the PFNs
-training loop with a GLA (Gated Linear Attention) backbone.
+training loop with a Mamba2 backbone.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from pfns.train import (
 def get_config(config_index: int = 0) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
-    tabpfn_prior data using GLA (Gated Linear Attention) backbone.
+    tabpfn_prior data using a Mamba2 backbone.
     """
 
     max_num_classes = 10
@@ -39,9 +39,9 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
 
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=4,
+        batch_size=1,
         min_single_eval_pos=24,
-        max_seq_len=1000,
+        max_seq_len=521,
         min_num_features=2,
         max_num_features=max_num_features,
         fixed_num_test_instances=None,
@@ -59,22 +59,23 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=320,
+        emsize=192,
         backbone=FLABackboneConfig(
-            model_type="gla",
-            nlayers=12,
+            model_type="mamba2",
+            nlayers=4,
             nhead=4,
-            intermediate_size=320 * 2,
+            intermediate_size=192 * 2,
             dropout=0.1,
             activation="swish",
             norm_eps=1e-4, # increase in size if nans occur
             config_kwargs={
-                "hidden_size": 320,
-                "num_hidden_layers": 12,
-                "num_heads": 4,
-                "intermediate_size": 320 * 2,
-                "hidden_act": "swish",
-                "norm_eps": 1e-4,
+                "hidden_size": 192,
+                "d_model": 192,
+                "n_embd": 192,
+                "n_layer": 6,
+                "d_state": 16,
+                "d_conv": 4,
+                "expand": 2,
                 "use_cache": True,
             },
         ),
@@ -92,7 +93,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
-        name=f"gla_test_{config_index}",
+        name=f"mamba2_test_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
