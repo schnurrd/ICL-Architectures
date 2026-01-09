@@ -284,7 +284,7 @@ class FLABackbone(Backbone):
 
         def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
             if torch.is_tensor(cache_params):
-                return cache_params.repeat_interleave(repeat, dim=0)
+                cache_params = cache_params.repeat_interleave(repeat, dim=0)
             elif hasattr(cache_params, "layers"): # GLA style
                 for layer in cache_params.layers:
                     state = getattr(layer, "state", None)
@@ -293,13 +293,12 @@ class FLABackbone(Backbone):
                     for key, value in state.items():
                         if torch.is_tensor(value):
                             state[key] = value.repeat_interleave(repeat, dim=0)
-                return cache_params
             elif hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"): # Mamba2 style
                 cache_params.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
                 cache_params.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
-                return cache_params
             else:
                 raise ValueError("Unsupported cache_params structure for repetition.")
+            return cache_params
 
         expanded_cache = _repeat_cache(cache_params, seq_len)
         test_x_flat = test_x.contiguous().view(batch_size * seq_len, 1, embed_dim).detach()
@@ -380,7 +379,7 @@ class FLABackbone(Backbone):
                 "FLA model returned no past_key_values; cache is required for independent evaluation."
             )
         
-        test_out = self._run_test_with_cache_naive(test_x, cache_params, cache_position_start=train_len)
+        test_out = self._run_test_with_cache(test_x, cache_params, cache_position_start=train_len)
         attn_out = torch.cat([train_out, test_out], dim=1)
 
         out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
