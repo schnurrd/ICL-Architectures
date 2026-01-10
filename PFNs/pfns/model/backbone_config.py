@@ -223,6 +223,28 @@ class FLABackbone(Backbone):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
 
+    def incontext_fit(
+        self,
+        train_x: torch.Tensor,
+    ) -> tuple[torch.Tensor, tp.Any]:
+        """Run the FLA model on the training context and return cached state."""
+        train_out, cache_params = self._run_fla(train_x)
+        return train_out, cache_params
+
+    def incontext_predict(
+        self,
+        test_x: torch.Tensor,
+        cache_params: tp.Any,
+        *,
+        cache_position_start: int | None = None,
+    ) -> torch.Tensor:
+        """Run the FLA model on test inputs using cached past key values in parallel."""
+        return self._run_test_with_cache(
+            test_x,
+            cache_params,
+            cache_position_start=cache_position_start,
+        )
+
     def _run_fla(
         self,
         x: torch.Tensor,
@@ -264,6 +286,8 @@ class FLABackbone(Backbone):
             cache_params = out.past_key_values
         elif hasattr(out, "cache_params"):
             cache_params = out.cache_params
+        else:
+            raise RuntimeError("FLA model output does not contain past_key_values or cache_params.")
         return last_hidden_state, cache_params
 
     def _run_test_with_cache(
@@ -373,13 +397,8 @@ class FLABackbone(Backbone):
         train_x = x_batched[:, :train_len]
         test_x = x_batched[:, train_len:]
 
-        train_out, cache_params = self._run_fla(train_x)
-        if cache_params is None:
-            raise RuntimeError(
-                "FLA model returned no past_key_values; cache is required for independent evaluation."
-            )
-        
-        test_out = self._run_test_with_cache(test_x, cache_params, cache_position_start=train_len)
+        train_out, state = self.incontext_fit(train_x)
+        test_out = self.incontext_predict(test_x, state, cache_position_start=train_len)
         attn_out = torch.cat([train_out, test_out], dim=1)
 
         out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
