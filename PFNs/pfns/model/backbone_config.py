@@ -229,16 +229,17 @@ class FLABackbone(Backbone):
     ) -> tuple[torch.Tensor, tp.Any]:
         """Run the FLA model on the training context and return cached state."""
         train_out, cache_params = self._run_fla(train_x)
-        cache_params['cache_position_start'] = train_x.size(1)
-        return train_out, cache_params
+        cached_state = {'cache_params': cache_params, 'cache_position_start': train_x.size(1)}
+        return train_out, cached_state
 
     def incontext_predict(
         self,
         test_x: torch.Tensor,
-        cache_params: tp.Any,
+        cached_state: tp.Any,
     ) -> torch.Tensor:
         """Run the FLA model on test inputs using cached past key values in parallel."""
-        cache_position_start = cache_params.get('cache_position_start', None)
+        cache_position_start = cached_state.get('cache_position_start', None)
+        cache_params = cached_state['cache_params']
         return self._run_test_with_cache(
             test_x,
             cache_params,
