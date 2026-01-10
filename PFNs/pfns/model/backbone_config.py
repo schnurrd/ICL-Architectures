@@ -229,16 +229,16 @@ class FLABackbone(Backbone):
     ) -> tuple[torch.Tensor, tp.Any]:
         """Run the FLA model on the training context and return cached state."""
         train_out, cache_params = self._run_fla(train_x)
+        cache_params['cache_position_start'] = train_x.size(1)
         return train_out, cache_params
 
     def incontext_predict(
         self,
         test_x: torch.Tensor,
         cache_params: tp.Any,
-        *,
-        cache_position_start: int | None = None,
     ) -> torch.Tensor:
         """Run the FLA model on test inputs using cached past key values in parallel."""
+        cache_position_start = cache_params.get('cache_position_start', None)
         return self._run_test_with_cache(
             test_x,
             cache_params,
@@ -398,7 +398,7 @@ class FLABackbone(Backbone):
         test_x = x_batched[:, train_len:]
 
         train_out, state = self.incontext_fit(train_x)
-        test_out = self.incontext_predict(test_x, state, cache_position_start=train_len)
+        test_out = self.incontext_predict(test_x, state)
         attn_out = torch.cat([train_out, test_out], dim=1)
 
         out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
