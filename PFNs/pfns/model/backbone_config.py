@@ -181,12 +181,6 @@ class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
     model_type: tp.Literal["gla", "retnet", "mamba2"] = "gla"
-    nlayers: int = 6
-    nhead: int = 4
-    intermediate_size: int | None = None
-    dropout: float = 0.1
-    activation: tp.Literal["gelu", "relu", "swish", "silu"] = "gelu"
-    norm_eps: float = 1e-5
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["cached", "causal", "teacher_forcing"] = "cached"
 
@@ -205,6 +199,7 @@ class FLABackboneConfig(BackboneConfig):
 
         if self.config_kwargs is None:
             raise ValueError("FLABackboneConfig requires config_kwargs to build the FLA config.")
+        
         config = ConfigClass(**self.config_kwargs)
         fla_model = ModelClass(config)
 
@@ -231,7 +226,7 @@ class FLABackbone(Backbone):
         train_x: torch.Tensor,
     ) -> tuple[torch.Tensor, tp.Any]:
         """Run the FLA model on the training context and return cached state."""
-        train_out, cache_params = self._run_fla(train_x)
+        train_out, cache_params = self._run_fla(train_x, return_cache=True)
         cached_state = {'cache_params': cache_params, 'cache_position_start': train_x.size(1)}
         return train_out, cached_state
 
@@ -244,21 +239,12 @@ class FLABackbone(Backbone):
         cache_position_start = cached_state.get('cache_position_start', None)
         cache_params = cached_state['cache_params']
 
-        if self.sequence_mode == "cached" or not self.training: # always use cached mode during eval
-            output = self._run_test_with_cache(
-                test_x,
-                cache_params,
-                cache_position_start=cache_position_start,
-            )
-        elif self.sequence_mode == "causal" or self.sequence_mode == "teacher_forcing":
-            output = self._run_test_causal(
-                test_x,
-                cache_params,
-                cache_position_start=cache_position_start,
-            )
-        else:
-            raise ValueError(f"Unknown sequence_mode: {self.sequence_mode}")
-
+        output = self._run_test_with_cache(
+            test_x,
+            cache_params,
+            cache_position_start=cache_position_start,
+        )
+        
         return output
 
     def _run_fla(
@@ -267,8 +253,9 @@ class FLABackbone(Backbone):
         *,
         cache_params: tp.Any | None = None,
         cache_position_start: int | None = None,
+        return_cache: bool = True,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": True}
+        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": return_cache}
         if cache_params is not None:
             if isinstance(self.fla, Mamba2Model):
                 kwargs["cache_params"] = cache_params
@@ -298,12 +285,13 @@ class FLABackbone(Backbone):
             raise RuntimeError("FLA model output does not contain last_hidden_state.")
 
         cache_params = None
-        if hasattr(out, "past_key_values"):
-            cache_params = out.past_key_values
-        elif hasattr(out, "cache_params"):
-            cache_params = out.cache_params
-        else:
-            raise RuntimeError("FLA model output does not contain past_key_values or cache_params.")
+        if return_cache:
+            if hasattr(out, "past_key_values"):
+                cache_params = out.past_key_values
+            elif hasattr(out, "cache_params"):
+                cache_params = out.cache_params
+            else:
+                raise RuntimeError("FLA model output does not contain past_key_values or cache_params.")
         return last_hidden_state, cache_params
 
     def _run_test_with_cache(
@@ -342,10 +330,12 @@ class FLABackbone(Backbone):
 
         expanded_cache = _repeat_cache(cache_params, seq_len)
         test_x_flat = test_x.contiguous().view(batch_size * seq_len, 1, embed_dim).detach()
+        
         output, _ = self._run_fla(
             test_x_flat,
             cache_params=expanded_cache,
             cache_position_start=cache_position_start,
+            return_cache=False,
         )
         output = output.view(batch_size, seq_len, embed_dim)
             
@@ -367,34 +357,15 @@ class FLABackbone(Backbone):
         seq_len = test_x.size(1)
         for t in range(seq_len):
             current_input = test_x[:, t : t + 1, :]  # shape (batch, 1, dim)
-            output, _ = self._run_fla(
+            output, cache_params = self._run_fla(
                 current_input,
                 cache_params=cache_params,
                 cache_position_start=cache_position_start,
+                return_cache=True,
             )
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)
             
-        return output
-    
-    def _run_test_causal(
-        self,
-        test_x: torch.Tensor,
-        cache_params: tp.Any,
-        cache_position_start: int | None = None,
-    ) -> torch.Tensor:
-        """
-        Run the FLA model on test inputs using cached past key values in a causal manner.
-        """
-
-        assert cache_params is not None, "Cache parameters must be provided for test-time evaluation."
-
-        output, _ = self._run_fla(
-            test_x,
-            cache_params=cache_params,
-            cache_position_start=cache_position_start,
-        )
-
         return output
     
     def forward(
@@ -430,13 +401,17 @@ class FLABackbone(Backbone):
         x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
 
         train_len = min(single_eval_pos, seq_len)
-        train_x = x_batched[:, :train_len]
-        test_x = x_batched[:, train_len:]
+    
+        if self.sequence_mode == "cached":
+            train_x = x_batched[:, :train_len]
+            test_x = x_batched[:, train_len:]
 
-        train_out, state = self.incontext_fit(train_x)
-        test_out = self.incontext_predict(test_x, state)
-        attn_out = torch.cat([train_out, test_out], dim=1)
-
+            train_out, state = self.incontext_fit(train_x)
+            test_out = self.incontext_predict(test_x, state)
+            attn_out = torch.cat([train_out, test_out], dim=1)
+        else:
+            attn_out, _ = self._run_fla(x_batched, return_cache=False)
+        
         out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
         return out
 

@@ -14,3 +14,4 @@ tabicl
 flash-linear-attention
 tabpfn
 wandb
+causal-conv1d

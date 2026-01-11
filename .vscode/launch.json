@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
                 "PFNs/configs/tabpfn_prior_config_1_gpu_v4.py", 
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
@@ -23,7 +23,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
                 "PFNs/configs/tabpfn_prior_config_1_gpu_v4_performance_long.py", 
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
@@ -36,7 +36,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
                 "PFNs/configs/fla_gla_test.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
@@ -49,7 +49,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
                 "PFNs/configs/fla_gla_test_causal.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
@@ -62,7 +62,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
                 "PFNs/configs/fla_gla_test_teacher_forcing.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
@@ -75,12 +75,14 @@
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/fla_mamba_test.py",
+                "PFNs/configs/fla_mamba_teacher_forcing_performance.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb"
-            ]
+            ],
+            "justMyCode": false
+
         },
         {
             "name": "Python Debugger: Pre-training Linear Attention",
@@ -88,7 +90,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
                 "PFNs/configs/linear_attention_test.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
@@ -101,7 +103,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_evaluation_cli.py",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
                 "--model_path", "PFNs/models_diff/1_gpu_10h_v3_group_20_batch_8.pt/tabpfn_prior_config_1_gpu_10h_v3_group_20_batch_8_0_no_seed", 
                 "--only_tabpfn", 
@@ -115,7 +117,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_evaluation_cli.py",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
                 "--model_path", "PFNs/models_diff/fla_gla_test_teacher_forcing_0", 
                 "--only_tabpfn", 
@@ -129,7 +131,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/scripts/analyze_spike_batch.py",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
                 "--checkpoint", "PFNs/models_diff/tabpfn_prior_config_1_gpu_v4_performance_long_2_2/checkpoint.pt", 
                 "--spike", "PFNs/models_diff/tabpfn_prior_config_1_gpu_v4_performance_long_2_2/spike_epoch58_step120.pt",
@@ -141,7 +143,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python"
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python"
         }
     ]
 }
