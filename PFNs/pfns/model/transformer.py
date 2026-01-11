@@ -205,6 +205,7 @@ class TabularModel(nn.Module):
         style: torch.Tensor | None = None,
         y_style: torch.Tensor | None = None,
         only_return_standard_out: bool = True,
+        single_eval_pos: int | None = None,
         **kwargs,
     ) -> dict[str, torch.Tensor]:  # noqa: D417
         """
@@ -226,6 +227,7 @@ class TabularModel(nn.Module):
             style: (batch_size, style_dim) or (batch_size, num_features, style_dim) The style vector. Assumed batch-first.
             y_style: (batch_size, style_dim) The style vector for the y data. Assumed batch-first.
             only_return_standard_out: If True, only the standard output is returned.
+            single_eval_pos: The position in the sequence where the training data ends and the test data begins.
             **kwargs: Keyword arguments passed to the `_forward` method:
                 - `categorical_inds`: The indices of categorical features. A single list of indices for the whole batch:
                     these are shared between the datasets within a batch.
@@ -251,10 +253,8 @@ class TabularModel(nn.Module):
         # Now x_bf, y_bf, test_x_bf are batch-first (or None)
 
         # Determine single_eval_pos based on the original y shape
-        if y_bf is not None:
+        if y_bf is not None and single_eval_pos is None:
             single_eval_pos = y_bf.shape[1]
-        else:
-            single_eval_pos = None
 
         # Handle cache_trainset_representation and combining x, test_x
         if self.cache_trainset_representation and y is None:
@@ -468,7 +468,8 @@ class TabularModel(nn.Module):
         # Making sure no label leakage ever happens for y["main"] (batch-first indexing)
         # current_context_len is the length of the training data part
         if "main" in y and y["main"].shape[1] > current_context_len:
-            y["main"][:, current_context_len:] = torch.nan
+            if not (getattr(self.transformer_layers, "sequence_mode", None) == "teacher_forcing" and self.transformer_layers.training):
+                y["main"][:, current_context_len:] = torch.nan
 
         # Prepare y for y_encoder (transpose to sequence-first if y_encoder expects it)
         y_for_y_encoder = {}
@@ -523,16 +524,45 @@ class TabularModel(nn.Module):
             ),
         )
 
+        use_teacher_forcing = (
+            getattr(self.transformer_layers, "sequence_mode", None) == "teacher_forcing"
+        )
+        if use_teacher_forcing and self.attention_between_features:
+            raise ValueError(
+                "Teacher forcing for FLA requires attention_between_features=False."
+            )
+        if use_teacher_forcing and (style is not None or y_style is not None):
+            raise ValueError(
+                "Teacher forcing for FLA does not support style/y_style embeddings yet."
+            )
+
         if self.attention_between_features:
             # b s f e + b s 1 e -> b s f+1 e
             embedded_input = torch.cat((embedded_x, embedded_y.unsqueeze(2)), dim=2)
         else:
-            # add them together in this case, like for the original PFNs
             assert (
                 embedded_x.shape[2] == 1
             ), f"Only 1 feature per group supported for attention_between_features=False, got {embedded_x.shape=}."
-            # b s 1 e + b s 1 e -> b s 1 e
-            embedded_input = embedded_x + embedded_y.unsqueeze(2)
+            if use_teacher_forcing:
+                if self.transformer_layers.training:
+                    embedded_y_tokens = embedded_y.unsqueeze(2)
+                    embedded_input = torch.stack(
+                        (embedded_x, embedded_y_tokens), dim=2
+                    ).reshape(embedded_x.shape[0], -1, 1, embedded_x.shape[-1])
+                else:
+                    embedded_y_tokens = embedded_y[:, :current_context_len].unsqueeze(2)
+                    embedded_input = torch.stack(
+                        (embedded_x[:,:current_context_len], embedded_y_tokens), dim=2
+                    ).reshape(embedded_x.shape[0], -1, 1, embedded_x.shape[-1])
+                    embedded_input = torch.cat(
+                        (embedded_input, embedded_x[:,current_context_len:]),
+                        dim=1
+                    )
+                current_context_len *= 2  # Each x token is followed by a y token
+            else:
+                # add them together in this case, like for the original PFNs
+                # b s 1 e + b s 1 e -> b s 1 e
+                embedded_input = embedded_x + embedded_y.unsqueeze(2)
 
         if style is not None:
             embedded_style = self.style_encoder(
@@ -594,12 +624,25 @@ class TabularModel(nn.Module):
 
         encoder_out = self.transformer_layers(
             embedded_input,  # (b s_effective (num_groups+1_for_y) e)
-            single_eval_pos=current_context_len,  # Pass the context length including style
+            single_eval_pos=current_context_len,
             half_layers=half_layers,
             cache_trainset_representation=self.cache_trainset_representation,
         )  # b s (num_groups+1_for_y) e -> b s (num_groups+1_for_y) e
 
         del embedded_input
+
+        if use_teacher_forcing:
+            if self.transformer_layers.training:
+                encoder_out = encoder_out[:, ::2]  # remove interleaved y tokens
+            else:
+                encoder_out = torch.cat(
+                    (
+                        encoder_out[:, :current_context_len:2],
+                        encoder_out[:, current_context_len:],
+                    ),
+                    dim=1,
+                )
+            current_context_len = current_context_len // 2
 
         # current_context_len now marks the end of the training/style part in the sequence dimension
         # encoder_out is (batch, seq_with_style, num_tokens_incl_y, embed_dim)

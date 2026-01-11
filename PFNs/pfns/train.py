@@ -476,6 +476,7 @@ def train_or_evaluate_epoch(
     epoch: int = 1,
     log_every_n_steps: int = 10,
     last_epoch_result: Metrics | None = None,
+    debug: bool = False,
 ):
     """
     Train or evaluate one epoch.
@@ -542,8 +543,13 @@ def train_or_evaluate_epoch(
             potentially_no_grad_context = nullcontext()
         else:
             potentially_no_grad_context = torch.no_grad()
+            
+        if debug:
+            anomaly_detection_context = torch.autograd.set_detect_anomaly(True)
+        else:
+            anomaly_detection_context = nullcontext()
 
-        with potentially_no_sync_context, potentially_no_grad_context:
+        with anomaly_detection_context, potentially_no_sync_context, potentially_no_grad_context:
             time_to_get_batch = time.time() - before_get_batch
             before_forward = time.time()
             try:
@@ -567,13 +573,14 @@ def train_or_evaluate_epoch(
                     
                     output = model(
                         x=batch.x.to(device),
-                        y=batch.y[:, :single_eval_pos].to(device),
+                        y=batch.y.to(device), # batch.y[:, :single_eval_pos].to(device)
                         style=move_style_and_check_shape(batch.style, batch.x, device),
                         y_style=move_y_style_and_check_shape(
                             batch.y_style, batch.y, device
                         ),
                         categorical_inds=categorical_inds,
                         only_return_standard_out=True,
+                        single_eval_pos=single_eval_pos,
                     )  # shape: (batch_size, test_len)
 
                     forward_time = time.time() - before_forward

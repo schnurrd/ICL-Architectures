@@ -188,13 +188,15 @@ class FLABackboneConfig(BackboneConfig):
     activation: tp.Literal["gelu", "relu", "swish", "silu"] = "gelu"
     norm_eps: float = 1e-5
     config_kwargs: dict[str, tp.Any] | None = None
+    sequence_mode: tp.Literal["cached", "causal", "teacher_forcing"] = "cached"
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
             raise ValueError(f"Unknown model_type: {self.model_type}. Available: {list(FLA_MODEL_REGISTRY)}")
+        if self.sequence_mode not in {"cached", "causal", "teacher_forcing"}:
+            raise ValueError(f"Unknown sequence_mode: {self.sequence_mode}")
 
     def create_backbone(self, ninp: int, attention_between_features: bool, **kwargs: tp.Any) -> "Backbone":
-        d_ff = self.intermediate_size or (4 * ninp)
         ConfigClass, ModelClass = FLA_MODEL_REGISTRY[self.model_type]
 
         assert attention_between_features is False, (
@@ -208,6 +210,7 @@ class FLABackboneConfig(BackboneConfig):
 
         return FLABackbone(
             fla_model=fla_model,
+            sequence_mode=self.sequence_mode,
         )
 
 
@@ -217,11 +220,11 @@ class FLABackbone(Backbone):
     def __init__(
         self,
         fla_model: nn.Module,
-        *args: tp.Any,
-        **kwargs: tp.Any,
+        sequence_mode: tp.Literal["cached", "causal", "teacher_forcing"] = "cached",
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
+        self.sequence_mode = sequence_mode
 
     def incontext_fit(
         self,
@@ -240,11 +243,23 @@ class FLABackbone(Backbone):
         """Run the FLA model on test inputs using cached past key values in parallel."""
         cache_position_start = cached_state.get('cache_position_start', None)
         cache_params = cached_state['cache_params']
-        return self._run_test_with_cache(
-            test_x,
-            cache_params,
-            cache_position_start=cache_position_start,
-        )
+
+        if self.sequence_mode == "cached" or not self.training: # always use cached mode during eval
+            output = self._run_test_with_cache(
+                test_x,
+                cache_params,
+                cache_position_start=cache_position_start,
+            )
+        elif self.sequence_mode == "causal" or self.sequence_mode == "teacher_forcing":
+            output = self._run_test_causal(
+                test_x,
+                cache_params,
+                cache_position_start=cache_position_start,
+            )
+        else:
+            raise ValueError(f"Unknown sequence_mode: {self.sequence_mode}")
+
+        return output
 
     def _run_fla(
         self,
@@ -360,6 +375,26 @@ class FLABackbone(Backbone):
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)
             
+        return output
+    
+    def _run_test_causal(
+        self,
+        test_x: torch.Tensor,
+        cache_params: tp.Any,
+        cache_position_start: int | None = None,
+    ) -> torch.Tensor:
+        """
+        Run the FLA model on test inputs using cached past key values in a causal manner.
+        """
+
+        assert cache_params is not None, "Cache parameters must be provided for test-time evaluation."
+
+        output, _ = self._run_fla(
+            test_x,
+            cache_params=cache_params,
+            cache_position_start=cache_position_start,
+        )
+
         return output
     
     def forward(

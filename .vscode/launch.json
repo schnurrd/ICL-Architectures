@@ -44,6 +44,32 @@
             ]
         },
         {
+            "name": "Python Debugger: Pre-training GLA Causal",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "args": [
+                "PFNs/configs/fla_gla_test_causal.py",
+                "--checkpoint-save-load-prefix", "PFNs/models_diff",
+                "--overwrite", "--no-wandb"
+            ]
+        },
+        {
+            "name": "Python Debugger: Pre-training GLA Teacher Forcing",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
+            "args": [
+                "PFNs/configs/fla_gla_test_teacher_forcing.py",
+                "--checkpoint-save-load-prefix", "PFNs/models_diff",
+                "--overwrite", "--no-wandb"
+            ]
+        },
+        {
             "name": "Python Debugger: Pre-training FLA Mamba2",
             "type": "debugpy",
             "request": "launch",
@@ -91,7 +117,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch_311/bin/python",
             "args": [
-                "--model_path", "PFNs/models_diff/fla_gla_performance_0", 
+                "--model_path", "PFNs/models_diff/fla_gla_test_teacher_forcing_0", 
                 "--only_tabpfn", 
                 "--max_features", "20",
                 "--max_samples", "1000",

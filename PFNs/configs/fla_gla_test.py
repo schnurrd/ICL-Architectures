@@ -107,10 +107,10 @@ def get_config(config_index: int = 0) -> MainConfig:
         steps_per_epoch=250,
         n_targets_per_input=1,
         train_mixed_precision=True,
-        train_mixed_precision_dtype="bf16",
+        train_mixed_precision_dtype="bf16", # fp16 will lead to nans
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
         num_workers=8,
-        aggregate_k_gradients=1
+        aggregate_k_gradients=2
     )
