@@ -77,6 +77,7 @@ def get_config(config_index: int = 0) -> MainConfig:
                 "norm_eps": 1e-4,
                 "use_cache": True,
             },
+            sequence_mode="cached"
         ),
         features_per_group=20,
         attention_between_features=False,
@@ -92,7 +93,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
-        name=f"gla_test_{config_index}",
+        name=f"gla_cached_test_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )

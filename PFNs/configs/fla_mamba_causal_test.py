@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Training config that uses the standalone tabpfn_prior package with the PFNs
-training loop with a GLA (Gated Linear Attention) backbone.
+training loop with a Mamba2 backbone.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from pfns.train import (
 def get_config(config_index: int = 0) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
-    tabpfn_prior data using GLA (Gated Linear Attention) backbone.
+    tabpfn_prior data using a Mamba2 backbone.
     """
 
     max_num_classes = 10
@@ -39,9 +39,9 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
 
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=2,
+        batch_size=1,
         min_single_eval_pos=24,
-        max_seq_len=1000,
+        max_seq_len=521,
         min_num_features=2,
         max_num_features=max_num_features,
         fixed_num_test_instances=None,
@@ -59,24 +59,26 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=320,
+        emsize=192,
         backbone=FLABackboneConfig(
-            model_type="gla",
-            nlayers=12,
+            model_type="mamba2",
+            nlayers=4,
             nhead=4,
-            intermediate_size=320 * 2,
+            intermediate_size=192 * 2,
             dropout=0.1,
             activation="swish",
             norm_eps=1e-4, # increase in size if nans occur
             config_kwargs={
-                "hidden_size": 320,
-                "num_hidden_layers": 12,
-                "num_heads": 4,
-                "intermediate_size": 320 * 2,
-                "hidden_act": "swish",
-                "norm_eps": 1e-4,
+                "hidden_size": 192,
+                "d_model": 192,
+                "n_embd": 192,
+                "n_layer": 6,
+                "d_state": 16,
+                "d_conv": 4,
+                "expand": 2,
                 "use_cache": True,
             },
+            sequence_mode="causal",
         ),
         features_per_group=20,
         attention_between_features=False,
@@ -85,14 +87,14 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=3.0e-5,
+        lr=7.5e-5,
         weight_decay=0.01,
     )
     
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
-        name=f"gla_perofrmance_long_{config_index}",
+        name=f"mamba2_causal_test_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
@@ -102,15 +104,15 @@ def get_config(config_index: int = 0) -> MainConfig:
         optimizer=optimizer,
         model=model,
         batch_shape_sampler=batch_shape,
-        epochs=400,
+        epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=16000,
+        steps_per_epoch=250,
         n_targets_per_input=1,
         train_mixed_precision=True,
-        train_mixed_precision_dtype="bf16", # fp16 will lead to nans
+        train_mixed_precision_dtype="bf16",
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
         num_workers=8,
-        aggregate_k_gradients=8
+        aggregate_k_gradients=1
     )

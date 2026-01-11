@@ -93,7 +93,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
-        name=f"gla_test_teacher_forcing_test_{config_index}",
+        name=f"gla_test_causal_test_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
