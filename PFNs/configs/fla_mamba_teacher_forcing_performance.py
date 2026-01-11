@@ -39,7 +39,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
 
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=1,
+        batch_size=16,
         min_single_eval_pos=24,
         max_seq_len=1000,
         min_num_features=2,
@@ -102,8 +102,8 @@ def get_config(config_index: int = 0) -> MainConfig:
         warmup_epochs=10,
         steps_per_epoch=4000,
         n_targets_per_input=1,
-        train_mixed_precision=True,
-        train_mixed_precision_dtype="bf16",
+        train_mixed_precision=False,
+        train_mixed_precision_dtype="fp32",
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,

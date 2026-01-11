@@ -39,9 +39,9 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
 
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=1,
+        batch_size=16,
         min_single_eval_pos=24,
-        max_seq_len=521,
+        max_seq_len=1000,
         min_num_features=2,
         max_num_features=max_num_features,
         fixed_num_test_instances=None,
