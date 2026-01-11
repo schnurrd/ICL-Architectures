@@ -62,21 +62,15 @@ def get_config(config_index: int = 0) -> MainConfig:
         emsize=192,
         backbone=FLABackboneConfig(
             model_type="mamba2",
-            nlayers=4,
-            nhead=4,
-            intermediate_size=192 * 2,
-            dropout=0.1,
-            activation="swish",
-            norm_eps=1e-4, # increase in size if nans occur
             config_kwargs={
-                "hidden_size": 192,
-                "d_model": 192,
-                "n_embd": 192,
-                "n_layer": 6,
-                "d_state": 16,
-                "d_conv": 4,
+                "hidden_size": 384,
+                "num_hidden_layers": 12,
+                "state_size": 128,
+                "conv_kernel": 4,
                 "expand": 2,
-                "use_cache": True,
+                "head_dim": 64,
+                "vocab_size": 1, # minimal vocab size since we don't use embedding layer
+                "use_cache": True, 
             },
             sequence_mode="causal",
         ),

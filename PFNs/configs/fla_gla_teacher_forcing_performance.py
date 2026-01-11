@@ -62,19 +62,13 @@ def get_config(config_index: int = 0) -> MainConfig:
         emsize=320,
         backbone=FLABackboneConfig(
             model_type="gla",
-            nlayers=12,
-            nhead=4,
-            intermediate_size=320 * 2,
-            dropout=0.1,
-            activation="swish",
-            norm_eps=1e-4, # increase in size if nans occur
             config_kwargs={
                 "hidden_size": 320,
                 "num_hidden_layers": 12,
                 "num_heads": 4,
                 "intermediate_size": 320 * 2,
                 "hidden_act": "swish",
-                "norm_eps": 1e-4,
+                "norm_eps": 1e-4, # increase in size if nans occur
                 "use_cache": True,
             },
             sequence_mode="teacher_forcing"

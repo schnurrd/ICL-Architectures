@@ -61,6 +61,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         ),
         emsize=384,
         backbone=FLABackboneConfig(
+            model_type="mamba2",
             config_kwargs={
                 "hidden_size": 384,
                 "num_hidden_layers": 12,
