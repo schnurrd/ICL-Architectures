@@ -44,6 +44,19 @@
             ]
         },
         {
+            "name": "Python Debugger: Pre-training FLA ReBased",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
+            "args": [
+                "PFNs/configs/rebased_performance.py",
+                "--checkpoint-save-load-prefix", "PFNs/models_diff",
+                "--overwrite", "--no-wandb"
+            ]
+        },
+        {
             "name": "Python Debugger: Pre-training GLA Causal",
             "type": "debugpy",
             "request": "launch",

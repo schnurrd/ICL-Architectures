@@ -84,14 +84,30 @@ class LinearAttention(nn.Module):
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
+        k_self: torch.Tensor | None = None,
+        v_self: torch.Tensor | None = None,
     ) -> torch.Tensor:
         # q, k, v: (batch, seq_len, num_feature_blocks, nhead, head_dim)
         q = self._feature_map(q)
         k = self._feature_map(k)
         kv = torch.einsum("bsnhd,bsnhe->bnhde", k, v)
         k_sum = torch.einsum("bsnhd->bnhd", k)
-        denom = torch.einsum("bsnhd,bnhd->bsnh", q, k_sum).unsqueeze(-1)
-        return torch.einsum("bsnhd,bnhde->bsnhe", q, kv) / (denom + self.eps)
+        
+        # Denominator: Q * Z (Train)
+        denom = torch.einsum("bsnhd,bnhd->bsnh", q, k_sum)
+        # Numerator: Q * State (Train)
+        num = torch.einsum("bsnhd,bnhde->bsnhe", q, kv)
+
+        # Add Self-Attention (Test -> Self)
+        if k_self is not None and v_self is not None:
+             k_self = self._feature_map(k_self)
+             # (b, s, n, h, d) * (b, s, n, h, d) -> (b, s, n, h)
+             attn_self = (q * k_self).sum(dim=-1)
+             
+             num = num + attn_self.unsqueeze(-1) * v_self
+             denom = denom + attn_self
+
+        return num / (denom.unsqueeze(-1) + self.eps)
 
     def _softmax_attention_features(
         self,
@@ -118,6 +134,7 @@ class LinearAttention(nn.Module):
         out_proj: nn.Linear,
         kv_x: torch.Tensor | None = None,
         attention_across_features: bool = False,
+        use_self_attention_for_items: bool = False,
     ) -> torch.Tensor:
         q_x = x
         kv_x = x if kv_x is None else kv_x
@@ -138,7 +155,14 @@ class LinearAttention(nn.Module):
             q = q_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim)
             k = k_proj(kv_x).view(b, s_kv, n, self.nhead, self.head_dim)
             v = v_proj(kv_x).view(b, s_kv, n, self.nhead, self.head_dim)
-            out = self._linear_attention_items(q, k, v)
+            
+            k_self = None
+            v_self = None
+            if use_self_attention_for_items:
+                k_self = k_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim)
+                v_self = v_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim)
+            
+            out = self._linear_attention_items(q, k, v, k_self=k_self, v_self=v_self)
 
         out = out.reshape(b, s_q, n, e)
         return self.dropout(out_proj(out))
@@ -176,6 +200,7 @@ class LinearAttention(nn.Module):
             v_proj=self.v_proj_item,
             out_proj=self.out_proj_item,
             kv_x=train_x,
+            use_self_attention_for_items=True,
         )
         attn_item = torch.cat([attn_train, attn_test], dim=1)
         

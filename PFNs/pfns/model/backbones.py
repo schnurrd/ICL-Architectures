@@ -15,16 +15,19 @@ from torch import nn
 from fla.models import GLAConfig, GLAModel
 from fla.models import RetNetConfig, RetNetModel
 from fla.models import Mamba2Config, Mamba2Model
+from fla.models import KDAConfig, KDAModel
 
 from pfns import base_config
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.linear_attention import LinearAttention
+from pfns.model.rebased_linear_attention import RebasedLinearAttention
 from pfns.model.tabular_model import LayerStack
 # Registry mapping model types to their config and model classes
 FLA_MODEL_REGISTRY = {
     "gla": (GLAConfig, GLAModel),
     "retnet": (RetNetConfig, RetNetModel),
     "mamba2": (Mamba2Config, Mamba2Model),
+    "kda": (KDAConfig, KDAModel),
 }
 
 
@@ -184,7 +187,7 @@ class TransformerBackbone(Backbone):
 class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
-    model_type: tp.Literal["gla", "retnet", "mamba2"] = "gla"
+    model_type: tp.Literal["gla", "retnet", "mamba2", "kda"] = "gla"
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["cached", "causal", "teacher_forcing"] = "cached"
 
@@ -274,7 +277,7 @@ class FLABackbone(Backbone):
                     cache_position_start + x.size(1),
                     device=x.device,
                 )
-            elif isinstance(self.fla, GLAModel):
+            elif isinstance(self.fla, (GLAModel, KDAModel)):
                 kwargs["past_key_values"] = cache_params
             else:
                 raise ValueError("Unsupported FLA model type for cache_params.")
@@ -438,11 +441,6 @@ class LinearAttentionBackboneConfig(BackboneConfig):
         attention_between_features: bool,
         **kwargs: tp.Any,
     ) -> Backbone:
-        if LinearAttention is None:
-            raise ImportError(
-                "LinearAttention module not found. Please implement or install it in pfns.model.linear_attention."
-            )
-
         layers = nn.ModuleList([
             LinearAttention(
                 d_model=ninp,
@@ -482,3 +480,46 @@ class LinearAttentionBackbone(Backbone):
         for layer in self.layers:
             out = layer(out, single_eval_pos=single_eval_pos)
         return out
+
+
+@dataclass(frozen=True)
+class RebasedBackboneConfig(BackboneConfig):
+    nlayers: int = 6
+    nhid: int | None = None
+    num_heads: int = 4
+    feature_dim: int = 16
+    activation: str = "silu"
+    dropout: float = 0.1
+    use_gamma: bool = True
+    use_beta: bool = True
+    normalize: bool = True
+    eps: float = 1e-5
+
+    def create_backbone(
+        self,
+        ninp: int,
+        attention_between_features: bool,
+        **kwargs: tp.Any,
+    ) -> Backbone:
+        assert attention_between_features is False, (
+            "RebasedBackbone currently does not support attention between features"
+        )
+
+        layers = nn.ModuleList(
+            [
+                RebasedLinearAttention(
+                    d_model=ninp,
+                    dim_feedforward=self.nhid,
+                    num_heads=self.num_heads,
+                    feature_dim=self.feature_dim,
+                    dropout=self.dropout,
+                    activation=self.activation,
+                    use_gamma=self.use_gamma,
+                    use_beta=self.use_beta,
+                    normalize=self.normalize,
+                    eps=self.eps,
+                )
+                for _ in range(self.nlayers)
+            ]
+        )
+        return LinearAttentionBackbone(layers)
