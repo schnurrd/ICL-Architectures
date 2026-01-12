@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import random
 
 from pfns.priors.hyperparameter_sampling import (
     PowerUniformFloatDistConfig,
@@ -22,6 +23,11 @@ def test_distribution_normalizers():
         assert (
             p_value > p_threshold
         ), f"{name} normalized samples failed uniformity test with p={p_value:.4f}"
+
+    # Set seed for reproducibility
+    random.seed(0)
+    torch.manual_seed(0)
+    np.random.seed(0)
 
     # Test cases for each distribution type
     test_cases = [

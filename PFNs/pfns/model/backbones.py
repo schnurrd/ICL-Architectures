@@ -157,6 +157,10 @@ class TransformerBackbone(Backbone):
     def __init__(self, layer_stack: nn.Module):
         super().__init__()
         self.layer_stack = layer_stack
+
+    @property
+    def layers(self):
+        return self.layer_stack.layers
         
     def forward(
         self,

@@ -3,7 +3,7 @@ torch==2.9.0
 pandas
 seaborn
 ipykernel
-pynvml
+nvidia-ml-py
 numpy 
 scipy 
 gpytorch

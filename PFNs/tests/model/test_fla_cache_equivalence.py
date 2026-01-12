@@ -9,10 +9,6 @@ from pfns.model.backbones import FLABackboneConfig
 def _build_backbone() -> torch.nn.Module:
     config = FLABackboneConfig(
         model_type="gla",
-        nlayers=2,
-        nhead=2,
-        activation="swish",
-        dropout=0.0,
         config_kwargs={
             "hidden_size": 8,
             "num_hidden_layers": 2,

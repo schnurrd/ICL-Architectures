@@ -5,6 +5,7 @@ import torch.optim as optim
 
 from pfns.model import encoders, tabular_model
 from pfns.model.tabular_model import isolate_torch_rng, TabularModel
+from pfns.model.backbones import TransformerBackboneConfig
 from torch.nn import CrossEntropyLoss
 
 
@@ -57,19 +58,21 @@ def sample_data(batch_first_setting):
 
 def test_transformer_init():
     """Test basic initialization of the transformer."""
-    transformer = TabularModel(ninp=64, nhead=4, nhid=256, nlayers=6)
+    backbone = TransformerBackboneConfig(nhead=4, nhid=256, nlayers=6).create_backbone(ninp=64, attention_between_features=True)
+    transformer = TabularModel(transformer_layers=backbone, ninp=64, nhid=256)
 
     assert transformer.ninp == 64
-    assert transformer.nhead == 4
     assert transformer.nhid == 256
-    assert len(transformer.transformer_layers.layers) == 6
+    assert len(transformer.transformer_layers.layer_stack.layers) == 6
 
 
 def test_transformer_forward(sample_data):
     """Test basic forward pass with default parameters."""
     model_batch_first = sample_data["batch_first"]
+    backbone = TransformerBackboneConfig(nhead=2, nhid=64, nlayers=2).create_backbone(ninp=32, attention_between_features=True)
     transformer_model = TabularModel(
-        ninp=32, nhead=2, nhid=64, nlayers=2, batch_first=model_batch_first
+        transformer_layers=backbone,
+        ninp=32, nhid=64, batch_first=model_batch_first
     )
 
     output = transformer_model(
@@ -96,11 +99,11 @@ def test_transformer_forward(sample_data):
 def test_add_embeddings_normal_rand_vec():
     """Test that add_embeddings adds the same embeddings when using normal_rand_vec."""
     # Create a transformer with normal_rand_vec feature positional embedding
+    backbone = TransformerBackboneConfig(nhead=4, nhid=256, nlayers=6).create_backbone(ninp=64, attention_between_features=True)
     transformer = TabularModel(
+        transformer_layers=backbone,
         ninp=64,
-        nhead=4,
         nhid=256,
-        nlayers=6,
         feature_positional_embedding="normal_rand_vec",
         seed=42,
     )
@@ -211,11 +214,11 @@ def test_feature_positional_embeddings(sample_data):
     model_batch_first = sample_data["batch_first"]
 
     for emb_type in embedding_types:
+        backbone = TransformerBackboneConfig(nhead=2, nhid=64, nlayers=2).create_backbone(ninp=32, attention_between_features=True)
         transformer_model = TabularModel(
+            transformer_layers=backbone,
             ninp=32,
-            nhead=2,
             nhid=64,
-            nlayers=2,
             feature_positional_embedding=emb_type,
             seed=42,
             batch_first=model_batch_first,
@@ -246,11 +249,11 @@ def test_features_per_group(sample_data):
     """Test the features_per_group parameter."""
     model_batch_first = sample_data["batch_first"]
     # Set features_per_group=3 to match the number of features in sample data
+    backbone = TransformerBackboneConfig(nhead=2, nhid=64, nlayers=2).create_backbone(ninp=32, attention_between_features=True)
     transformer_model = TabularModel(
+        transformer_layers=backbone,
         ninp=32,
-        nhead=2,
         nhid=64,
-        nlayers=2,
         features_per_group=3,
         batch_first=model_batch_first,
     )
@@ -280,11 +283,11 @@ def test_features_per_group(sample_data):
 def test_cache_trainset_representation(sample_data):
     """Test caching of trainset representations."""
     model_batch_first = sample_data["batch_first"]
+    backbone = TransformerBackboneConfig(nhead=2, nhid=64, nlayers=2).create_backbone(ninp=32, attention_between_features=True)
     transformer_model = TabularModel(
+        transformer_layers=backbone,
         ninp=32,
-        nhead=2,
         nhid=64,
-        nlayers=2,
         cache_trainset_representation=True,
         batch_first=model_batch_first,
     )
@@ -335,11 +338,11 @@ def test_decoder_dict(sample_data):
 
     model_batch_first = sample_data["batch_first"]
 
+    backbone = TransformerBackboneConfig(nhead=2, nhid=64, nlayers=2).create_backbone(ninp=32, attention_between_features=True)
     transformer_model = TabularModel(
+        transformer_layers=backbone,
         ninp=32,
-        nhead=2,
         nhid=64,
-        nlayers=2,
         decoder_dict=decoder_dict,
         batch_first=model_batch_first,
     )
@@ -387,11 +390,11 @@ def test_style_encoder(sample_data):
     style_encoder_module = SimpleStyleEncoder(32)
     model_batch_first = sample_data["batch_first"]
 
+    backbone = TransformerBackboneConfig(nhead=2, nhid=64, nlayers=2).create_backbone(ninp=32, attention_between_features=True)
     transformer_model = TabularModel(
+        transformer_layers=backbone,
         ninp=32,
-        nhead=2,
         nhid=64,
-        nlayers=2,
         style_encoder=style_encoder_module,
         batch_first=model_batch_first,
     )
@@ -442,11 +445,11 @@ def test_y_style_encoder(sample_data):
     style_encoder_module = SimpleStyleEncoder(32)
     model_batch_first = sample_data["batch_first"]
 
+    backbone = TransformerBackboneConfig(nhead=2, nhid=64, nlayers=2).create_backbone(ninp=32, attention_between_features=True)
     transformer_model = TabularModel(
+        transformer_layers=backbone,
         ninp=32,
-        nhead=2,
         nhid=64,
-        nlayers=2,
         style_encoder=style_encoder_module,  # y_style_encoder requires attention_between_features=True
         y_style_encoder=style_encoder_module,
         attention_between_features=True,  # Required for y_style_encoder
@@ -522,7 +525,9 @@ def test_y_style_encoder(sample_data):
 def test_separate_train_inference(
     multiquery_item_attention_for_test_set, model_batch_first_setting
 ):
+    backbone = TransformerBackboneConfig().create_backbone(ninp=tabular_model.DEFAULT_EMSIZE, attention_between_features=True)
     model = tabular_model.TabularModel(
+        transformer_layers=backbone,
         encoder=encoders.SequentialEncoder(
             encoders.InputNormalizationEncoderStep(
                 normalize_on_train_only=True,
@@ -620,14 +625,13 @@ def test_transformer_overfit(attention_between_features):
     num_classes = 3  # 3-way classification
 
     # Create a tiny transformer
+    backbone = TransformerBackboneConfig(nhead=2, nhid=32, nlayers=2).create_backbone(ninp=emsize, attention_between_features=attention_between_features)
     transformer = TabularModel(
+        transformer_layers=backbone,
         ninp=emsize,
-        nhead=2,
         nhid=32,
-        nlayers=2,
         features_per_group=1,
         seed=42,
-        device="cpu",
         decoder_dict={"standard": (None, num_classes)},
         attention_between_features=attention_between_features,
     )
@@ -661,7 +665,7 @@ def test_transformer_overfit(attention_between_features):
 
     # Train the model to overfit
     transformer.train()
-    for step in range(50):
+    for step in range(100):
         optimizer.zero_grad()
 
         scramble = torch.randperm(seq_len_train)

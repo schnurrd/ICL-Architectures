@@ -7,7 +7,7 @@ torchaudio==2.0.2
 pandas
 seaborn
 ipykernel
-pynvml
+nvidia-ml-py
 numpy
 scipy
 gpytorch
