@@ -135,7 +135,9 @@ class RebasedLinearAttention(nn.Module):
             raise ValueError(
                 f"single_eval_pos must be in the range [1, {s}], got {single_eval_pos}."
             )
-        x_flat = x.transpose(1, 2).reshape(b * n, s, d)
+
+        x_norm = self.norms[0](x)
+        x_flat = x_norm.transpose(1, 2).reshape(b * n, s, d)
         
         # Projects: (B*N, S, D) -> Proj Dim
         q = self.q_proj(x_flat).view(b*n, s, self.num_heads, self.feature_dim)
@@ -176,8 +178,10 @@ class RebasedLinearAttention(nn.Module):
         # Rearrange
         attn_out = attn_out.reshape(b, n, s, d).transpose(1, 2)
         
-        x = self.norms[0](x + attn_out)
-        x = self.norms[1](x + self.mlp(x))
+        x = x + attn_out
+        
+        x = x + self.mlp(self.norms[1](x))
+
         if is_three_dim:
             x = x.squeeze(2)
         return x

@@ -172,19 +172,22 @@ class LinearAttention(nn.Module):
         norm_idx = 0
 
         if self.attention_between_features:
+            x_norm = self.norms[norm_idx](x)
             attn_feat = self._apply_attention(
-                x,
+                x_norm,
                 q_proj=self.q_proj_feat,
                 k_proj=self.k_proj_feat,
                 v_proj=self.v_proj_feat,
                 out_proj=self.out_proj_feat,
                 attention_across_features=True,
             )
-            x = self.norms[norm_idx](x + attn_feat)
+            x = x + attn_feat
             norm_idx += 1
 
-        train_x = x[:, :single_eval_pos]
-        test_x = x[:, single_eval_pos:]
+        x_norm = self.norms[norm_idx](x)
+        train_x = x_norm[:, :single_eval_pos]
+        test_x = x_norm[:, single_eval_pos:]
+        
         attn_train = self._apply_attention(
             train_x,
             q_proj=self.q_proj_item,
@@ -204,10 +207,10 @@ class LinearAttention(nn.Module):
         )
         attn_item = torch.cat([attn_train, attn_test], dim=1)
         
-        x = self.norms[norm_idx](x + attn_item)
+        x = x + attn_item
         norm_idx += 1
 
-        x = self.norms[norm_idx](x + self.ff(x))
+        x = x + self.ff(self.norms[norm_idx](x))
         return x
 
     def empty_trainset_representation_cache(self) -> None:
