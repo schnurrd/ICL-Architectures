@@ -9,7 +9,7 @@ import math
 
 import torch
 from pfns.model import bar_distribution
-from pfns.model.backbone_config import TransformerBackboneConfig
+from pfns.model.backbones import TransformerBackboneConfig
 from pfns.model.encoders import EncoderConfig, StyleEncoderConfig
 from pfns.priors.hyperparameter_sampling import ChoiceDistConfig, UniformFloatDistConfig
 from pfns.priors.prior import AdhocPriorConfig

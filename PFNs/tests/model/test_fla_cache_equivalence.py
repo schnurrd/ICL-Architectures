@@ -3,7 +3,7 @@ import torch
 
 pytest.importorskip("fla")
 
-from pfns.model.backbone_config import FLABackboneConfig
+from pfns.model.backbones import FLABackboneConfig
 
 
 def _build_backbone() -> torch.nn.Module:

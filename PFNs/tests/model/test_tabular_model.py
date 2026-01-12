@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from pfns.model import encoders, transformer
-from pfns.model.transformer import isolate_torch_rng, TabularModel
+from pfns.model import encoders, tabular_model
+from pfns.model.tabular_model import isolate_torch_rng, TabularModel
 from torch.nn import CrossEntropyLoss
 
 
@@ -522,7 +522,7 @@ def test_y_style_encoder(sample_data):
 def test_separate_train_inference(
     multiquery_item_attention_for_test_set, model_batch_first_setting
 ):
-    model = transformer.TabularModel(
+    model = tabular_model.TabularModel(
         encoder=encoders.SequentialEncoder(
             encoders.InputNormalizationEncoderStep(
                 normalize_on_train_only=True,
@@ -531,7 +531,7 @@ def test_separate_train_inference(
             ),
             encoders.LinearInputEncoderStep(
                 num_features=1,  # This encoder expects 1 feature after grouping
-                emsize=transformer.DEFAULT_EMSIZE,
+                emsize=tabular_model.DEFAULT_EMSIZE,
                 in_keys=["main"],
                 out_keys=["output"],
             ),

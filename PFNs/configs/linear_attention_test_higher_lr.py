@@ -6,7 +6,7 @@ training loop with a Linear Attention backbone.
 
 from __future__ import annotations
 
-from pfns.model.backbone_config import LinearAttentionBackboneConfig
+from pfns.model.backbones import LinearAttentionBackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig

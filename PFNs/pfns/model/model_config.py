@@ -2,8 +2,8 @@ import typing as tp
 from dataclasses import dataclass
 
 from pfns import base_config
-from pfns.model import encoders, transformer
-from pfns.model.backbone_config import BackboneConfig, TransformerBackboneConfig
+from pfns.model import encoders, tabular_model
+from pfns.model.backbones import BackboneConfig, TransformerBackboneConfig
 from pfns.model.bar_distribution import BarDistribution
 from pfns.model.criterions import BarDistributionConfig, CrossEntropyConfig
 from pfns.model.encoders import StyleEncoderConfig
@@ -44,7 +44,7 @@ class ModelConfig(base_config.BaseConfig):
     nhead: tp.Optional[int] = None
     seed: int = 0
 
-    def create_model(self) -> transformer.TabularModel:
+    def create_model(self) -> tabular_model.TabularModel:
         if self.nhid is not None or self.nlayers is not None or self.nhead is not None:
             backbone = TransformerBackboneConfig(
                 nhid=self.nhid if self.nhid is not None else 200,
@@ -98,7 +98,7 @@ class ModelConfig(base_config.BaseConfig):
         
         nhid = getattr(backbone, 'nhid', self.emsize * 4)
 
-        model = transformer.TabularModel(
+        model = tabular_model.TabularModel(
             encoder=encoder,
             transformer_layers=transformer_layers,
             y_encoder=y_encoder,

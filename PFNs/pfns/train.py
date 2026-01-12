@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 from . import base_config, utils
 from .batch_shape_sampler import BatchShapeSamplerConfig
-from .model.transformer_config import ModelConfig
+from .model.model_config import ModelConfig
 from .optimizer import OptimizerConfig
 from .run_logger import NullRunManager, RunManager, WandbConfig
 

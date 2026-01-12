@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from pfns import base_config
 from pfns.model.layer import PerFeatureLayer
-from pfns.model.transformer import LayerStack
+from pfns.model.tabular_model import LayerStack
 from pfns.model.linear_attention import LinearAttention
 import torch
 from torch import nn
