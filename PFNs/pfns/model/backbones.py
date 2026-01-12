@@ -1,32 +1,32 @@
 """Configuration classes for different model backbones.
 
 This module provides base classes and implementations for configuring
-different transformer backbones that can be used within the ModelConfig.
+different backbones that can be used within the ModelConfig.
 """
 from __future__ import annotations
 
 import typing as tp
-import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from pfns import base_config
-from pfns.model.layer import PerFeatureLayer
-from pfns.model.tabular_model import LayerStack
-from pfns.model.linear_attention import LinearAttention
 import torch
 from torch import nn
 
 from fla.models import GLAConfig, GLAModel
 from fla.models import RetNetConfig, RetNetModel
 from fla.models import Mamba2Config, Mamba2Model
-    
+
+from pfns import base_config
+from pfns.model.layer import PerFeatureLayer
+from pfns.model.linear_attention import LinearAttention
+from pfns.model.tabular_model import LayerStack
 # Registry mapping model types to their config and model classes
 FLA_MODEL_REGISTRY = {
     "gla": (GLAConfig, GLAModel),
     "retnet": (RetNetConfig, RetNetModel),
     "mamba2": (Mamba2Config, Mamba2Model),
 }
+
 
 class Backbone(nn.Module, ABC):
     """Abstract base class for backbone implementations.
@@ -190,7 +190,9 @@ class FLABackboneConfig(BackboneConfig):
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
-            raise ValueError(f"Unknown model_type: {self.model_type}. Available: {list(FLA_MODEL_REGISTRY)}")
+            raise ValueError(
+                f"Unknown model_type: {self.model_type}. Available: {list(FLA_MODEL_REGISTRY)}"
+            )
         if self.sequence_mode not in {"cached", "causal", "teacher_forcing"}:
             raise ValueError(f"Unknown sequence_mode: {self.sequence_mode}")
 
@@ -317,7 +319,7 @@ class FLABackbone(Backbone):
         def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
             if torch.is_tensor(cache_params):
                 cache_params = cache_params.repeat_interleave(repeat, dim=0)
-            elif hasattr(cache_params, "layers"): # GLA style
+            elif hasattr(cache_params, "layers"):  # GLA style
                 for layer in cache_params.layers:
                     state = getattr(layer, "state", None)
                     if not isinstance(state, dict):
@@ -325,7 +327,7 @@ class FLABackbone(Backbone):
                     for key, value in state.items():
                         if torch.is_tensor(value):
                             state[key] = value.repeat_interleave(repeat, dim=0)
-            elif hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"): # Mamba2 style
+            elif hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):  # Mamba2 style
                 cache_params.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
                 cache_params.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
             else:
@@ -437,7 +439,9 @@ class LinearAttentionBackboneConfig(BackboneConfig):
         **kwargs: tp.Any,
     ) -> Backbone:
         if LinearAttention is None:
-            raise ImportError("LinearAttention module not found. Please implement or install it in pfns.model.linear_attention.")
+            raise ImportError(
+                "LinearAttention module not found. Please implement or install it in pfns.model.linear_attention."
+            )
 
         layers = nn.ModuleList([
             LinearAttention(
