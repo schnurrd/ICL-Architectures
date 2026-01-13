@@ -97,6 +97,7 @@ def get_config(config_index: int = 0) -> MainConfig:
         steps_per_epoch=500,
         n_targets_per_input=1,
         train_mixed_precision=False, # true will result in nan losses
+        train_mixed_precision_dtype="fp32",  # fp16 will lead to nans
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,

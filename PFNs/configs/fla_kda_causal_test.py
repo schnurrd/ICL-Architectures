@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Training config that uses the standalone tabpfn_prior package with the PFNs
-training loop with a Rebased backbone.
+training loop with a KDA backbone.
 """
 
 from __future__ import annotations
 
-from pfns.model.backbones import RebasedBackboneConfig
+from pfns.model.backbones import FLABackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
@@ -22,7 +22,7 @@ from pfns.train import (
 def get_config(config_index: int = 0) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
-    tabpfn_prior data using Rebased backbone.
+    tabpfn_prior data using a KDA backbone.
     """
 
     max_num_classes = 10
@@ -46,27 +46,32 @@ def get_config(config_index: int = 0) -> MainConfig:
         max_num_features=max_num_features,
         fixed_num_test_instances=None,
     )
-
+    
     model = ModelConfig(
         criterion=CrossEntropyConfig(num_classes=max_num_classes),
         encoder=EncoderConfig(
             variable_num_features_normalization=True,
             nan_handling=True,
-            use_categorical_encoder=True,
+            use_categorical_encoder=True
         ),
         y_encoder=EncoderConfig(
             nan_handling=True,
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=512,
-        backbone=RebasedBackboneConfig(
-            nlayers=12,
-            nhid=512 * 2,
-            num_heads=4,
-            feature_dim=16,
-            activation="silu",
-            dropout=0.0,
+        emsize=320,
+        backbone=FLABackboneConfig(
+            model_type="kda",
+            config_kwargs={
+                "hidden_size": 320,
+                "num_hidden_layers": 12,
+                "num_heads": 4,
+                "intermediate_size": 320 * 2,
+                "hidden_act": "swish",
+                "norm_eps": 1e-4,
+                "use_cache": True,
+            },
+            sequence_mode="causal",
         ),
         features_per_group=20,
         attention_between_features=False,
@@ -75,14 +80,14 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=3.0e-5,
+        lr=7.5e-5,
         weight_decay=0.01,
     )
-
+    
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
-        name=f"rebased_performance_{config_index}",
+        name=f"kda_causal_test_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
@@ -94,13 +99,13 @@ def get_config(config_index: int = 0) -> MainConfig:
         batch_shape_sampler=batch_shape,
         epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=500,
+        steps_per_epoch=250,
         n_targets_per_input=1,
         train_mixed_precision=True,
-        train_mixed_precision_dtype="bf16",  # fp16 will lead to nans
+        train_mixed_precision_dtype="bf16",
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
         num_workers=8,
-        aggregate_k_gradients=1,
+        aggregate_k_gradients=1
     )
