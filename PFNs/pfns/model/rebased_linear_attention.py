@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import torch
-import warnings
 from torch import nn
+import torch.utils.checkpoint
+
+# This intercepts calls (like from fla) that don't pass use_reentrant and sets it to False.
+if not hasattr(torch.utils.checkpoint, "_original_checkpoint"):
+    torch.utils.checkpoint._original_checkpoint = torch.utils.checkpoint.checkpoint
+    def checkpoint_wrapper(function, *args, **kwargs):
+        if "use_reentrant" not in kwargs:
+            kwargs["use_reentrant"] = False
+        return torch.utils.checkpoint._original_checkpoint(function, *args, **kwargs)
+    torch.utils.checkpoint.checkpoint = checkpoint_wrapper
 
 from fla.modules.feature_map import RebasedFeatureMap
-
-warnings.filterwarnings(
-    "ignore",
-    message="torch.utils.checkpoint: the use_reentrant parameter should be passed explicitly",
-    category=UserWarning,
-)
 
 
 class RebasedLinearAttention(nn.Module):
