@@ -39,7 +39,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
 
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=2,
+        batch_size=8,
         min_single_eval_pos=24,
         max_seq_len=1000,
         min_num_features=2,
@@ -64,7 +64,7 @@ def get_config(config_index: int = 0) -> MainConfig:
             model_type="gla",
             config_kwargs={
                 "hidden_size": 320,
-                "num_hidden_layers": 12,
+                "num_hidden_layers": 10,
                 "num_heads": 4,
                 "intermediate_size": 320 * 2,
                 "hidden_act": "swish",
@@ -87,7 +87,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
-        name=f"gla_cached_performance_long_{config_index}",
+        name=f"gla_cached_performance_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
@@ -101,11 +101,11 @@ def get_config(config_index: int = 0) -> MainConfig:
         warmup_epochs=10,
         steps_per_epoch=4000,
         n_targets_per_input=1,
-        train_mixed_precision=True,
-        train_mixed_precision_dtype="bf16", # fp16 will lead to nans
+        train_mixed_precision=False,
+        train_mixed_precision_dtype="fp32", # fp16 will lead to nans
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
         num_workers=8,
-        aggregate_k_gradients=8
+        aggregate_k_gradients=2
     )
