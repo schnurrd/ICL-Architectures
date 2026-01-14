@@ -1,15 +1,19 @@
-# For older GPUs (CUDA capability 6.0, e.g., Tesla P100)
-# PyTorch 2.0.1 is the last version to support sm_60
---extra-index-url https://download.pytorch.org/whl/cu117
-torch==2.0.1
-torchvision==0.15.2
-torchaudio==2.0.2
+# For older GPUs (CUDA capability 6.0, e.g., Tesla P100, Titan Xp)
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.6.0
 pandas
 seaborn
 ipykernel
 nvidia-ml-py
-numpy
-scipy
+numpy 
+scipy 
 gpytorch
 openml
 xgboost
+catboost
+tabicl
+flash-linear-attention
+tabpfn
+wandb
+causal-conv1d
+mamba-ssm

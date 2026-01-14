@@ -49,7 +49,7 @@ pip install -r requirements.txt \
     -e ./prior-repos/tabularpriors
 ```
 
-Tested for Nvidia RTX 5070 with Cuda 12.8. For old GPUs with compute capability < 7.0 you might need to install requirements_old_gpu.txt instead (e.g. Tesla P100, Titan Xp, Titan X) (TODO currently this still does not work).
+Tested for Nvidia RTX 5070 with Cuda 12.8. For old GPUs with compute capability < 7.0 you might need to install requirements_old_gpus.txt instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, the tabularpriors repository can't be installed and torch compile will not work.
 
 # Repository User Guide
 
@@ -131,7 +131,6 @@ The Python configuration file must define a `config`or a `get_config(config_inde
 
 # Currently known issues / TODOs
 
-- Old GPUs with compute capability < 7.0 (e.g. Tesla P100, Titan Xp, Titan X) do not work properly due to Cuda version incompatibilities. Please use a newer GPU if possible
 - Multi GPU training currently does not provide the expected predictive performance and is worse than single GPU training
 - Samplers used are very basic and could be improved to better cover the data distribution
 - Look into replacing the Inference wrapper with the prior labs tabpfn implementation
