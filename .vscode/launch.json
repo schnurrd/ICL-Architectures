@@ -90,7 +90,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/fla_mamba_teacher_forcing_performance.py",
+                "PFNs/configs/fla_mamba_cached_test.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb"
             ],

@@ -190,6 +190,7 @@ class FLABackboneConfig(BackboneConfig):
     model_type: tp.Literal["gla", "retnet", "mamba2", "kda"] = "gla"
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["cached", "causal", "teacher_forcing"] = "cached"
+    cache_chunk_size: int | None = None
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
@@ -215,6 +216,7 @@ class FLABackboneConfig(BackboneConfig):
         return FLABackbone(
             fla_model=fla_model,
             sequence_mode=self.sequence_mode,
+            cache_chunk_size=self.cache_chunk_size,
         )
 
 
@@ -225,10 +227,12 @@ class FLABackbone(Backbone):
         self,
         fla_model: nn.Module,
         sequence_mode: tp.Literal["cached", "causal", "teacher_forcing"] = "cached",
+        cache_chunk_size: int | None = None,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
         self.sequence_mode = sequence_mode
+        self.cache_chunk_size = cache_chunk_size
 
     def incontext_fit(
         self,
@@ -319,36 +323,62 @@ class FLABackbone(Backbone):
 
         batch_size, seq_len, embed_dim = test_x.shape
 
+        def _shallow_copy(obj: tp.Any) -> tp.Any:
+            obj_copy = obj.__class__.__new__(obj.__class__)
+            obj_copy.__dict__.update(obj.__dict__)
+            return obj_copy
+
+        def _repeat_state(state: dict[str, tp.Any], repeat: int, *, dim: int) -> dict[str, tp.Any]:
+            return {
+                key: value.repeat_interleave(repeat, dim=dim) if torch.is_tensor(value) else value
+                for key, value in state.items()
+            }
+
         def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
             if torch.is_tensor(cache_params):
-                cache_params = cache_params.repeat_interleave(repeat, dim=0)
-            elif hasattr(cache_params, "layers"):  # GLA style
+                return cache_params.repeat_interleave(repeat, dim=0)
+            if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):
+                # Mamba2 style
+                cache_params_copy = _shallow_copy(cache_params)
+                cache_params_copy.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
+                cache_params_copy.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
+                return cache_params_copy
+            if hasattr(cache_params, "layers"):  # GLA style
+                cache_params_copy = _shallow_copy(cache_params)
+                new_layers = []
                 for layer in cache_params.layers:
+                    layer_copy = _shallow_copy(layer)
                     state = getattr(layer, "state", None)
-                    if not isinstance(state, dict):
-                        continue
-                    for key, value in state.items():
-                        if torch.is_tensor(value):
-                            state[key] = value.repeat_interleave(repeat, dim=0)
-            elif hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):  # Mamba2 style
-                cache_params.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
-                cache_params.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
-            else:
-                raise ValueError("Unsupported cache_params structure for repetition.")
-            return cache_params
+                    if isinstance(state, dict):
+                        layer_copy.state = _repeat_state(state, repeat, dim=0)
+                    new_layers.append(layer_copy)
+                cache_params_copy.layers = new_layers
+                return cache_params_copy
+            raise ValueError("Unsupported cache_params structure for repetition.")
 
-        expanded_cache = _repeat_cache(cache_params, seq_len)
-        test_x_flat = test_x.contiguous().view(batch_size * seq_len, 1, embed_dim).detach()
-        
-        output, _ = self._run_fla(
-            test_x_flat,
-            cache_params=expanded_cache,
-            cache_position_start=cache_position_start,
-            return_cache=False,
-        )
-        output = output.view(batch_size, seq_len, embed_dim)
+        def _run_parallel_chunk(chunk_x: torch.Tensor, chunk_start: int) -> torch.Tensor:
+            chunk_len = chunk_x.size(1)
             
-        return output
+            expanded_cache = _repeat_cache(cache_params, chunk_len)
+            chunk_flat = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
+            output, _ = self._run_fla(
+                chunk_flat,
+                cache_params=expanded_cache,
+                cache_position_start=None if cache_position_start is None else cache_position_start + chunk_start,
+                return_cache=False,
+            )
+            output = output.view(batch_size, chunk_len, embed_dim)
+            return output
+
+        if self.cache_chunk_size is None or seq_len <= self.cache_chunk_size:
+            return _run_parallel_chunk(test_x, 0)
+
+        outputs = []
+        for chunk_start in range(0, seq_len, self.cache_chunk_size):
+            chunk_end = min(chunk_start + self.cache_chunk_size, seq_len)
+            chunk_x = test_x[:, chunk_start:chunk_end]
+            outputs.append(_run_parallel_chunk(chunk_x, chunk_start))
+        return torch.cat(outputs, dim=1)
     
     def _run_test_with_cache_naive(
         self,

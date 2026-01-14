@@ -39,7 +39,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
 
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=16,
+        batch_size=8,
         min_single_eval_pos=24,
         max_seq_len=1000,
         min_num_features=2,
@@ -59,11 +59,11 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=384,
+        emsize=512,
         backbone=FLABackboneConfig(
             model_type="mamba2",
             config_kwargs={
-                "hidden_size": 384,
+                "hidden_size": 512,
                 "num_hidden_layers": 12,
                 "state_size": 128,
                 "conv_kernel": 4,

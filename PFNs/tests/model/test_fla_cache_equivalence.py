@@ -6,7 +6,7 @@ pytest.importorskip("fla")
 from pfns.model.backbones import FLABackboneConfig
 
 
-def _build_backbone() -> torch.nn.Module:
+def _build_backbone(cache_chunk_size: int | None = None) -> torch.nn.Module:
     config = FLABackboneConfig(
         model_type="gla",
         config_kwargs={
@@ -18,6 +18,7 @@ def _build_backbone() -> torch.nn.Module:
             "norm_eps": 1e-5,
             "use_cache": True,
         },
+        cache_chunk_size=cache_chunk_size,
     )
     backbone = config.create_backbone(ninp=8, attention_between_features=False)
     backbone.eval()
@@ -121,6 +122,59 @@ def test_fla_cache_allows_train_gradients():
     torch.testing.assert_close(train_x_fast.grad, train_x_naive.grad, rtol=5e-3, atol=1e-3)
 
 
+def test_fla_cache_chunking_matches_gradients():
+    if not torch.cuda.is_available():
+        pytest.skip("FLA GLA backend requires CUDA/Triton for this test.")
+
+    torch.manual_seed(0)
+    backbone_full = _build_backbone(cache_chunk_size=None)
+    backbone_chunked = _build_backbone(cache_chunk_size=4)
+    backbone_chunked.load_state_dict(backbone_full.state_dict())
+    device = torch.device("cuda")
+    backbone_full = backbone_full.to(device)
+    backbone_chunked = backbone_chunked.to(device)
+
+    batch_size = 2
+    seq_len = 20
+    num_tokens = 1
+    embed_dim = 8
+    train_len = 10
+    assert 0 < train_len < seq_len
+
+    x = torch.randn(batch_size, seq_len, num_tokens, embed_dim, device=device)
+    x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
+    train_x_base = x_batched[:, :train_len].detach()
+    test_x_base = x_batched[:, train_len:].detach()
+    assert test_x_base.size(1) > 4
+
+    train_x_full = train_x_base.clone().requires_grad_(True)
+    test_x_full = test_x_base.clone().requires_grad_(True)
+    _, past_full = backbone_full._run_fla(train_x_full)
+    assert past_full is not None
+    out_full = backbone_full._run_test_with_cache(test_x_full, past_full)
+    out_full.sum().backward()
+
+    train_x_chunked = train_x_base.clone().requires_grad_(True)
+    test_x_chunked = test_x_base.clone().requires_grad_(True)
+    _, past_chunked = backbone_chunked._run_fla(train_x_chunked)
+    assert past_chunked is not None
+    out_chunked = backbone_chunked._run_test_with_cache(test_x_chunked, past_chunked)
+    out_chunked.sum().backward()
+
+    torch.testing.assert_close(train_x_chunked.grad, train_x_full.grad, rtol=5e-3, atol=1e-3)
+    torch.testing.assert_close(test_x_chunked.grad, test_x_full.grad, rtol=5e-3, atol=1e-3)
+    
+    for (name_full, param_full), (name_chunked, param_chunked) in zip(
+        backbone_full.named_parameters(), backbone_chunked.named_parameters()
+    ):
+        assert name_full == name_chunked
+        if param_full.grad is None or param_chunked.grad is None:
+            assert param_full.grad is None and param_chunked.grad is None
+            continue
+        torch.testing.assert_close(param_chunked.grad, param_full.grad, rtol=5e-3, atol=1e-3)
+
+
 if __name__ == "__main__":
     test_fla_test_cache_matches_naive()
     test_fla_cache_allows_train_gradients()
+    test_fla_cache_chunking_matches_gradients()

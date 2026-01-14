@@ -39,7 +39,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
 
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=8,           # batch size 1 causes issues with causal conv1d
+        batch_size=8,
         min_single_eval_pos=24,
         max_seq_len=1000,
         min_num_features=2,
@@ -72,8 +72,7 @@ def get_config(config_index: int = 0) -> MainConfig:
                 "vocab_size": 1, # minimal vocab size since we don't use embedding layer
                 "use_cache": True, 
             },
-            sequence_mode="cached",
-            cache_chunk_size=128,
+            sequence_mode="causal",
         ),
         features_per_group=20,
         attention_between_features=False,
@@ -82,14 +81,14 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=7.5e-5,
+        lr=3e-5,
         weight_decay=0.01,
     )
     
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
-        name=f"mamba2_cached_test_{config_index}",
+        name=f"mamba2_causal_performance_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
@@ -101,13 +100,13 @@ def get_config(config_index: int = 0) -> MainConfig:
         batch_shape_sampler=batch_shape,
         epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=250,
+        steps_per_epoch=4000,
         n_targets_per_input=1,
-        train_mixed_precision=True,
-        train_mixed_precision_dtype="bf16",
+        train_mixed_precision=False,
+        train_mixed_precision_dtype="fp32",
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
         num_workers=8,
-        aggregate_k_gradients=1
+        aggregate_k_gradients=2
     )

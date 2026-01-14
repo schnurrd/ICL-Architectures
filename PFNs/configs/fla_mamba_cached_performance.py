@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Training config that uses the standalone tabpfn_prior package with the PFNs
-training loop with a Linear Attention backbone.
+training loop with a Mamba2 backbone.
 """
 
 from __future__ import annotations
 
-from pfns.model.backbones import LinearAttentionBackboneConfig
+from pfns.model.backbones import FLABackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
@@ -22,7 +22,7 @@ from pfns.train import (
 def get_config(config_index: int = 0) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
-    tabpfn_prior data using a Linear Attention backbone.
+    tabpfn_prior data using a Mamba2 backbone.
     """
 
     max_num_classes = 10
@@ -39,7 +39,7 @@ def get_config(config_index: int = 0) -> MainConfig:
     )
 
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=8,
+        batch_size=8,           # batch size 1 causes issues with causal conv1d
         min_single_eval_pos=24,
         max_seq_len=1000,
         min_num_features=2,
@@ -60,13 +60,20 @@ def get_config(config_index: int = 0) -> MainConfig:
             constant_normalization_std=1.0,
         ),
         emsize=512,
-        backbone=LinearAttentionBackboneConfig(
-            nlayers=12,
-            nhead=4,
-            nhid=512*2,
-            dropout=0.0,
-            activation="relu",
-            feature_attention_softmax=True,
+        backbone=FLABackboneConfig(
+            model_type="mamba2",
+            config_kwargs={
+                "hidden_size": 512,
+                "num_hidden_layers": 12,
+                "state_size": 128,
+                "conv_kernel": 4,
+                "expand": 2,
+                "head_dim": 64,
+                "vocab_size": 1, # minimal vocab size since we don't use embedding layer
+                "use_cache": True, 
+            },
+            sequence_mode="cached",
+            cache_chunk_size=64,
         ),
         features_per_group=20,
         attention_between_features=False,
@@ -75,14 +82,14 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=1e-4,
+        lr=7.5e-5,
         weight_decay=0.01,
     )
     
     wandb_config = WandbConfig(
         entity="icl_arch",
-        project="linear_attention",
-        name=f"linear_attention_test_higher_lr_{config_index}",
+        project="fla_models",
+        name=f"mamba2_cached_performance_{config_index}",
         mode="online",
         log_every_n_steps=10,
     )
@@ -92,14 +99,15 @@ def get_config(config_index: int = 0) -> MainConfig:
         optimizer=optimizer,
         model=model,
         batch_shape_sampler=batch_shape,
-        epochs=400,
+        epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=500,
+        steps_per_epoch=4000,
         n_targets_per_input=1,
-        train_mixed_precision=False, # true will result in nan losses
+        train_mixed_precision=False,
+        train_mixed_precision_dtype="fp32",
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
-        num_workers=4,
-        aggregate_k_gradients=1
+        num_workers=8,
+        aggregate_k_gradients=2
     )
