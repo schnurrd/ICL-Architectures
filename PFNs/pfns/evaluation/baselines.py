@@ -19,10 +19,12 @@ from sklearn.preprocessing import OrdinalEncoder
 from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
 from tabicl import TabICLClassifier
-from ticl.prediction.tabflex import TabFlex
 from tabpfn import TabPFNClassifier
-from tabpfn.constants import ModelVersion
 
+try:
+    from ticl.prediction.tabflex import TabFlex
+except ImportError:
+    TabFlex = None
 
 
 def _cat_list(categorical_feats) -> list[int]:
@@ -333,11 +335,13 @@ class TabFlexBaseline:
 
 
 def get_baselines(n_jobs: int = 4, random_state: int = 42):
-    return [
+    baselines = [
         RandomForestBaseline(n_jobs=n_jobs, random_state=random_state),
         XGBoostBaseline(n_jobs=n_jobs, random_state=random_state),
         CatBoostBaseline(n_jobs=n_jobs, random_state=random_state),
         TabICLBaseline(random_state=random_state),
         TabPFNV2_5Baseline(random_state=random_state),
-        TabFlexBaseline(random_state=random_state),
     ]
+    if TabFlex is not None:
+        baselines.append(TabFlexBaseline(random_state=random_state))
+    return baselines
