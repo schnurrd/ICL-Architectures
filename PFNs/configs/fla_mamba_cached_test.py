@@ -73,7 +73,7 @@ def get_config(config_index: int = 0) -> MainConfig:
                 "use_cache": True, 
             },
             sequence_mode="cached",
-            cache_chunk_size=128,
+            cache_chunk_size=64,
         ),
         features_per_group=20,
         attention_between_features=False,
