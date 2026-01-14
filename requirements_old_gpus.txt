@@ -1,5 +1,5 @@
 # For older GPUs (CUDA capability 6.0, e.g., Tesla P100, Titan Xp)
---extra-index-url https://download.pytorch.org/whl/cu121
+--extra-index-url https://download.pytorch.org/whl/cu118
 torch==2.6.0
 pandas
 seaborn
