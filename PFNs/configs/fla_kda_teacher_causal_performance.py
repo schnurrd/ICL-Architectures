@@ -30,8 +30,6 @@ def get_config(config_index: int = 0) -> MainConfig:
         differentiable=True,
         nan_handling=True,
         return_categorical_mask=True,
-        query_prefix_from_test=True,
-        query_prefix_max_len=16,
     )
 
     batch_shape = BatchShapeSamplerConfig(
