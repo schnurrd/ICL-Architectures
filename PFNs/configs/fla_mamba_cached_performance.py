@@ -82,7 +82,7 @@ def get_config(config_index: int = 0) -> MainConfig:
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=7.5e-5,
+        lr=3.0e-5,
         weight_decay=0.01,
     )
     
