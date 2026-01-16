@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""
+Training config that uses the standalone tabpfn_prior package with the PFNs
+training loop with a TabPFN-v1 style transformer backbone.
+"""
+
+from __future__ import annotations
+
+from pfns.model.backbones import TransformerBackboneConfig
+from pfns.model.criterions import CrossEntropyConfig
+from pfns.model.encoders import EncoderConfig
+from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
+from pfns.run_logger import WandbConfig
+from pfns.train import (
+    BatchShapeSamplerConfig,
+    MainConfig,
+    OptimizerConfig,
+    ModelConfig,
+)
+
+
+def get_config(config_index: int = 0, masking: str | None= None) -> MainConfig:
+    """
+    Build a config for training a TabPFN-style classifier on the synthetic
+    tabpfn_prior data.
+    """
+
+    max_num_classes = 10
+    max_num_features = 20
+    
+    if masking == "None":
+        masking = "None"
+    
+    assert masking in [
+        "test_to_train_only",
+        "causal",
+        "causal_train_only",
+        "None",
+    ], f"Invalid masking mode: {masking}"
+    
+    print(f"Using masking mode: {masking}")    
+
+    prior = TabPFNPriorConfig(
+        prior_type="mlp",       
+        max_num_classes=max_num_classes,
+        max_num_features=max_num_features,          
+        flexible=True,                 
+        differentiable=True,
+        return_categorical_mask=True,
+        nan_handling=True,
+    )
+    
+    batch_shape = BatchShapeSamplerConfig(
+        batch_size=8,
+        min_single_eval_pos=24,
+        max_seq_len=1000,
+        min_num_features=2,
+        max_num_features=max_num_features,
+        fixed_num_test_instances=None,
+    )
+
+    model = ModelConfig(
+        criterion=CrossEntropyConfig(num_classes=max_num_classes),
+        encoder=EncoderConfig(
+            variable_num_features_normalization=True,
+            nan_handling=True, # currently only nan to mean imputation works
+            use_categorical_encoder=True
+        ),
+        y_encoder=EncoderConfig(
+            nan_handling=True,
+            constant_normalization_mean=0.0,
+            constant_normalization_std=1.0,
+        ),
+        emsize=256,
+        backbone=TransformerBackboneConfig(
+            nhid=256 * 4,
+            nlayers=12,
+            nhead=4,
+            layer_kwargs={
+                "item_attention_mask_mode": masking,
+            },
+        ),
+        features_per_group=20,
+        attention_between_features=True,
+        feature_positional_embedding="subspace",
+    )
+
+    optimizer = OptimizerConfig(
+        optimizer="adamw",
+        lr=7.5e-5,
+        weight_decay=0.01,
+    )
+    
+    wandb_config = WandbConfig(
+        entity="icl_arch",
+        project="tabpfn_transformer_masking_experiments",
+        name=f"transformer_modified_masking_{masking}",
+        mode="online",
+        log_every_n_steps=10,
+    )
+
+    return MainConfig(
+        priors=[prior],
+        optimizer=optimizer,
+        model=model,
+        batch_shape_sampler=batch_shape,
+        epochs=200,
+        warmup_epochs=10,
+        steps_per_epoch=2000,
+        n_targets_per_input=1,
+        train_mixed_precision=True,
+        train_mixed_precision_dtype="float16",
+        scheduler="cosine_decay",
+        progress_bar=True,
+        wandb=wandb_config,
+        num_workers=8,
+        aggregate_k_gradients=2,
+    )

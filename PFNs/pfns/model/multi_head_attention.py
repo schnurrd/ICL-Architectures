@@ -287,6 +287,7 @@ class MultiHeadAttention(torch.nn.Module):
         reuse_first_head_kv: bool = False,
         only_cache_first_head_kv: bool = False,
         use_cached_kv: bool = False,
+        attn_mask: torch.Tensor | None = None,
     ):
         """X is the current hidden and has a shape of [batch, ..., seq_len, input_size].
         If keys and values are present in the cache and 'freeze_kv' is not set, they
@@ -358,6 +359,7 @@ class MultiHeadAttention(torch.nn.Module):
             allow_inplace=allow_inplace,
             save_peak_mem_factor=save_peak_mem_factor,
             reuse_first_head_kv=reuse_first_head_kv,
+            attn_mask=attn_mask,
         )
         return output.reshape(x_shape_after_transpose[:-1] + output.shape[-1:])
 
@@ -471,6 +473,7 @@ class MultiHeadAttention(torch.nn.Module):
         cache_kv: bool,
         use_cached_kv: bool,
         reuse_first_head_kv: bool,
+        attn_mask: torch.Tensor | None,
     ) -> torch.Tensor:
         """Attention computation.
         Called by 'forward', potentially on shards, once shapes have been normalized.
@@ -493,6 +496,7 @@ class MultiHeadAttention(torch.nn.Module):
             qkv,
             self.dropout_p,
             self.softmax_scale,
+            attn_mask,
         )
         return torch.einsum(
             "... h d, h d s -> ... s",
@@ -537,6 +541,7 @@ class MultiHeadAttention(torch.nn.Module):
         qkv: torch.Tensor | None,
         dropout_p: float | None = None,
         softmax_scale: float | None = None,
+        attn_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         assert (k is None) == (v is None)
         assert sum([qkv is None, kv is None, k is None and v is None]) == 2
@@ -561,6 +566,7 @@ class MultiHeadAttention(torch.nn.Module):
             HAVE_FLASH_ATTN
             and torch.cuda.is_available()
             and q.dtype == k.dtype == v.dtype == torch.float16
+            and attn_mask is None
         )
 
         # this string comparison is reliable, as it does not compare to a subversion
@@ -683,6 +689,19 @@ class MultiHeadAttention(torch.nn.Module):
                 extra_inputs["scale"] = (
                     softmax_scale  # defaults to 1/sqrt(d_k) if None or not provided
                 )
+            if attn_mask is not None:
+                if attn_mask.dim() == 2:
+                    attn_mask = attn_mask.unsqueeze(0)
+                if attn_mask.dim() == 3:
+                    if attn_mask.shape[0] == 1 and batch_size > 1:
+                        attn_mask = attn_mask.expand(batch_size, -1, -1)
+                    attn_mask = attn_mask.unsqueeze(1)
+                if attn_mask.dim() != 4:
+                    raise ValueError(
+                        f"Expected attn_mask to have 2, 3, or 4 dims, got {attn_mask.shape}."
+                    )
+                attn_mask = attn_mask.to(device=q.device, dtype=q.dtype)
+                extra_inputs["attn_mask"] = attn_mask
             if not USE_TORCH_2_GQA:
                 k = MultiHeadAttention.broadcast_kv_across_heads(
                     k,
@@ -714,6 +733,17 @@ class MultiHeadAttention(torch.nn.Module):
                 if softmax_scale is None
                 else softmax_scale
             )
+            if attn_mask is not None:
+                if attn_mask.dim() == 2:
+                    attn_mask = attn_mask.unsqueeze(0)
+                if attn_mask.dim() != 3:
+                    raise ValueError(
+                        f"Expected attn_mask to have 2 or 3 dims, got {attn_mask.shape}."
+                    )
+                if attn_mask.shape[0] == 1 and batch_size > 1:
+                    attn_mask = attn_mask.expand(batch_size, -1, -1)
+                attn_mask = attn_mask.to(device=logits.device, dtype=logits.dtype)
+                logits = logits + attn_mask.unsqueeze(-1)
             ps = torch.softmax(logits, dim=2)
             ps = torch.dropout(ps, dropout_p, train=True)
             attention_head_outputs = torch.einsum("b q k h, b k h d -> b q h d", ps, v)

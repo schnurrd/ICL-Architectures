@@ -50,6 +50,7 @@ class PerFeatureLayer(Module):
         d_k: int | None = None,
         d_v: int | None = None,
         precomputed_kv: None | torch.Tensor | tuple[torch.Tensor, torch.Tensor] = None,
+        item_attention_mask_mode: str | None = None,
     ) -> None:
         """
         Args:
@@ -80,6 +81,9 @@ class PerFeatureLayer(Module):
             d_v:
                 The dimensionality of the value vectors. Default is (d_model // nhead).
             precomputed_kv: Precomputed key-value pairs for attention.
+            item_attention_mask_mode:
+                Optional mask mode applied to attention between items.
+                Supported: "causal", "test_to_train_only", "causal_train_only".
         """
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
@@ -179,6 +183,79 @@ class PerFeatureLayer(Module):
         self.multiquery_item_attention_for_test_set = (
             multiquery_item_attention_for_test_set
         )
+        self.item_attention_mask_mode = item_attention_mask_mode
+
+    def _build_item_attention_mask(
+        self,
+        *,
+        mode: str,
+        seq_len_q: int,
+        seq_len_kv: int,
+        train_len: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        q_offset: int = 0,
+        k_offset: int = 0,
+    ) -> torch.Tensor:
+        if seq_len_q == 0 or seq_len_kv == 0:
+            raise ValueError("Sequence length must be non-zero for attention masking.")
+        assert train_len > 0, "train_len must be > 0 for item attention masking."
+        q_pos = torch.arange(q_offset, q_offset + seq_len_q, device=device)
+        k_pos = torch.arange(k_offset, k_offset + seq_len_kv, device=device)
+        if mode == "causal":
+            mask = torch.zeros(
+                (seq_len_q, seq_len_kv),
+                device=device,
+                dtype=dtype,
+            )
+            disallow = k_pos.unsqueeze(0) > q_pos.unsqueeze(1)
+            mask = mask.masked_fill(disallow, float("-inf"))
+        elif mode == "test_to_train_only":
+            mask = torch.full(
+                (seq_len_q, seq_len_kv),
+                float("-inf"),
+                device=device,
+                dtype=dtype,
+            )
+            train_q = q_pos < train_len
+            if train_q.any():
+                mask[train_q] = torch.where(
+                    k_pos.unsqueeze(0) == q_pos[train_q].unsqueeze(1),
+                    torch.zeros(1, device=device, dtype=dtype),
+                    mask[train_q],
+                )
+            if (~train_q).any():
+                mask[~train_q] = torch.where(
+                    k_pos.unsqueeze(0) < train_len,
+                    torch.zeros(1, device=device, dtype=dtype),
+                    mask[~train_q],
+                )
+        elif mode == "causal_train_only":
+            mask = torch.full(
+                (seq_len_q, seq_len_kv),
+                float("-inf"),
+                device=device,
+                dtype=dtype,
+            )
+            train_q = q_pos < train_len
+            if train_q.any():
+                train_k = k_pos.unsqueeze(0) < train_len
+                causal_k = k_pos.unsqueeze(0) <= q_pos[train_q].unsqueeze(1)
+                mask[train_q] = torch.where(
+                    train_k & causal_k,
+                    torch.zeros(1, device=device, dtype=dtype),
+                    mask[train_q],
+                )
+            if (~train_q).any():
+                mask[~train_q] = torch.where(
+                    k_pos.unsqueeze(0) < train_len,
+                    torch.zeros(1, device=device, dtype=dtype),
+                    mask[~train_q],
+                )
+        else:
+            raise ValueError(f"Unknown item_attention_mask_mode: {mode}")
+
+        return mask
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         state.setdefault("save_peak_mem_factor", None)
@@ -256,8 +333,36 @@ class PerFeatureLayer(Module):
         def attn_between_items(x: torch.Tensor) -> torch.Tensor:
             # we need to transpose as self attention always treats
             # dim -2 as the sequence dimension
+            def build_attention_mask(
+                *,
+                seq_len_q: int,
+                seq_len_kv: int,
+                q_offset: int = 0,
+                k_offset: int = 0,
+            ) -> torch.Tensor | None:
+                if self.item_attention_mask_mode is None:
+                    return None
+                return self._build_item_attention_mask(
+                    mode=self.item_attention_mask_mode,
+                    seq_len_q=seq_len_q,
+                    seq_len_kv=seq_len_kv,
+                    train_len=single_eval_pos,
+                    device=x.device,
+                    dtype=x.dtype,
+                    q_offset=q_offset,
+                    k_offset=k_offset,
+                )
+
             if self.multiquery_item_attention_for_test_set:
                 if single_eval_pos < x.shape[1]:
+                    test_len = x.shape[1] - single_eval_pos
+                    test_kv_len = single_eval_pos if single_eval_pos else test_len
+                    test_attention_mask = build_attention_mask(
+                        seq_len_q=test_len,
+                        seq_len_kv=test_kv_len,
+                        q_offset=single_eval_pos,
+                        k_offset=0,
+                    )
                     new_x_test = self.self_attn_between_items(
                         x[:, single_eval_pos:].transpose(1, 2),
                         (
@@ -271,11 +376,18 @@ class PerFeatureLayer(Module):
                         allow_inplace=True,
                         use_cached_kv=not single_eval_pos,
                         reuse_first_head_kv=True,
+                        attn_mask=test_attention_mask,
                     ).transpose(1, 2)
                 else:
                     new_x_test = None
 
                 if single_eval_pos:
+                    train_attention_mask = build_attention_mask(
+                        seq_len_q=single_eval_pos,
+                        seq_len_kv=single_eval_pos,
+                        q_offset=0,
+                        k_offset=0,
+                    )
                     new_x_train = self.self_attn_between_items(
                         x[:, :single_eval_pos].transpose(1, 2),
                         x[:, :single_eval_pos].transpose(1, 2),
@@ -285,6 +397,7 @@ class PerFeatureLayer(Module):
                         add_input=True,
                         allow_inplace=True,
                         use_cached_kv=False,
+                        attn_mask=train_attention_mask,
                     ).transpose(1, 2)
                 else:
                     new_x_train = None
@@ -300,6 +413,16 @@ class PerFeatureLayer(Module):
             elif single_eval_pos:
                 attention_src_x = x[:, :single_eval_pos].transpose(1, 2)
 
+            seq_len_q = x.shape[1]
+            seq_len_kv = (
+                attention_src_x.shape[2] if attention_src_x is not None else seq_len_q
+            )
+            attention_mask = build_attention_mask(
+                seq_len_q=seq_len_q,
+                seq_len_kv=seq_len_kv,
+                q_offset=0,
+                k_offset=0,
+            )
             return self.self_attn_between_items(
                 x.transpose(1, 2),
                 attention_src_x,
@@ -308,6 +431,7 @@ class PerFeatureLayer(Module):
                 add_input=True,
                 allow_inplace=True,
                 use_cached_kv=cache_trainset_representation and not single_eval_pos,
+                attn_mask=attention_mask,
             ).transpose(1, 2)
 
         # the mlp tends to require 8 times more memory at its peak, that is why we use 8 here

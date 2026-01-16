@@ -64,6 +64,9 @@ def get_config(config_index: int = 0) -> MainConfig:
             nhid=512 * 4,
             nlayers=12,
             nhead=8,
+            layer_kwargs={
+                "item_attention_mask_mode": None,
+            },
         ),
         features_per_group=20,
         attention_between_features=True,

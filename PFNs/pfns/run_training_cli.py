@@ -5,8 +5,10 @@ Command-line interface for training PFNs models.
 
 import argparse
 import importlib.util
+import inspect
 import os
 import sys
+from ast import literal_eval
 from pathlib import Path
 
 import pfns.train
@@ -79,6 +81,14 @@ def parse_args():
         default=0,
         help="Index of the config to use. This is used to select a config from the config file.",
     )
+    parser.add_argument(
+        "--config-arg",
+        action="append",
+        default=[],
+        type=parse_config_arg,
+        metavar="KEY=VALUE",
+        help="Extra get_config kwargs (repeatable), e.g. --config-arg masking='causal_train_only'.",
+    )
 
     parser.add_argument(
         "--overwrite",
@@ -89,8 +99,33 @@ def parse_args():
     return parser.parse_args()
 
 
+def parse_config_arg(pair: str) -> tuple[str, object]:
+    """Parse a single KEY=VALUE pair for --config-arg."""
+    if "=" not in pair:
+        raise argparse.ArgumentTypeError(
+            f"Invalid --config-arg {pair!r}, expected KEY=VALUE."
+        )
+    key, value = pair.split("=", 1)
+    key = key.strip()
+    if not key:
+        raise argparse.ArgumentTypeError(
+            f"Invalid --config-arg {pair!r}, empty key."
+        )
+    value = value.strip()
+    if value == "":
+        return key, ""
+    try:
+        return key, literal_eval(value)
+    except (ValueError, SyntaxError):
+        return key, value
+
+
 def load_config_from_python(
-    config_file: str, config_index: int, config_base_path: str | None = None
+    config_file: str,
+    config_index: int,
+    *,
+    config_kwargs: dict[str, object] | None = None,
+    config_base_path: str | None = None,
 ) -> pfns.train.MainConfig:
     """Load MainConfig from a Python file by accessing the 'config' variable."""
     config_path = Path(config_file)
@@ -131,7 +166,19 @@ def load_config_from_python(
                 )
 
             if hasattr(config_module, "get_config"):
-                config = config_module.get_config(config_index)
+                signature = inspect.signature(config_module.get_config)
+                kwargs: dict[str, object] = {}
+                if "config_index" in signature.parameters:
+                    kwargs["config_index"] = config_index
+                if config_kwargs:
+                    for key, value in config_kwargs.items():
+                        if key in signature.parameters:
+                            kwargs[key] = value
+                        else:
+                            print(
+                                f"Warning: get_config does not accept {key!r}; ignoring."
+                            )
+                config = config_module.get_config(**kwargs)
             else:
                 assert (
                     config_index == 0
@@ -161,7 +208,12 @@ def main():
     args = parse_args()
 
     # Load configuration from Python file
-    config = load_config_from_python(args.config_file, args.config_index)
+    config_kwargs = dict(args.config_arg)
+    config = load_config_from_python(
+        args.config_file,
+        args.config_index,
+        config_kwargs=config_kwargs,
+    )
 
     def get_filename(config_file):
         return f"{config_file.split('/')[-1].split('.')[0]}"
