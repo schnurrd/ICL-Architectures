@@ -106,7 +106,7 @@ def get_config(config_index: int = 0, masking: str | None= None) -> MainConfig:
         batch_shape_sampler=batch_shape,
         epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=2000,
+        steps_per_epoch=1000,
         n_targets_per_input=1,
         train_mixed_precision=True,
         train_mixed_precision_dtype="float16",
