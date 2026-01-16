@@ -64,7 +64,7 @@ def get_config(config_index: int = 0) -> MainConfig:
             model_type="kda",
             config_kwargs={
                 "hidden_size": 320,
-                "num_hidden_layers": 12,
+                "num_hidden_layers": 10,
                 "num_heads": 4,
                 "intermediate_size": 320 * 2,
                 "hidden_act": "swish",
