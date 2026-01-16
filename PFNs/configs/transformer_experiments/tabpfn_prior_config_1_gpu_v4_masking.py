@@ -29,13 +29,13 @@ def get_config(config_index: int = 0, masking: str | None= None) -> MainConfig:
     max_num_features = 20
     
     if masking == "None":
-        masking = "None"
+        masking = None
     
     assert masking in [
         "test_to_train_only",
         "causal",
         "causal_train_only",
-        "None",
+        None,
     ], f"Invalid masking mode: {masking}"
     
     print(f"Using masking mode: {masking}")    
