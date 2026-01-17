@@ -218,6 +218,19 @@ def main():
     def get_filename(config_file):
         return f"{config_file.split('/')[-1].split('.')[0]}"
 
+    def format_config_suffix(kwargs: dict[str, object]) -> str:
+        if not kwargs:
+            return ""
+        parts = []
+        for key in sorted(kwargs):
+            value = kwargs[key]
+            if value is None:
+                continue
+            safe_key = str(key).replace(os.sep, "_")
+            safe_value = str(value).replace(os.sep, "_").replace(" ", "")
+            parts.append(f"{safe_key}={safe_value}")
+        return "_" + "_".join(parts) if parts else ""
+
     if args.checkpoint_save_load_suffix:
         assert (
             args.checkpoint_save_load_prefix is not None
@@ -234,6 +247,7 @@ def main():
 
         # Add suffix if it exists
         suffix = f"_{args.config_index}"
+        suffix += format_config_suffix(config_kwargs)
         if args.checkpoint_save_load_suffix:
             suffix += f"_{args.checkpoint_save_load_suffix}"
 
