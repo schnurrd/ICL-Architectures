@@ -12,7 +12,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/tabpfn_prior_config_1_gpu_v4.py", 
+                "PFNs/configs/transformer/tabpfn_prior_config_1_gpu_v4.py", 
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb"
             ]
@@ -25,7 +25,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/tabpfn_prior_config_1_gpu_v4_performance_long.py", 
+                "PFNs/configs/transformer/tabpfn_prior_config_1_gpu_v4_performance_long.py", 
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--no-wandb"
             ]
@@ -38,7 +38,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/fla_gla_test.py",
+                "PFNs/configs/fla/fla_gla_test.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb"
             ]
@@ -51,7 +51,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/rebased_performance.py",
+                "PFNs/configs/linear_attention/rebased_performance.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb"
             ]
@@ -64,7 +64,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/fla_gla_test_causal.py",
+                "PFNs/configs/fla/fla_gla_test_causal.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb"
             ]
@@ -77,7 +77,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/fla_gla_test_teacher_forcing.py",
+                "PFNs/configs/fla/fla_gla_test_teacher_forcing.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb"
             ]
@@ -90,7 +90,22 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/fla_mamba_cached_test.py",
+                "PFNs/configs/fla/fla_mamba_cached_test.py",
+                "--checkpoint-save-load-prefix", "PFNs/models_diff",
+                "--overwrite", "--no-wandb"
+            ],
+            "justMyCode": false
+
+        },
+        {
+            "name": "Python Debugger: Pre-training FLA KDA",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
+            "args": [
+                "PFNs/configs/fla/fla_kda_cached_performance.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb"
             ],
@@ -105,7 +120,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/linear_attention_test.py",
+                "PFNs/configs/linear_attention/linear_attention_test.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb"
             ]
@@ -118,7 +133,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "--model_path", "PFNs/models_diff/1_gpu_10h_v3_group_20_batch_8.pt/tabpfn_prior_config_1_gpu_10h_v3_group_20_batch_8_0_no_seed", 
+                "--model_path", "PFNs/models_diff/1_gpu_10h_v3_group_20_batch_8/tabpfn_prior_config_1_gpu_10h_v3_group_20_batch_8_0_no_seed", 
                 "--only_tabpfn", 
                 "--max_features", "20",
                 "--max_samples", "1000",
@@ -132,10 +147,11 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "--model_path", "PFNs/models_diff/fla_gla_test_teacher_forcing_0", 
+                "--model_path", "PFNs/models_diff/fla_mamba_causal_performance_0", 
                 "--only_tabpfn", 
                 "--max_features", "20",
                 "--max_samples", "1000",
+                "--sample_order_permutation"
             ]
         },
         {

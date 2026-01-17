@@ -329,10 +329,14 @@ class FLABackbone(Backbone):
             return obj_copy
 
         def _repeat_state(state: dict[str, tp.Any], repeat: int, *, dim: int) -> dict[str, tp.Any]:
-            return {
-                key: value.repeat_interleave(repeat, dim=dim) if torch.is_tensor(value) else value
-                for key, value in state.items()
-            }
+            def _repeat_value(value: tp.Any) -> tp.Any:
+                if torch.is_tensor(value):
+                    return value.repeat_interleave(repeat, dim=dim)
+                if isinstance(value, tuple):
+                    return tuple(_repeat_value(item) for item in value)
+                return value
+
+            return {key: _repeat_value(value) for key, value in state.items()}
 
         def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
             if torch.is_tensor(cache_params):
@@ -343,7 +347,7 @@ class FLABackbone(Backbone):
                 cache_params_copy.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
                 cache_params_copy.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
                 return cache_params_copy
-            if hasattr(cache_params, "layers"):  # GLA style
+            if hasattr(cache_params, "layers"):  # GLA and KDA style
                 cache_params_copy = _shallow_copy(cache_params)
                 new_layers = []
                 for layer in cache_params.layers:
@@ -351,6 +355,8 @@ class FLABackbone(Backbone):
                     state = getattr(layer, "state", None)
                     if isinstance(state, dict):
                         layer_copy.state = _repeat_state(state, repeat, dim=0)
+                    else:
+                        raise ValueError("Unsupported layer state structure for repetition.")
                     new_layers.append(layer_copy)
                 cache_params_copy.layers = new_layers
                 return cache_params_copy
