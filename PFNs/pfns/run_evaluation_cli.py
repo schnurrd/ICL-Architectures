@@ -33,6 +33,7 @@ def run_tabpfn_evaluation(
     batch_size_inference: int = 32,
     n_ensemble_configurations: int = 32,
     preprocess_transforms: list[str] | tuple[str, ...] = ("none", "power", "robust"),
+    sample_order_permutation: bool = False,
 ):
     """Run TabPFN (and optionally baselines) on the requested benchmark."""
     if device is None:
@@ -48,6 +49,7 @@ def run_tabpfn_evaluation(
         N_ensemble_configurations=n_ensemble_configurations,
         preprocess_transforms=list(preprocess_transforms),
         batch_size_inference=batch_size_inference,
+        sample_order_permutation=sample_order_permutation,
     )
 
     models = [tabpfn] if only_tabpfn else [
@@ -153,6 +155,7 @@ def main():
     parser.add_argument("--batch_size_inference", type=int, default=32, help="Batch size for TabPFN inference. Lower values reduce memory usage without affecting accuracy")
     parser.add_argument("--n_ensemble_configurations", type=int, default=32, help="Number of ensemble configurations for TabPFN")
     parser.add_argument("--preprocess_transforms", type=str, nargs='+', default=["none", "power", "robust"], help="Preprocessing transforms to ensemble over for TabPFN")
+    parser.add_argument("--sample_order_permutation", action="store_true", help="Permute training sample order for each ensemble configuration")
     args = parser.parse_args()
     
     results = run_tabpfn_evaluation(
@@ -169,6 +172,7 @@ def main():
         batch_size_inference=args.batch_size_inference,
         n_ensemble_configurations=args.n_ensemble_configurations,
         preprocess_transforms=args.preprocess_transforms,
+        sample_order_permutation=args.sample_order_permutation,
     )
 
     print_results_summary(results)

@@ -41,6 +41,7 @@ class EnsembleConfig:
 
     class_shift: int = 0
     feature_shift: int = 0
+    sample_permutation: torch.Tensor | None = None
     transform_type: Literal[
         "none", "power", "power_all", "quantile", "quantile_all", "robust", "robust_all"
     ] = "none"
@@ -240,6 +241,21 @@ class InferenceEngine:
 
             y_shifted = ((y + config.class_shift) % self.num_classes).float()
 
+            # Apply sample permutation on the training portion only
+            if config.sample_permutation is not None and eval_position > 1:
+                perm = config.sample_permutation
+                if perm.shape[0] == eval_position:
+                    if perm.device != X_processed.device:
+                        perm = perm.to(X_processed.device)
+                    X_processed = torch.cat(
+                        [X_processed[:eval_position][perm], X_processed[eval_position:]],
+                        dim=0,
+                    )
+                    y_shifted = torch.cat(
+                        [y_shifted[:eval_position][perm], y_shifted[eval_position:]],
+                        dim=0,
+                    )
+
             # Apply feature shift
             if config.feature_shift > 0:
                 X_processed = torch.cat(
@@ -403,6 +419,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         no_preprocess_mode: bool = False,
         multiclass_decoder: Literal["permutation", "none"] = "permutation",
         feature_shift_decoder: bool = True,
+        sample_order_permutation: bool = False,
         only_inference: bool = True,
         seed: int = 0,
         no_grad: bool = True,
@@ -431,6 +448,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         :param multiclass_decoder: If set to permutation, randomly shifts the classes for each ensemble configuration.
         :param feature_shift_decoder: If set to true shifts the features for each ensemble configuration according to a
                random permutation.
+        :param sample_order_permutation: If set to true permutes the training sample order for each ensemble configuration.
         :param only_inference: Indicates if the model should be loaded to only restore inference capabilities or also
                training capabilities. Note that the training capabilities are currently not being fully restored.
         :param seed: Seed that is used for the prediction. Allows for a deterministic behavior of the predictions.
@@ -450,6 +468,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.no_preprocess_mode = no_preprocess_mode
         self.multiclass_decoder = multiclass_decoder
         self.feature_shift_decoder = feature_shift_decoder
+        self.sample_order_permutation = sample_order_permutation
         self.only_inference = only_inference
         self.seed = seed
         self.no_grad = no_grad
@@ -605,11 +624,20 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         rng = random.Random(self.seed)
         rng.shuffle(class_feature_pairs)
 
+        if self.sample_order_permutation and eval_pos > 1:
+            sample_permutations = [
+                torch.randperm(eval_pos, device=self.device)
+                for _ in range(self.N_ensemble_configurations)
+            ]
+        else:
+            sample_permutations = [None]
+
         combinations = []
         if class_feature_pairs and self.N_ensemble_configurations > 0:
             combinations = [
                 (
                     *class_feature_pairs[i % len(class_feature_pairs)],
+                    sample_permutations[i % len(sample_permutations)],
                     preprocess_transforms[i % len(preprocess_transforms)],
                 )
                 for i in range(self.N_ensemble_configurations)
@@ -619,10 +647,11 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             EnsembleConfig(
                 class_shift=cs,
                 feature_shift=fs,
+                sample_permutation=sp,
                 transform_type=transform,
                 max_features=self.max_num_features,
             )
-            for cs, fs, transform in combinations
+            for cs, fs, sp, transform in combinations
         ]
 
         engine = InferenceEngine(

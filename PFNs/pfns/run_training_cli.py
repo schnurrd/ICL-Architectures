@@ -383,6 +383,7 @@ def main():
             batch_size_inference=16,
             n_ensemble_configurations=32,
             preprocess_transforms=["none", "power", "robust"],
+            sample_order_permutation=True,
         )
 
         print_results_summary(
