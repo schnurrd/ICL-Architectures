@@ -95,6 +95,12 @@ def parse_args():
         action="store_true",
         help="If set, do not load an existing checkpoint/config even if present; start fresh and overwrite.",
     )
+    parser.add_argument(
+        "--train-mixed-precision",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Override mixed precision setting after loading a checkpoint config.",
+    )
 
     return parser.parse_args()
 
@@ -312,6 +318,14 @@ def main():
         )
         if args.new_wandb_id and config.wandb_run_id is not None:
             config = config.__class__(**{**config.__dict__, "wandb_run_id": None})
+
+    if args.train_mixed_precision is not None:
+        config = config.__class__(
+            **{
+                **config.__dict__,
+                "train_mixed_precision": args.train_mixed_precision,
+            }
+        )
 
     print("Starting training with configuration:")
     print(f"  Epochs: {config.epochs}")
