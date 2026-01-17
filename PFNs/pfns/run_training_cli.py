@@ -228,7 +228,7 @@ def main():
                 continue
             safe_key = str(key).replace(os.sep, "_")
             safe_value = str(value).replace(os.sep, "_").replace(" ", "")
-            parts.append(f"{safe_key}={safe_value}")
+            parts.append(f"{safe_key}_{safe_value}")
         return "_" + "_".join(parts) if parts else ""
 
     if args.checkpoint_save_load_suffix:
