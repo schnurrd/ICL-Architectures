@@ -113,6 +113,26 @@
 
         },
         {
+            "name": "Python Debugger: Pre-training FLA Config",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
+            "args": [
+                "PFNs/configs/fla/fla_config.py",
+                "--checkpoint-save-load-prefix", "PFNs/models_diff",
+                "--overwrite", "--no-wandb",
+                "--config-arg", "model_type='gated_deltanet'",
+                "--config-arg", "sequence_mode='cached'",
+                "--config-arg", "cache_chunk_size=16",
+                "--config-arg", "training_setup='low'",
+                "--config-arg", "batch_size=1"
+            ],
+            "justMyCode": false
+
+        },
+        {
             "name": "Python Debugger: Pre-training Linear Attention",
             "type": "debugpy",
             "request": "launch",
@@ -147,7 +167,7 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "--model_path", "PFNs/models_diff/fla_mamba_causal_performance_0", 
+                "--model_path", "PFNs/models_diff/fla_gla_teacher_forcing_performance_0", 
                 "--only_tabpfn", 
                 "--max_features", "20",
                 "--max_samples", "1000",

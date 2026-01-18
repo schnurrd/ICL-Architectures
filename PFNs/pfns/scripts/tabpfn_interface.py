@@ -21,6 +21,7 @@ from sklearn.utils import column_or_1d
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
+from pfns.model.backbones import FLABackbone
 from pfns.utils import (
     NOP,
     normalize_by_used_features_f,
@@ -426,6 +427,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         batch_size_inference: int = 32,
         subsample_features: bool = False,
         preprocess_transforms: list[str] = None,
+        fla_cache_chunk_size: int | None = None,
     ):
         """
         Initializes the classifier and loads the model.
@@ -460,6 +462,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         :param subsample_features: If set to true and the number of features in the dataset exceeds self.max_features (100),
                 the features are subsampled to self.max_features.
         :param preprocess_transforms: List of preprocessing transforms to consider during inference.
+        :param fla_cache_chunk_size: If set and the model uses an FLA backbone, chunk size for cache-backed inference.
         """
         self.device = device
         self.base_path = base_path
@@ -475,6 +478,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.batch_size_inference = batch_size_inference
         self.subsample_features = subsample_features
         self.preprocess_transforms = preprocess_transforms
+        self.fla_cache_chunk_size = fla_cache_chunk_size
         self.categorical_feats: tuple[int, ...] = ()
 
         model_key = model_string + "|" + str(device)
@@ -494,6 +498,14 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
 
         self.model = model
         self.config = config
+        if self.fla_cache_chunk_size is not None:
+            backbone = getattr(self.model, "transformer_layers", None)
+            if isinstance(backbone, FLABackbone):
+                backbone.cache_chunk_size = self.fla_cache_chunk_size
+            else:
+                print(
+                    "Warning: fla_cache_chunk_size was provided but the model does not use an FLA backbone."
+                )
 
         self.max_num_features = config.batch_shape_sampler.max_num_features
         self.max_num_classes = config.model.criterion.num_classes
