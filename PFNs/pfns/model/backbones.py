@@ -333,18 +333,7 @@ class FLABackbone(Backbone):
             else:
                 raise ValueError("Unsupported FLA model type for cache_params.")
         try:
-            use_bf16 = (
-                isinstance(self.fla, (DeltaNetModel, GatedDeltaNetModel)) # BF16 is the only supported format for these models
-                and x.dtype == torch.float32
-                and x.device.type == "cuda"
-            )
-            autocast_ctx = (
-                torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-                if use_bf16
-                else nullcontext()
-            )
-            with autocast_ctx:
-                out = self.fla(**kwargs)
+            out = self.fla(**kwargs)
         except TypeError as exc:
             raise TypeError(
                 "FLA model does not support cache usage; required for independent evaluation."

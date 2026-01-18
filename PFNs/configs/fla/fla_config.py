@@ -82,12 +82,13 @@ MODEL_SETTINGS = {
         },
     },
     "gated_deltanet": {
-        "emsize": 192,
+        "emsize": 256,
         "config_kwargs": {
-            "hidden_size": 192,
-            "num_hidden_layers": 8,
+            "hidden_size": 256,
+            "num_hidden_layers": 16,
             "num_heads": 4,
-            "intermediate_size": 192 * 2,
+            "head_dim": 48,
+            "intermediate_size": 256 * 2,
             "hidden_act": "swish",
             "norm_eps": 1e-5,
             "use_cache": True,
