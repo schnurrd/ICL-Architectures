@@ -20,7 +20,9 @@ from pfns.train import (
 )
 DEFAULT_BATCH_SIZE = 8
 GLOBAL_TRAIN_MIXED_PRECISION = (
-    torch.cuda.is_available() and torch.cuda.is_bf16_supported()  and torch.cuda.get_device_capability()[0] >= 8
+    torch.cuda.is_available()
+    and torch.cuda.is_bf16_supported()
+    and torch.cuda.get_device_capability()[0] >= 8
 )
 GLOBAL_TRAIN_MIXED_PRECISION_DTYPE = "bf16" if GLOBAL_TRAIN_MIXED_PRECISION else "fp32"
 GLOBAL_AGGREGATE_K_GRADIENTS = 2
@@ -149,6 +151,16 @@ def get_config(
         else GLOBAL_AGGREGATE_K_GRADIENTS
     )
     resolved_batch_size = batch_size or DEFAULT_BATCH_SIZE
+    train_mixed_precision = GLOBAL_TRAIN_MIXED_PRECISION 
+    train_mixed_precision_dtype = GLOBAL_TRAIN_MIXED_PRECISION_DTYPE
+    model_requires_bf16 = model_type in {"deltanet", "gated_deltanet"} # ChunkDeltaRuleFunction only supports bf16
+    if model_requires_bf16:
+        assert torch.cuda.is_available() and torch.cuda.is_bf16_supported(), (
+            f"The selected model_type {model_type!r} requires bf16 support on the GPU."
+        )
+        print(f"Enabling bf16 training for model_type {model_type!r}")
+        train_mixed_precision = True
+        train_mixed_precision_dtype = "bf16"
 
     prior = TabPFNPriorConfig(
         prior_type="mlp",
@@ -234,8 +246,8 @@ def get_config(
         warmup_epochs=10,
         steps_per_epoch=int(steps_per_epoch),
         n_targets_per_input=1,
-        train_mixed_precision=GLOBAL_TRAIN_MIXED_PRECISION,
-        train_mixed_precision_dtype=GLOBAL_TRAIN_MIXED_PRECISION_DTYPE,
+        train_mixed_precision=train_mixed_precision,
+        train_mixed_precision_dtype=train_mixed_precision_dtype,
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
