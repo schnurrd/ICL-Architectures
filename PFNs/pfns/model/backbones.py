@@ -315,7 +315,7 @@ class FLABackbone(Backbone):
         cache_position_start: int | None = None,
         return_cache: bool = True,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": return_cache}
+        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": True} 
         if cache_params is not None:
             if isinstance(self.fla, Mamba2Model):
                 kwargs["cache_params"] = cache_params
@@ -422,7 +422,7 @@ class FLABackbone(Backbone):
                 return cache_params_copy
             raise ValueError("Unsupported cache_params structure for repetition.")
 
-        def _run_parallel_chunk(chunk_x: torch.Tensor, chunk_start: int) -> torch.Tensor:
+        def _run_parallel_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
             chunk_len = chunk_x.size(1)
             
             expanded_cache = _repeat_cache(cache_params, chunk_len)
@@ -430,20 +430,20 @@ class FLABackbone(Backbone):
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
-                cache_position_start=None if cache_position_start is None else cache_position_start + chunk_start,
+                cache_position_start=cache_position_start,
                 return_cache=False,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
 
         if self.cache_chunk_size is None or seq_len <= self.cache_chunk_size:
-            return _run_parallel_chunk(test_x, 0)
+            return _run_parallel_chunk(test_x)
 
         outputs = []
         for chunk_start in range(0, seq_len, self.cache_chunk_size):
             chunk_end = min(chunk_start + self.cache_chunk_size, seq_len)
             chunk_x = test_x[:, chunk_start:chunk_end]
-            outputs.append(_run_parallel_chunk(chunk_x, chunk_start))
+            outputs.append(_run_parallel_chunk(chunk_x))
         return torch.cat(outputs, dim=1)
     
     def _run_test_with_cache_naive(
@@ -507,7 +507,7 @@ class FLABackbone(Backbone):
 
         train_len = min(single_eval_pos, seq_len)
     
-        if self.sequence_mode == "cached" or not self.training:
+        if self.sequence_mode == "cached" or not self.training: # during eval, always use cached mode
             train_x = x_batched[:, :train_len]
             test_x = x_batched[:, train_len:]
 
