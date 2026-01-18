@@ -5,8 +5,10 @@ different backbones that can be used within the ModelConfig.
 """
 from __future__ import annotations
 
+import os
 import typing as tp
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 import torch
@@ -16,6 +18,8 @@ from fla.models import GLAConfig, GLAModel
 from fla.models import RetNetConfig, RetNetModel
 from fla.models import Mamba2Config, Mamba2Model
 from fla.models import KDAConfig, KDAModel
+from fla.models import DeltaNetConfig, DeltaNetModel
+from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 
 from pfns import base_config
 from pfns.model.layer import PerFeatureLayer
@@ -28,6 +32,8 @@ FLA_MODEL_REGISTRY = {
     "retnet": (RetNetConfig, RetNetModel),
     "mamba2": (Mamba2Config, Mamba2Model),
     "kda": (KDAConfig, KDAModel),
+    "deltanet": (DeltaNetConfig, DeltaNetModel),
+    "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
 }
 
 
@@ -187,7 +193,7 @@ class TransformerBackbone(Backbone):
 class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
-    model_type: tp.Literal["gla", "retnet", "mamba2", "kda"] = "gla"
+    model_type: tp.Literal["gla", "retnet", "mamba2", "kda", "deltanet", "gated_deltanet"] = "gla"
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["cached", "causal", "teacher_forcing"] = "cached"
     cache_chunk_size: int | None = None
@@ -233,6 +239,47 @@ class FLABackbone(Backbone):
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
         self.sequence_mode = sequence_mode
         self.cache_chunk_size = cache_chunk_size
+        self._debug_cache = os.getenv("FLA_CACHE_DEBUG", "0") not in {"", "0", "false", "False"}
+        self._cache_debugged = False
+
+    @staticmethod
+    def _summarize_cache(cache_params: tp.Any) -> str:
+        tensor_count = 0
+        total_elems = 0
+        total_bytes = 0
+        max_tensor = ("", 0, 0)
+
+        def _walk(obj: tp.Any, prefix: str) -> None:
+            nonlocal tensor_count, total_elems, total_bytes, max_tensor
+            if torch.is_tensor(obj):
+                tensor_count += 1
+                elems = obj.numel()
+                bytes_ = obj.element_size() * elems
+                total_elems += elems
+                total_bytes += bytes_
+                if bytes_ > max_tensor[2]:
+                    max_tensor = (prefix, elems, bytes_)
+                return
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    _walk(value, f"{prefix}.{key}" if prefix else str(key))
+                return
+            if isinstance(obj, (list, tuple)):
+                for idx, value in enumerate(obj):
+                    _walk(value, f"{prefix}[{idx}]")
+                return
+            if hasattr(obj, "__dict__"):
+                for key, value in obj.__dict__.items():
+                    _walk(value, f"{prefix}.{key}" if prefix else key)
+
+        _walk(cache_params, "cache")
+        mb = total_bytes / (1024 ** 2)
+        max_name, max_elems, max_bytes = max_tensor
+        max_mb = max_bytes / (1024 ** 2)
+        return (
+            f"cache tensors={tensor_count}, total={mb:.2f}MB, "
+            f"largest={max_name} ({max_elems} elems, {max_mb:.2f}MB)"
+        )
 
     def incontext_fit(
         self,
@@ -281,12 +328,23 @@ class FLABackbone(Backbone):
                     cache_position_start + x.size(1),
                     device=x.device,
                 )
-            elif isinstance(self.fla, (GLAModel, KDAModel)):
+            elif isinstance(self.fla, (GLAModel, KDAModel, DeltaNetModel, GatedDeltaNetModel)):
                 kwargs["past_key_values"] = cache_params
             else:
                 raise ValueError("Unsupported FLA model type for cache_params.")
         try:
-            out = self.fla(**kwargs)
+            use_bf16 = (
+                isinstance(self.fla, (DeltaNetModel, GatedDeltaNetModel))
+                and x.dtype == torch.float32
+                and x.device.type == "cuda"
+            )
+            autocast_ctx = (
+                torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                if use_bf16
+                else nullcontext()
+            )
+            with autocast_ctx:
+                out = self.fla(**kwargs)
         except TypeError as exc:
             raise TypeError(
                 "FLA model does not support cache usage; required for independent evaluation."
@@ -305,6 +363,9 @@ class FLABackbone(Backbone):
                 cache_params = out.cache_params
             else:
                 raise RuntimeError("FLA model output does not contain past_key_values or cache_params.")
+            if self._debug_cache and cache_params is not None and not self._cache_debugged:
+                print(f"[FLA cache] {self._summarize_cache(cache_params)}")
+                self._cache_debugged = True
         return last_hidden_state, cache_params
 
     def _run_test_with_cache(
@@ -341,13 +402,12 @@ class FLABackbone(Backbone):
         def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
             if torch.is_tensor(cache_params):
                 return cache_params.repeat_interleave(repeat, dim=0)
-            if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):
-                # Mamba2 style
+            if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"): # Mamba2 style
                 cache_params_copy = _shallow_copy(cache_params)
                 cache_params_copy.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
                 cache_params_copy.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
                 return cache_params_copy
-            if hasattr(cache_params, "layers"):  # GLA and KDA style
+            if hasattr(cache_params, "layers"):  # GLA, KDA, (Gated) Deltanet style
                 cache_params_copy = _shallow_copy(cache_params)
                 new_layers = []
                 for layer in cache_params.layers:
@@ -447,7 +507,7 @@ class FLABackbone(Backbone):
 
         train_len = min(single_eval_pos, seq_len)
     
-        if self.sequence_mode == "cached":
+        if self.sequence_mode == "cached" or not self.training:
             train_x = x_batched[:, :train_len]
             test_x = x_batched[:, train_len:]
 

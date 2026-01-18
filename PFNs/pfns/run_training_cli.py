@@ -181,8 +181,8 @@ def load_config_from_python(
                         if key in signature.parameters:
                             kwargs[key] = value
                         else:
-                            print(
-                                f"Warning: get_config does not accept {key!r}; ignoring."
+                            raise ValueError(
+                                f"get_config does not accept {key!r}; remove or rename the argument."
                             )
                 config = config_module.get_config(**kwargs)
             else:
