@@ -51,6 +51,17 @@ pip install -r requirements.txt \
 
 Tested for Nvidia RTX 5070 with Cuda 12.8. For old GPUs with compute capability < 7.0 you might need to install requirements_old_gpus.txt instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, the tabularpriors repository can't be installed and torch compile will not work.
 
+### Pulling latest changes 
+
+To pull the latest changes including submodules, run:
+
+```bash
+git pull
+git submodule update --init --recursive
+```
+
+Additionally to clean the submodules or main repository run: `git submodule foreach git clean -fdx` and `git clean -fdx` for main repository. To see the status of the submodules run: `git submodule status`.
+
 # Repository User Guide
 
 ## CLI training interface

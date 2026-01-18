@@ -93,10 +93,11 @@ class LinearAttention(nn.Module):
         kv = torch.einsum("bsnhd,bsnhe->bnhde", k, v)
         k_sum = torch.einsum("bsnhd->bnhd", k)
         
-        # Denominator: Q * Z (Train)
-        denom = torch.einsum("bsnhd,bnhd->bsnh", q, k_sum)
-        # Numerator: Q * State (Train)
+        # Numerator: Q * KV (Train)
         num = torch.einsum("bsnhd,bnhde->bsnhe", q, kv)
+
+        # Denominator: Q * Sum_K (Train)
+        denom = torch.einsum("bsnhd,bnhd->bsnh", q, k_sum)
 
         # Add Self-Attention (Test -> Self)
         if k_self is not None and v_self is not None:

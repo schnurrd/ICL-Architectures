@@ -163,7 +163,7 @@ class RebasedLinearAttention(nn.Module):
         k_test = k[:, single_eval_pos:]
         v_test = v[:, single_eval_pos:]
         
-        # Test tokens attend to Train State and themselves (mimics masked Transformer)
+        # Test tokens attend to Train State and themselves
         attn_out_test = self._apply_state_to_query(
             q_test, 
             kv_state_train, 
