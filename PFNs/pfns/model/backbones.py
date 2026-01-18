@@ -315,7 +315,7 @@ class FLABackbone(Backbone):
         cache_position_start: int | None = None,
         return_cache: bool = True,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": True} 
+        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": cache_params is not None or return_cache} 
         if cache_params is not None:
             if isinstance(self.fla, Mamba2Model):
                 kwargs["cache_params"] = cache_params
@@ -334,7 +334,7 @@ class FLABackbone(Backbone):
                 raise ValueError("Unsupported FLA model type for cache_params.")
         try:
             use_bf16 = (
-                isinstance(self.fla, (DeltaNetModel, GatedDeltaNetModel))
+                isinstance(self.fla, (DeltaNetModel, GatedDeltaNetModel)) # BF16 is the only supported format for these models
                 and x.dtype == torch.float32
                 and x.device.type == "cuda"
             )

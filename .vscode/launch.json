@@ -167,12 +167,13 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "--model_path", "PFNs/models_diff/fla_gla_teacher_forcing_performance_0", 
+                "--model_path", "PFNs/models_diff/fla_config_0_model_type_mamba_sequence_mode_causal_training_setup_low", 
                 "--only_tabpfn", 
                 "--max_features", "20",
                 "--max_samples", "1000",
                 "--sample_order_permutation"
-            ]
+            ],
+            "justMyCode": false
         },
         {
             "name": "Python Debugger: Model Spike Analysis",
