@@ -6,8 +6,8 @@ from pfns.model.linear_attention import LinearAttention
 def _build_layer() -> LinearAttention:
     return LinearAttention(
         d_model=8,
-        nhead=2,
-        dim_feedforward=16,
+        num_heads=2,
+        dim_mlp_hidden=16,
         dropout=0.0,
         activation="swish",
         attention_between_features=False,
