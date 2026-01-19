@@ -14,7 +14,7 @@ class LinearAttention(nn.Module):
         nhead,
         dim_feedforward,
         dropout=0.1,
-        activation="relu",
+        activation="silu",
         attention_between_features=False,
         feature_attention_softmax: bool = False,
     ):

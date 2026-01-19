@@ -39,7 +39,6 @@ class RebasedLinearAttention(nn.Module):
             raise ValueError("d_model must be divisible by num_heads.")
         self.d_model = d_model
         self.num_heads = num_heads
-        self.num_key_value_heads = num_heads
         self.feature_dim = feature_dim
         self.head_dim = d_model // num_heads
         self.eps = eps
@@ -48,7 +47,7 @@ class RebasedLinearAttention(nn.Module):
         self.q_proj = nn.Linear(d_model, num_heads * feature_dim, bias=False)
         self.k_proj = nn.Linear(d_model, num_heads * feature_dim, bias=False)
         # V projects to head_dim * heads
-        self.v_proj = nn.Linear(d_model, self.num_key_value_heads * self.head_dim, bias=False)
+        self.v_proj = nn.Linear(d_model, num_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(num_heads * self.head_dim, d_model, bias=False)
         
         self.feature_map = RebasedFeatureMap(feature_dim, use_gamma, use_beta, normalize)
@@ -145,7 +144,7 @@ class RebasedLinearAttention(nn.Module):
         # Projects: (B*N, S, D) -> Proj Dim
         q = self.q_proj(x_flat).view(b*n, s, self.num_heads, self.feature_dim)
         k = self.k_proj(x_flat).view(b*n, s, self.num_heads, self.feature_dim)
-        v = self.v_proj(x_flat).view(b*n, s, self.num_key_value_heads, self.head_dim)
+        v = self.v_proj(x_flat).view(b*n, s, self.num_heads, self.head_dim)
         
         # Apply Feature Map
         q, k = self.feature_map(q), self.feature_map(k)
