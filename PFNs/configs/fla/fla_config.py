@@ -153,14 +153,10 @@ def get_config(
     resolved_batch_size = batch_size or DEFAULT_BATCH_SIZE
     train_mixed_precision = GLOBAL_TRAIN_MIXED_PRECISION 
     train_mixed_precision_dtype = GLOBAL_TRAIN_MIXED_PRECISION_DTYPE
-    model_requires_bf16 = model_type in {"deltanet", "gated_deltanet"} # ChunkDeltaRuleFunction only supports bf16
-    if model_requires_bf16:
-        assert torch.cuda.is_available() and torch.cuda.is_bf16_supported(), (
-            f"The selected model_type {model_type!r} requires bf16 support on the GPU."
-        )
-        print(f"Enabling bf16 training for model_type {model_type!r}")
-        train_mixed_precision = True
-        train_mixed_precision_dtype = "bf16"
+    if model_type in {"deltanet"} and GLOBAL_TRAIN_MIXED_PRECISION_DTYPE == "fp32": # ChunkDeltaRuleFunction does not support fp32
+        print(f"Enabling mixed precision with fp16 training for model_type {model_type!r}")
+        GLOBAL_TRAIN_MIXED_PRECISION = True
+        GLOBAL_TRAIN_MIXED_PRECISION_DTYPE = "fp16"
 
     prior = TabPFNPriorConfig(
         prior_type="mlp",
