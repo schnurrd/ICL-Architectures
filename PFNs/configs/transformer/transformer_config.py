@@ -146,6 +146,7 @@ def get_config(config_index: int = 0, training_setup: str = "low") -> MainConfig
         steps_per_epoch=profile["steps_per_epoch"],
         n_targets_per_input=1,
         train_mixed_precision=True,
+        train_mixed_precision_dtype="fp16",
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
