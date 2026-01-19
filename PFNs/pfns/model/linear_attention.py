@@ -2,6 +2,12 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from pfns.model.attention_utils import (
+    apply_state_to_query_5d,
+    build_mlp,
+    compute_kv_state_5d,
+)
+
 
 class LinearAttention(nn.Module):
     """
@@ -10,23 +16,30 @@ class LinearAttention(nn.Module):
     """
     def __init__(
         self,
-        d_model,
-        nhead,
-        dim_feedforward,
-        dropout=0.1,
-        activation="silu",
-        attention_between_features=False,
+        d_model: int,
+        num_heads: int,
+        dim_mlp_hidden: int,
+        dropout: float = 0.1,
+        activation: str = "silu",
+        attention_between_features: bool = False,
         feature_attention_softmax: bool = False,
+        feature_dim: int | None = None,
+        eps: float = 1e-5,
     ):
         super().__init__()
+        
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads."
+        
         self.d_model = d_model
-        self.nhead = nhead
-        assert d_model % nhead == 0, "d_model must be divisible by nhead."
-        self.head_dim = d_model // nhead
+        self.num_heads = num_heads
+        self.head_dim = d_model // num_heads
+        self.feature_dim = feature_dim if feature_dim is not None else self.head_dim
+        
         self.attention_between_features = attention_between_features
         self.feature_attention_softmax = feature_attention_softmax
+        
         self.dropout = nn.Dropout(dropout)
-        self.eps = 1e-6
+        self.eps = eps
         self.save_peak_mem_factor = None
 
         if attention_between_features:
@@ -35,32 +48,15 @@ class LinearAttention(nn.Module):
             self.v_proj_feat = nn.Linear(d_model, d_model)
             self.out_proj_feat = nn.Linear(d_model, d_model)
 
-        self.q_proj_item = nn.Linear(d_model, d_model)
-        self.k_proj_item = nn.Linear(d_model, d_model)
+        self.q_proj_item = nn.Linear(d_model, self.num_heads * self.feature_dim)
+        self.k_proj_item = nn.Linear(d_model, self.num_heads * self.feature_dim)
+        
         self.v_proj_item = nn.Linear(d_model, d_model)
         self.out_proj_item = nn.Linear(d_model, d_model)
 
         num_norms = 3 if attention_between_features else 2
         self.norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(num_norms)])
-        if dim_feedforward is None:
-            dim_feedforward = 4 * d_model
-
-        if activation == "gelu":
-            activation_fn = nn.GELU()
-        elif activation == "relu":
-            activation_fn = nn.ReLU()
-        elif activation in {"swish", "silu"}:
-            activation_fn = nn.SiLU()
-        else:
-            raise ValueError(f"Unsupported activation: {activation}")
-
-        self.ff = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
-            activation_fn,
-            nn.Dropout(dropout),
-            nn.Linear(dim_feedforward, d_model),
-            nn.Dropout(dropout),
-        )
+        self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
 
     def _feature_map(self, x: torch.Tensor) -> torch.Tensor:
         return F.elu(x) + 1.0
@@ -90,25 +86,17 @@ class LinearAttention(nn.Module):
         # q, k, v: (batch, seq_len, num_feature_blocks, nhead, head_dim)
         q = self._feature_map(q)
         k = self._feature_map(k)
-        kv = torch.einsum("bsnhd,bsnhe->bnhde", k, v)
-        k_sum = torch.einsum("bsnhd->bnhd", k)
-        
-        # Numerator: Q * KV (Train)
-        num = torch.einsum("bsnhd,bnhde->bsnhe", q, kv)
-
-        # Denominator: Q * Sum_K (Train)
-        denom = torch.einsum("bsnhd,bnhd->bsnh", q, k_sum)
-
-        # Add Self-Attention (Test -> Self)
+        kv_state, k_sum = compute_kv_state_5d(k, v)
         if k_self is not None and v_self is not None:
-             k_self = self._feature_map(k_self)
-             # (b, s, n, h, d) * (b, s, n, h, d) -> (b, s, n, h)
-             attn_self = (q * k_self).sum(dim=-1)
-             
-             num = num + attn_self.unsqueeze(-1) * v_self
-             denom = denom + attn_self
-
-        return num / (denom.unsqueeze(-1) + self.eps)
+            k_self = self._feature_map(k_self)
+        return apply_state_to_query_5d(
+            q,
+            kv_state,
+            k_sum,
+            eps=self.eps,
+            k_self=k_self,
+            v_self=v_self,
+        )
 
     def _softmax_attention_features(
         self,
@@ -125,93 +113,81 @@ class LinearAttention(nn.Module):
         out = torch.einsum("bshnm,bshmd->bshnd", attn, v)
         return out.permute(0, 1, 3, 2, 4)
 
-    def _apply_attention(
-        self,
-        x: torch.Tensor,
-        *,
-        q_proj: nn.Linear,
-        k_proj: nn.Linear,
-        v_proj: nn.Linear,
-        out_proj: nn.Linear,
-        kv_x: torch.Tensor | None = None,
-        attention_across_features: bool = False,
-        use_self_attention_for_items: bool = False,
-    ) -> torch.Tensor:
-        q_x = x
-        kv_x = x if kv_x is None else kv_x
-        b, s_q, n, e = q_x.shape
-        b_kv, s_kv, n_kv, e_kv = kv_x.shape
-        assert b == b_kv and n == n_kv and e == e_kv, "q_x and kv_x must share batch, token, and embedding dims."
-
-        if attention_across_features:
-            assert s_q == s_kv, "We do not support mismatched sequence lengths."
-            q = q_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim)
-            k = k_proj(kv_x).view(b, s_kv, n, self.nhead, self.head_dim)
-            v = v_proj(kv_x).view(b, s_kv, n, self.nhead, self.head_dim)
-            if self.feature_attention_softmax:
-                out = self._softmax_attention_features(q, k, v)
-            else:
-                out = self._linear_attention_features(q, k, v)
-        else:
-            q = q_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim)
-            k = k_proj(kv_x).view(b, s_kv, n, self.nhead, self.head_dim)
-            v = v_proj(kv_x).view(b, s_kv, n, self.nhead, self.head_dim)
-            
-            k_self = None
-            v_self = None
-            if use_self_attention_for_items:
-                k_self = k_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim)
-                v_self = v_proj(q_x).view(b, s_q, n, self.nhead, self.head_dim)
-            
-            out = self._linear_attention_items(q, k, v, k_self=k_self, v_self=v_self)
-
-        out = out.reshape(b, s_q, n, e)
-        return self.dropout(out_proj(out))
-
     def forward(self, x, *, single_eval_pos: int | None = None, **kwargs):
         # x: (batch, num_items, num_feature_blocks, embed_dim)
         norm_idx = 0
+        assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
+        b, s, n, _ = x.shape
+        assert single_eval_pos is not None, (
+            "single_eval_pos must be provided for LinearAttention."
+        )
+        assert 0 < single_eval_pos < s, (
+            f"single_eval_pos must be in the range [1, {s} - 1], got {single_eval_pos}."
+        )
 
         if self.attention_between_features:
             x_norm = self.norms[norm_idx](x)
-            attn_feat = self._apply_attention(
-                x_norm,
-                q_proj=self.q_proj_feat,
-                k_proj=self.k_proj_feat,
-                v_proj=self.v_proj_feat,
-                out_proj=self.out_proj_feat,
-                attention_across_features=True,
-            )
+            b, s, n, e = x_norm.shape
+            q = self.q_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
+            k = self.k_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
+            v = self.v_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
+            if self.feature_attention_softmax:
+                attn_feat = self._softmax_attention_features(q, k, v)
+            else:
+                attn_feat = self._linear_attention_features(q, k, v)
+            attn_feat = attn_feat.reshape(b, s, n, e)
+            attn_feat = self.dropout(self.out_proj_feat(attn_feat))
             x = x + attn_feat
             norm_idx += 1
 
         x_norm = self.norms[norm_idx](x)
-        train_x = x_norm[:, :single_eval_pos]
-        test_x = x_norm[:, single_eval_pos:]
+        b, s, n, _ = x_norm.shape
+        q_all = self.q_proj_item(x_norm).view(b, s, n, self.num_heads, self.feature_dim)
+        k_all = self.k_proj_item(x_norm).view(b, s, n, self.num_heads, self.feature_dim)
+        v_all = self.v_proj_item(x_norm).view(b, s, n, self.num_heads, self.head_dim)
+
+        # Train Part
+        q_train = q_all[:, :single_eval_pos]
+        k_train = k_all[:, :single_eval_pos]
+        v_train = v_all[:, :single_eval_pos]
         
-        attn_train = self._apply_attention(
-            train_x,
-            q_proj=self.q_proj_item,
-            k_proj=self.k_proj_item,
-            v_proj=self.v_proj_item,
-            out_proj=self.out_proj_item,
-            kv_x=train_x,
+        # Test Part
+        q_test = q_all[:, single_eval_pos:]
+        k_test = k_all[:, single_eval_pos:]
+        v_test = v_all[:, single_eval_pos:]
+
+        s_train = q_train.shape[1]
+        s_test = q_test.shape[1]
+
+        kv_state_train, k_sum_train = compute_kv_state_5d(
+            self._feature_map(k_train), v_train
         )
-        attn_test = self._apply_attention(
-            test_x,
-            q_proj=self.q_proj_item,
-            k_proj=self.k_proj_item,
-            v_proj=self.v_proj_item,
-            out_proj=self.out_proj_item,
-            kv_x=train_x,
-            use_self_attention_for_items=True,
+
+        attn_train = apply_state_to_query_5d(
+            self._feature_map(q_train),
+            kv_state_train,
+            k_sum_train,
+            eps=self.eps,
         )
-        attn_item = torch.cat([attn_train, attn_test], dim=1)
+        
+        attn_test = apply_state_to_query_5d(
+            self._feature_map(q_test),
+            kv_state_train,
+            k_sum_train,
+            eps=self.eps,
+            k_self=self._feature_map(k_test),
+            v_self=v_test,
+        )
+
+        attn_all = torch.cat([attn_train, attn_test], dim=1).reshape(
+            b, s_train + s_test, n, self.d_model
+        )
+        attn_item = self.dropout(self.out_proj_item(attn_all))
         
         x = x + attn_item
         norm_idx += 1
 
-        x = x + self.ff(self.norms[norm_idx](x))
+        x = x + self.mlp(self.norms[norm_idx](x))
         return x
 
     def empty_trainset_representation_cache(self) -> None:

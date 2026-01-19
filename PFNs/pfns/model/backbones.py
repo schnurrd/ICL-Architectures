@@ -515,10 +515,10 @@ class LinearAttentionBackboneConfig(BackboneConfig):
     """Configuration for a Linear Attention backbone."""
     nlayers: int = 6
     nhead: int = 2
-    nhid: int = 200
-    dropout: float = 0.1
-    activation: tp.Literal["gelu", "relu", "swish", "silu"] = "gelu"
-    feature_attention_softmax: bool = False
+    mlp_hidden_dim: int = 200
+    dropout: float = 0.0
+    activation: tp.Literal["gelu", "relu", "swish", "silu"] = "silu"
+    layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
 
     def create_backbone(
         self,
@@ -529,12 +529,12 @@ class LinearAttentionBackboneConfig(BackboneConfig):
         layers = nn.ModuleList([
             LinearAttention(
                 d_model=ninp,
-                nhead=self.nhead,
-                dim_feedforward=self.nhid,
+                num_heads=self.nhead,
+                dim_mlp_hidden=self.mlp_hidden_dim,
                 dropout=self.dropout,
                 activation=self.activation,
                 attention_between_features=attention_between_features,
-                feature_attention_softmax=self.feature_attention_softmax,
+                **(self.layer_kwargs or {}),                
             )
             for _ in range(self.nlayers)
         ])
@@ -570,15 +570,12 @@ class LinearAttentionBackbone(Backbone):
 @dataclass(frozen=True)
 class RebasedBackboneConfig(BackboneConfig):
     nlayers: int = 6
-    nhid: int | None = None
-    num_heads: int = 4
-    feature_dim: int = 16
+    mlp_hidden_dim: int = 200
+    num_heads: int = 2
     activation: str = "silu"
     dropout: float = 0.1
-    use_gamma: bool = True
-    use_beta: bool = True
-    normalize: bool = True
-    eps: float = 1e-5
+    layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
+
 
     def create_backbone(
         self,
@@ -594,15 +591,11 @@ class RebasedBackboneConfig(BackboneConfig):
             [
                 RebasedLinearAttention(
                     d_model=ninp,
-                    dim_feedforward=self.nhid,
                     num_heads=self.num_heads,
-                    feature_dim=self.feature_dim,
+                    dim_mlp_hidden=self.mlp_hidden_dim,
                     dropout=self.dropout,
                     activation=self.activation,
-                    use_gamma=self.use_gamma,
-                    use_beta=self.use_beta,
-                    normalize=self.normalize,
-                    eps=self.eps,
+                    **(self.layer_kwargs or {}),
                 )
                 for _ in range(self.nlayers)
             ]

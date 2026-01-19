@@ -18,101 +18,6 @@
             ]
         },
         {
-            "name": "Python Debugger: Pre-training Transformer Long",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
-            "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
-            "args": [
-                "PFNs/configs/transformer/tabpfn_prior_config_1_gpu_v4_performance_long.py", 
-                "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--no-wandb"
-            ]
-        },
-        {
-            "name": "Python Debugger: Pre-training FLA GLA",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
-            "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
-            "args": [
-                "PFNs/configs/fla/fla_gla_test.py",
-                "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite", "--no-wandb"
-            ]
-        },
-        {
-            "name": "Python Debugger: Pre-training FLA ReBased",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
-            "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
-            "args": [
-                "PFNs/configs/linear_attention/rebased_performance.py",
-                "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite", "--no-wandb"
-            ]
-        },
-        {
-            "name": "Python Debugger: Pre-training GLA Causal",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
-            "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
-            "args": [
-                "PFNs/configs/fla/fla_gla_test_causal.py",
-                "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite", "--no-wandb"
-            ]
-        },
-        {
-            "name": "Python Debugger: Pre-training GLA Teacher Forcing",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
-            "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
-            "args": [
-                "PFNs/configs/fla/fla_gla_test_teacher_forcing.py",
-                "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite", "--no-wandb"
-            ]
-        },
-        {
-            "name": "Python Debugger: Pre-training FLA Mamba2",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
-            "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
-            "args": [
-                "PFNs/configs/fla/fla_mamba_cached_test.py",
-                "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite", "--no-wandb"
-            ],
-            "justMyCode": false
-
-        },
-        {
-            "name": "Python Debugger: Pre-training FLA KDA",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
-            "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
-            "args": [
-                "PFNs/configs/fla/fla_kda_cached_performance.py",
-                "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite", "--no-wandb"
-            ],
-            "justMyCode": false
-
-        },
-        {
             "name": "Python Debugger: Pre-training FLA Config",
             "type": "debugpy",
             "request": "launch",
@@ -131,6 +36,19 @@
             ],
             "justMyCode": false
 
+        },
+        {
+            "name": "Python Debugger: Pre-training Linear Attention",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
+            "args": [
+                "PFNs/configs/linear_attention/linear_attention_test.py",
+                "--checkpoint-save-load-prefix", "PFNs/models_diff",
+                "--overwrite", "--no-wandb"
+            ]
         },
         {
             "name": "Python Debugger: Pre-training Linear Attention",
@@ -167,13 +85,13 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "--model_path", "PFNs/models_diff/fla_config_0_model_type_mamba_sequence_mode_causal_training_setup_low", 
+                "--model_path", "PFNs/models_diff/fla_mamba_teacher_forcing_performance_0", 
                 "--only_tabpfn", 
                 "--max_features", "20",
                 "--max_samples", "1000",
                 "--sample_order_permutation"
             ],
-            "justMyCode": false
+            "justMyCode": true
         },
         {
             "name": "Python Debugger: Model Spike Analysis",

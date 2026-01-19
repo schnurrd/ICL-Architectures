@@ -3,17 +3,27 @@ from __future__ import annotations
 import torch
 from torch import nn
 import torch.utils.checkpoint
+from contextlib import contextmanager
 
-# This intercepts calls (like from fla) that don't pass use_reentrant and sets it to False.
-if not hasattr(torch.utils.checkpoint, "_original_checkpoint"):
-    torch.utils.checkpoint._original_checkpoint = torch.utils.checkpoint.checkpoint
+@contextmanager
+def _checkpoint_no_reentrant():
+    checkpoint_module = torch.utils.checkpoint
+    original_checkpoint = checkpoint_module.checkpoint
     def checkpoint_wrapper(function, *args, **kwargs):
-        if "use_reentrant" not in kwargs:
-            kwargs["use_reentrant"] = False
-        return torch.utils.checkpoint._original_checkpoint(function, *args, **kwargs)
-    torch.utils.checkpoint.checkpoint = checkpoint_wrapper
+        kwargs.setdefault("use_reentrant", False)
+        return original_checkpoint(function, *args, **kwargs)
+    checkpoint_module.checkpoint = checkpoint_wrapper
+    try:
+        yield
+    finally:
+        checkpoint_module.checkpoint = original_checkpoint
 
 from fla.modules.feature_map import RebasedFeatureMap
+from pfns.model.attention_utils import (
+    apply_state_to_query_4d,
+    build_mlp,
+    compute_kv_state_4d,
+)
 
 
 class RebasedLinearAttention(nn.Module):
@@ -25,96 +35,39 @@ class RebasedLinearAttention(nn.Module):
         self,
         d_model: int,
         num_heads: int,
-        dim_feedforward: int | None = None,
-        feature_dim: int = 16,
+        dim_mlp_hidden: int,
         dropout: float = 0.1,
         activation: str = "silu",
+        feature_dim: int | None = None,
         use_gamma: bool = True,
         use_beta: bool = True,
         normalize: bool = True,
         eps: float = 1e-5,
     ) -> None:
         super().__init__()
-        if d_model % num_heads != 0:
-            raise ValueError("d_model must be divisible by num_heads.")
+        
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads."
+
         self.d_model = d_model
         self.num_heads = num_heads
-        self.feature_dim = feature_dim
         self.head_dim = d_model // num_heads
+        self.feature_dim = feature_dim if feature_dim is not None else self.head_dim
+        
         self.eps = eps
+        self.dropout = nn.Dropout(dropout)
 
-        # Q, K project to feature_dim * heads
-        self.q_proj = nn.Linear(d_model, num_heads * feature_dim, bias=False)
-        self.k_proj = nn.Linear(d_model, num_heads * feature_dim, bias=False)
-        # V projects to head_dim * heads
-        self.v_proj = nn.Linear(d_model, num_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(num_heads * self.head_dim, d_model, bias=False)
+        # Q, K: d_model -> to feature_dim * heads
+        self.q_proj = nn.Linear(d_model, num_heads * self.feature_dim)
+        self.k_proj = nn.Linear(d_model, num_heads * self.feature_dim)
+        # V : d_model -> d_model
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.o_proj = nn.Linear(d_model, d_model)
         
-        self.feature_map = RebasedFeatureMap(feature_dim, use_gamma, use_beta, normalize)
+        self.feature_map = RebasedFeatureMap(self.feature_dim, use_gamma, use_beta, normalize)
 
-        if activation == "gelu":
-            act = nn.GELU()
-        elif activation == "relu":
-            act = nn.ReLU()
-        elif activation in {"silu", "swish"}:
-            act = nn.SiLU()
-        else:
-            raise ValueError(f"Unsupported activation: {activation}")
-        
         self.norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(2)])
-        if dim_feedforward is None:
-            dim_feedforward = 4 * d_model
-        self.mlp = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
-            act,
-            nn.Dropout(dropout),
-            nn.Linear(dim_feedforward, d_model),
-            nn.Dropout(dropout),
-        )
+        self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
 
-    def _compute_kv_state(
-        self, k: torch.Tensor, v: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        # k: (batch*n, seq, n_heads, feat_dim)
-        # v: (batch*n, seq, n_heads, head_dim)
-        k_sum = k.sum(dim=1)
-        kv_state = torch.einsum("bshf,bshd->bhfd", k, v)
-        return kv_state, k_sum
-
-    def _apply_state_to_query(
-        self,
-        q: torch.Tensor,
-        kv_state: torch.Tensor,
-        k_sum: torch.Tensor,
-        k_self: torch.Tensor | None = None,
-        v_self: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        # q: (batch*n, seq_test, n_heads, feat_dim)
-        # kv_state: (batch*n, n_heads, feat_dim, head_dim)
-        # k_sum: (batch*n, n_heads, feat_dim)
-        
-        # Numerator: Q * State
-        # b s h f, b h f d -> b s h d
-        num = torch.einsum("bshf,bhfd->bshd", q, kv_state)
-        
-        # Denominator: Q * Z
-        # b s h f, b h f -> b s h
-        denom = torch.einsum("bshf,bhf->bsh", q, k_sum)
-
-        # Add self-attention contribution for test tokens if provided
-        if k_self is not None and v_self is not None:
-            # (b, s, h, f) * (b, s, h, f) -> (b, s, h)
-            attn_self = (q * k_self).sum(dim=-1)
-            
-            # num += (q.k) * v
-            num = num + attn_self.unsqueeze(-1) * v_self
-            # denom += (q.k)
-            denom = denom + attn_self
-
-        denom = denom.unsqueeze(-1) # (b, s, h, 1)
-        
-        out = num / (denom + self.eps)
-        return out
 
     def forward(
         self,
@@ -133,10 +86,9 @@ class RebasedLinearAttention(nn.Module):
             x = x.unsqueeze(2)
         
         b, s, n, d = x.shape
-        if single_eval_pos <= 0 or single_eval_pos > s:
-            raise ValueError(
-                f"single_eval_pos must be in the range [1, {s}], got {single_eval_pos}."
-            )
+        assert 0 < single_eval_pos < s, (
+            f"single_eval_pos must be in the range [1, {s} - 1], got {single_eval_pos}."
+        )
 
         x_norm = self.norms[0](x)
         x_flat = x_norm.transpose(1, 2).reshape(b * n, s, d)
@@ -147,15 +99,18 @@ class RebasedLinearAttention(nn.Module):
         v = self.v_proj(x_flat).view(b*n, s, self.num_heads, self.head_dim)
         
         # Apply Feature Map
-        q, k = self.feature_map(q), self.feature_map(k)
+        with _checkpoint_no_reentrant():
+            q, k = self.feature_map(q), self.feature_map(k)
 
         q_train = q[:, :single_eval_pos]
         k_train = k[:, :single_eval_pos]
         v_train = v[:, :single_eval_pos]
         
         # A. Compute Train output (non-causal full attention over train prefix)
-        kv_state_train, k_sum_train = self._compute_kv_state(k_train, v_train)
-        attn_out_train = self._apply_state_to_query(q_train, kv_state_train, k_sum_train)
+        kv_state_train, k_sum_train = compute_kv_state_4d(k_train, v_train)
+        attn_out_train = apply_state_to_query_4d(
+            q_train, kv_state_train, k_sum_train, eps=self.eps
+        )
         
         # B. Test Part
         q_test = q[:, single_eval_pos:]
@@ -163,10 +118,11 @@ class RebasedLinearAttention(nn.Module):
         v_test = v[:, single_eval_pos:]
         
         # Test tokens attend to Train State and themselves
-        attn_out_test = self._apply_state_to_query(
+        attn_out_test = apply_state_to_query_4d(
             q_test, 
             kv_state_train, 
             k_sum_train,
+            eps=self.eps,
             k_self=k_test,
             v_self=v_test
         )
@@ -175,7 +131,7 @@ class RebasedLinearAttention(nn.Module):
 
         # Output projection
         attn_out = attn_out.reshape(b*n, s, self.num_heads * self.head_dim)
-        attn_out = self.o_proj(attn_out)
+        attn_out = self.dropout(self.o_proj(attn_out))
         
         # Rearrange
         attn_out = attn_out.reshape(b, n, s, d).transpose(1, 2)
