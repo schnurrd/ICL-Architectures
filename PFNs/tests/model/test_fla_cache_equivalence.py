@@ -54,7 +54,7 @@ def test_fla_test_cache_matches_naive():
 
         _, past_1 = backbone._run_fla(train_x)
         assert past_1 is not None
-        out_naive = backbone._run_test_with_cache_naive(test_x, past_1)
+        out_naive = backbone._run_test_with_cache_naive(test_x, past_1, use_custom_recurrent=False)
 
         _, past_2 = backbone._run_fla(train_x)
         assert past_2 is not None
@@ -75,10 +75,10 @@ def test_fla_test_cache_matches_naive():
         test_x_pert[:, 0:1, :] += 10.0
         out_pert = backbone._run_test_with_cache(test_x_pert, past_4)
 
-    torch.testing.assert_close(out_fast, out_naive, rtol=5e-3, atol=1e-3)
-    torch.testing.assert_close(out_fast, out_swapped, rtol=5e-3, atol=1e-3)
-    torch.testing.assert_close(out_fast[:, 1:2, :], out_pert[:, 1:2, :], rtol=5e-3, atol=1e-3)
-    assert not torch.allclose(out_full_test, out_fast, rtol=1e-3, atol=1e-4)
+    torch.testing.assert_close(out_fast, out_naive, rtol=1e-6, atol=1e-6)
+    torch.testing.assert_close(out_fast, out_swapped, rtol=1e-6, atol=1e-6)
+    torch.testing.assert_close(out_fast[:, 1:2, :], out_pert[:, 1:2, :], rtol=1e-6, atol=1e-6)
+    assert not torch.allclose(out_full_test, out_fast, rtol=1e-6, atol=1e-6)
         
 
 def test_fla_cache_allows_train_gradients():
@@ -108,7 +108,7 @@ def test_fla_cache_allows_train_gradients():
     train_x_naive = train_x_base.clone().requires_grad_(True)
     _, past_naive = backbone_naive._run_fla(train_x_naive)
     assert past_naive is not None
-    out_naive = backbone_naive._run_test_with_cache_naive(test_x, past_naive)
+    out_naive = backbone_naive._run_test_with_cache_naive(test_x, past_naive, use_custom_recurrent=False)
     out_naive.sum().backward()
 
     train_x_fast = train_x_base.clone().requires_grad_(True)
@@ -151,14 +151,14 @@ def test_fla_cache_chunking_matches_gradients():
     test_x_full = test_x_base.clone().requires_grad_(True)
     _, past_full = backbone_full._run_fla(train_x_full)
     assert past_full is not None
-    out_full = backbone_full._run_test_with_cache(test_x_full, past_full)
+    out_full = backbone_full._run_test_with_cache(test_x_full, past_full, use_custom_recurrent=False)
     out_full.sum().backward()
 
     train_x_chunked = train_x_base.clone().requires_grad_(True)
     test_x_chunked = test_x_base.clone().requires_grad_(True)
     _, past_chunked = backbone_chunked._run_fla(train_x_chunked)
     assert past_chunked is not None
-    out_chunked = backbone_chunked._run_test_with_cache(test_x_chunked, past_chunked)
+    out_chunked = backbone_chunked._run_test_with_cache(test_x_chunked, past_chunked, use_custom_recurrent=False)
     out_chunked.sum().backward()
 
     torch.testing.assert_close(train_x_chunked.grad, train_x_full.grad, rtol=5e-3, atol=1e-3)

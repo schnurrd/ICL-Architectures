@@ -8,7 +8,6 @@ from __future__ import annotations
 import os
 import typing as tp
 from abc import ABC, abstractmethod
-from contextlib import nullcontext
 from dataclasses import dataclass
 
 import torch
@@ -22,6 +21,11 @@ from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 
 from pfns import base_config
+from pfns.model.fla_patches import (
+    _maybe_patch_gla_native_recurrent,
+    _maybe_patch_gla_native_recurrent_causal,
+    _maybe_patch_gla_native_recurrent_vmap,
+)
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.linear_attention import LinearAttention
 from pfns.model.rebased_linear_attention import RebasedLinearAttention
@@ -213,6 +217,10 @@ class FLABackboneConfig(BackboneConfig):
             "FLA backbones currently do not support attention between features"
         )
 
+        assert ninp is None or ninp == self.config_kwargs.get("hidden_size", ninp), (
+            "FLA backbone ninp must match config_kwargs hidden_size"
+        )
+        
         if self.config_kwargs is None:
             raise ValueError("FLABackboneConfig requires config_kwargs to build the FLA config.")
         
@@ -314,6 +322,7 @@ class FLABackbone(Backbone):
         cache_params: tp.Any | None = None,
         cache_position_start: int | None = None,
         return_cache: bool = True,
+        use_custom_recurrent: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
         kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": cache_params is not None or return_cache} 
         if cache_params is not None:
@@ -333,7 +342,8 @@ class FLABackbone(Backbone):
             else:
                 raise ValueError("Unsupported FLA model type for cache_params.")
         try:
-            out = self.fla(**kwargs)
+            with _maybe_patch_gla_native_recurrent(use_custom_recurrent):
+                out = self.fla(**kwargs)
         except TypeError as exc:
             raise TypeError(
                 "FLA model does not support cache usage; required for independent evaluation."
@@ -362,6 +372,7 @@ class FLABackbone(Backbone):
         test_x: torch.Tensor,
         cache_params: tp.Any,
         cache_position_start: int | None = None,
+        use_custom_recurrent: bool = True,
     ) -> torch.Tensor:
         """
         Run the FLA model on test inputs using cached past key values in parallel.
@@ -410,17 +421,31 @@ class FLABackbone(Backbone):
                 cache_params_copy.layers = new_layers
                 return cache_params_copy
             raise ValueError("Unsupported cache_params structure for repetition.")
-
+        
         def _run_parallel_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
             chunk_len = chunk_x.size(1)
             
-            expanded_cache = _repeat_cache(cache_params, chunk_len)
+            # if use_custom_recurrent and isinstance(self.fla, GLAModel):
+            #     output, _ = self._run_fla(
+            #         chunk_x,
+            #         cache_params=cache_params,
+            #         cache_position_start=cache_position_start,
+            #         return_cache=False,
+            #         use_custom_recurrent=use_custom_recurrent,
+            #     )
+            #     return output
+            
+            if not isinstance(self.fla, GLAModel) or not use_custom_recurrent: # GLA uses our custom repetition
+                expanded_cache = _repeat_cache(cache_params, chunk_len)
+            else:
+                expanded_cache = cache_params
             chunk_flat = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
                 cache_position_start=cache_position_start,
                 return_cache=False,
+                use_custom_recurrent=use_custom_recurrent,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
@@ -440,6 +465,7 @@ class FLABackbone(Backbone):
         test_x: torch.Tensor,
         cache_params: tp.Any | None,
         cache_position_start: int | None = None,
+        use_custom_recurrent: bool = False,
     ) -> torch.Tensor:
         """
         Sequentially processes the test sequence one token at a time.
@@ -447,15 +473,49 @@ class FLABackbone(Backbone):
         if test_x.numel() == 0:
             return test_x
 
+        def _shallow_copy(obj: tp.Any) -> tp.Any:
+            obj_copy = obj.__class__.__new__(obj.__class__)
+            obj_copy.__dict__.update(obj.__dict__)
+            return obj_copy
+
+        def _copy_state(state: dict[str, tp.Any]) -> dict[str, tp.Any]:
+            return dict(state)
+
+        def _copy_cache(cache_params: tp.Any) -> tp.Any:
+            if cache_params is None:
+                return None
+            if hasattr(cache_params, "layers"):
+                cache_params_copy = _shallow_copy(cache_params)
+                new_layers = []
+                for layer in cache_params.layers:
+                    layer_copy = _shallow_copy(layer)
+                    state = getattr(layer, "state", None)
+                    if isinstance(state, dict):
+                        layer_copy.state = _copy_state(state)
+                    else:
+                        raise ValueError("Unsupported layer state structure for copy.")
+                    new_layers.append(layer_copy)
+                cache_params_copy.layers = new_layers
+                return cache_params_copy
+            if hasattr(cache_params, "states"):
+                cache_params_copy = _shallow_copy(cache_params)
+                cache_params_copy.states = [
+                    _copy_state(state) if isinstance(state, dict) else state
+                    for state in cache_params.states
+                ]
+                return cache_params_copy
+            return cache_params
+
         output_tokens = []
         seq_len = test_x.size(1)
         for t in range(seq_len):
             current_input = test_x[:, t : t + 1, :]  # shape (batch, 1, dim)
-            output, cache_params = self._run_fla(
+            output, _ = self._run_fla(
                 current_input,
-                cache_params=cache_params,
+                cache_params=_copy_cache(cache_params),
                 cache_position_start=cache_position_start,
-                return_cache=True,
+                return_cache=False,
+                use_custom_recurrent=use_custom_recurrent,
             )
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)
