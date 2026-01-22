@@ -324,7 +324,7 @@ class FLABackbone(Backbone):
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": cache_params is not None or return_cache} 
+        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": return_cache} # cache_params is not None or return_cache
         if cache_params is not None:
             if isinstance(self.fla, Mamba2Model):
                 kwargs["cache_params"] = cache_params
@@ -388,6 +388,17 @@ class FLABackbone(Backbone):
             obj_copy = obj.__class__.__new__(obj.__class__)
             obj_copy.__dict__.update(obj.__dict__)
             return obj_copy
+
+        def _expand_repeat(value: torch.Tensor, repeat: int, *, dim: int) -> torch.Tensor:
+            if repeat == 1:
+                return value
+            dim = dim if dim >= 0 else dim + value.dim()
+            if dim < 0 or dim >= value.dim():
+                raise ValueError(f"Invalid repeat dim {dim} for tensor with {value.dim()} dims.")
+            shape = list(value.shape)
+            expanded = value.unsqueeze(dim + 1).expand(*shape[: dim + 1], repeat, *shape[dim + 1 :])
+            shape[dim] *= repeat
+            return expanded.reshape(*shape)
 
         def _repeat_state(state: dict[str, tp.Any], repeat: int, *, dim: int) -> dict[str, tp.Any]:
             def _repeat_value(value: tp.Any) -> tp.Any:

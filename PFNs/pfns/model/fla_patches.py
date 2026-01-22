@@ -109,19 +109,30 @@ def _maybe_patch_gla_native_recurrent_vmap(enabled: bool):
         orig_batch = q.shape[0]
         assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
         flat_len = orig_batch // cache_batch
+        dtype = q.dtype
         q = q.view(cache_batch, flat_len, *q.shape[1:])
         k = k.view(cache_batch, flat_len, *k.shape[1:])
         v = v.view(cache_batch, flat_len, *v.shape[1:])
         gk = gk.view(cache_batch, flat_len, *gk.shape[1:])
+        
+        def step(q_t, k_t, v_t, gk_t):
+            o1, _ = naive_recurrent_gla(
+                q_t, 
+                k_t, 
+                v_t, 
+                gk_t, 
+                initial_state, 
+                False
+            )
+            return o1
 
-        def f(q_i, k_i, v_i, gk_i, h0_i):
-            return naive_recurrent_gla(q_i, k_i, v_i, gk_i, h0_i, output_final_state)
+        # 4. vmap over flat_len (dim 1)
+        o = torch.vmap(step, in_dims=(1, 1, 1, 1), out_dims=1)(q, k, v, gk)
 
-        o, h = torch.vmap(f, in_dims=(0,0,0,0,0), out_dims=(0,0))(q, k, v, gk, initial_state)
-        o = o.reshape(orig_batch, *o.shape[2:]) 
-        return o, h
-
-
+        o = o.reshape(orig_batch, *o.shape[2:])
+        h = initial_state if output_final_state else None
+        return o.to(dtype), h
+    
     original_fused_recurrent = gla_layer.fused_recurrent_gla
     original_chunked = gla_layer.chunk_gla
     original_fused_chunked = gla_layer.fused_chunk_gla

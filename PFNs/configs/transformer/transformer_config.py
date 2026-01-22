@@ -34,7 +34,21 @@ TRAINING_PROFILES = {
         "warmup_epochs": 10,
         "num_workers": 4,
         "aggregate_k_gradients": 1,
+        "attention_between_features": False,
         "wandb_suffix": "_low",
+    },
+    "low2": {
+        **BASE_PROFILE,
+        "emsize": 256,
+        "nhid": 256 * 4,
+        "lr": 1.5e-4,
+        "steps_per_epoch": 250,
+        "epochs": 200,
+        "warmup_epochs": 10,
+        "num_workers": 4,
+        "aggregate_k_gradients": 1,
+        "attention_between_features": True,
+        "wandb_suffix": "_low2",
     },
     "high": {
         **BASE_PROFILE,
@@ -46,6 +60,7 @@ TRAINING_PROFILES = {
         "warmup_epochs": 10,
         "num_workers": 8,
         "aggregate_k_gradients": 2,
+        "attention_between_features": False,
         "wandb_suffix": "_high",
     },
     "very_high": {
@@ -58,6 +73,7 @@ TRAINING_PROFILES = {
         "warmup_epochs": 20,
         "num_workers": 8,
         "aggregate_k_gradients": 2,
+        "attention_between_features": False,
         "wandb_suffix": "_very_high",
     },
 }
@@ -118,7 +134,7 @@ def get_config(config_index: int = 0, training_setup: str = "low") -> MainConfig
             layer_kwargs=profile["layer_kwargs"],
         ),
         features_per_group=20,
-        attention_between_features=False, # was True before
+        attention_between_features=profile["attention_between_features"], # was True before
         feature_positional_embedding="subspace",
     )
 
