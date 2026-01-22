@@ -110,10 +110,10 @@ def get_config(
             nhead=4,
             mlp_hidden_dim=512 * 2,
             dropout=0.0,
-            activation="silu",
+            activation="relu",
             layer_kwargs={
                 "feature_attention_softmax": False,
-                "feature_dim": 64,
+                #"feature_dim": 64,
             },
         ),
         features_per_group=20,

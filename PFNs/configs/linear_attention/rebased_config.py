@@ -112,7 +112,7 @@ def get_config(
             activation="silu",
             dropout=0.0,
             layer_kwargs={
-                "feature_dim": 16,
+                "feature_dim": 32,
                 "use_gamma": True,
                 "use_beta": True,
                 "normalize": True,
