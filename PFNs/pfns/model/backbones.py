@@ -289,6 +289,101 @@ class FLABackbone(Backbone):
             f"largest={max_name} ({max_elems} elems, {max_mb:.2f}MB)"
         )
 
+    @staticmethod
+    def _shallow_copy(obj: tp.Any) -> tp.Any:
+        obj_copy = obj.__class__.__new__(obj.__class__)
+        obj_copy.__dict__.update(obj.__dict__)
+        return obj_copy
+
+    @staticmethod
+    def _repeat_state(state: dict[str, tp.Any], repeat: int, *, dim: int) -> dict[str, tp.Any]:
+        def _repeat_value(value: tp.Any) -> tp.Any:
+            if torch.is_tensor(value):
+                if repeat == 1:
+                    return value
+                return value.repeat_interleave(repeat, dim=dim)
+            if isinstance(value, tuple):
+                return tuple(_repeat_value(item) for item in value)
+            return value
+
+        return {key: _repeat_value(value) for key, value in state.items()}
+
+    @staticmethod
+    def _copy_state(state: dict[str, tp.Any]) -> dict[str, tp.Any]:
+        def _copy_value(value: tp.Any) -> tp.Any:
+            if torch.is_tensor(value):
+                return value.clone()
+            if isinstance(value, tuple):
+                return tuple(_copy_value(item) for item in value)
+            return value
+
+        return {key: _copy_value(value) for key, value in state.items()}
+
+    @staticmethod
+    def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
+        if cache_params is None:
+            return None
+        if torch.is_tensor(cache_params):
+            if repeat == 1:
+                return cache_params
+            return cache_params.repeat_interleave(repeat, dim=0)
+        if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):  # Mamba2 style
+            cache_params_copy = FLABackbone._shallow_copy(cache_params)
+            if repeat == 1:
+                cache_params_copy.conv_states = cache_params.conv_states
+                cache_params_copy.ssm_states = cache_params.ssm_states
+            else:
+                cache_params_copy.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
+                cache_params_copy.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
+            return cache_params_copy
+        if hasattr(cache_params, "layers"):  # GLA, KDA, (Gated) Deltanet style
+            cache_params_copy = FLABackbone._shallow_copy(cache_params)
+            new_layers = []
+            for layer in cache_params.layers:
+                layer_copy = FLABackbone._shallow_copy(layer)
+                state = getattr(layer, "state", None)
+                if isinstance(state, dict):
+                    layer_copy.state = FLABackbone._repeat_state(state, repeat, dim=0)
+                else:
+                    raise ValueError("Unsupported layer state structure for repetition.")
+                new_layers.append(layer_copy)
+            cache_params_copy.layers = new_layers
+            return cache_params_copy
+        raise ValueError("Unsupported cache_params structure for repetition.")
+
+    @staticmethod
+    def _copy_cache(cache_params: tp.Any) -> tp.Any:
+        if cache_params is None:
+            return None
+        if torch.is_tensor(cache_params):
+            return cache_params.clone()
+        if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):  # Mamba2 style
+            cache_params_copy = FLABackbone._shallow_copy(cache_params)
+            cache_params_copy.conv_states = cache_params.conv_states.clone()
+            cache_params_copy.ssm_states = cache_params.ssm_states.clone()
+            return cache_params_copy
+        if hasattr(cache_params, "layers"):  # GLA, KDA, (Gated) Deltanet style
+            cache_params_copy = FLABackbone._shallow_copy(cache_params)
+            new_layers = []
+            for layer in cache_params.layers:
+                layer_copy = FLABackbone._shallow_copy(layer)
+                state = getattr(layer, "state", None)
+                if isinstance(state, dict):
+                    layer_copy.state = FLABackbone._copy_state(state)
+                else:
+                    raise ValueError("Unsupported layer state structure for copy.")
+                new_layers.append(layer_copy)
+            cache_params_copy.layers = new_layers
+            return cache_params_copy
+        if hasattr(cache_params, "states"):
+            cache_params_copy = FLABackbone._shallow_copy(cache_params)
+            cache_params_copy.states = [
+                FLABackbone._copy_state(state) if isinstance(state, dict) else state
+                for state in cache_params.states
+            ]
+            return cache_params_copy
+        return FLABackbone._shallow_copy(cache_params)
+
     def incontext_fit(
         self,
         train_x: torch.Tensor,
@@ -383,71 +478,12 @@ class FLABackbone(Backbone):
         assert cache_params is not None, "Cache parameters must be provided for test-time evaluation."
 
         batch_size, seq_len, embed_dim = test_x.shape
-
-        def _shallow_copy(obj: tp.Any) -> tp.Any:
-            obj_copy = obj.__class__.__new__(obj.__class__)
-            obj_copy.__dict__.update(obj.__dict__)
-            return obj_copy
-
-        def _expand_repeat(value: torch.Tensor, repeat: int, *, dim: int) -> torch.Tensor:
-            if repeat == 1:
-                return value
-            dim = dim if dim >= 0 else dim + value.dim()
-            if dim < 0 or dim >= value.dim():
-                raise ValueError(f"Invalid repeat dim {dim} for tensor with {value.dim()} dims.")
-            shape = list(value.shape)
-            expanded = value.unsqueeze(dim + 1).expand(*shape[: dim + 1], repeat, *shape[dim + 1 :])
-            shape[dim] *= repeat
-            return expanded.reshape(*shape)
-
-        def _repeat_state(state: dict[str, tp.Any], repeat: int, *, dim: int) -> dict[str, tp.Any]:
-            def _repeat_value(value: tp.Any) -> tp.Any:
-                if torch.is_tensor(value):
-                    return value.repeat_interleave(repeat, dim=dim)
-                if isinstance(value, tuple):
-                    return tuple(_repeat_value(item) for item in value)
-                return value
-
-            return {key: _repeat_value(value) for key, value in state.items()}
-
-        def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
-            if torch.is_tensor(cache_params):
-                return cache_params.repeat_interleave(repeat, dim=0)
-            if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"): # Mamba2 style
-                cache_params_copy = _shallow_copy(cache_params)
-                cache_params_copy.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
-                cache_params_copy.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
-                return cache_params_copy
-            if hasattr(cache_params, "layers"):  # GLA, KDA, (Gated) Deltanet style
-                cache_params_copy = _shallow_copy(cache_params)
-                new_layers = []
-                for layer in cache_params.layers:
-                    layer_copy = _shallow_copy(layer)
-                    state = getattr(layer, "state", None)
-                    if isinstance(state, dict):
-                        layer_copy.state = _repeat_state(state, repeat, dim=0)
-                    else:
-                        raise ValueError("Unsupported layer state structure for repetition.")
-                    new_layers.append(layer_copy)
-                cache_params_copy.layers = new_layers
-                return cache_params_copy
-            raise ValueError("Unsupported cache_params structure for repetition.")
         
         def _run_parallel_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
             chunk_len = chunk_x.size(1)
             
-            # if use_custom_recurrent and isinstance(self.fla, GLAModel):
-            #     output, _ = self._run_fla(
-            #         chunk_x,
-            #         cache_params=cache_params,
-            #         cache_position_start=cache_position_start,
-            #         return_cache=False,
-            #         use_custom_recurrent=use_custom_recurrent,
-            #     )
-            #     return output
-            
             if not isinstance(self.fla, GLAModel) or not use_custom_recurrent: # GLA uses our custom repetition
-                expanded_cache = _repeat_cache(cache_params, chunk_len)
+                expanded_cache = self._repeat_cache(cache_params, chunk_len)
             else:
                 expanded_cache = cache_params
             chunk_flat = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
@@ -484,46 +520,13 @@ class FLABackbone(Backbone):
         if test_x.numel() == 0:
             return test_x
 
-        def _shallow_copy(obj: tp.Any) -> tp.Any:
-            obj_copy = obj.__class__.__new__(obj.__class__)
-            obj_copy.__dict__.update(obj.__dict__)
-            return obj_copy
-
-        def _copy_state(state: dict[str, tp.Any]) -> dict[str, tp.Any]:
-            return dict(state)
-
-        def _copy_cache(cache_params: tp.Any) -> tp.Any:
-            if cache_params is None:
-                return None
-            if hasattr(cache_params, "layers"):
-                cache_params_copy = _shallow_copy(cache_params)
-                new_layers = []
-                for layer in cache_params.layers:
-                    layer_copy = _shallow_copy(layer)
-                    state = getattr(layer, "state", None)
-                    if isinstance(state, dict):
-                        layer_copy.state = _copy_state(state)
-                    else:
-                        raise ValueError("Unsupported layer state structure for copy.")
-                    new_layers.append(layer_copy)
-                cache_params_copy.layers = new_layers
-                return cache_params_copy
-            if hasattr(cache_params, "states"):
-                cache_params_copy = _shallow_copy(cache_params)
-                cache_params_copy.states = [
-                    _copy_state(state) if isinstance(state, dict) else state
-                    for state in cache_params.states
-                ]
-                return cache_params_copy
-            return cache_params
-
         output_tokens = []
         seq_len = test_x.size(1)
         for t in range(seq_len):
             current_input = test_x[:, t : t + 1, :]  # shape (batch, 1, dim)
             output, _ = self._run_fla(
                 current_input,
-                cache_params=_copy_cache(cache_params),
+                cache_params=self._copy_cache(cache_params),
                 cache_position_start=cache_position_start,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
