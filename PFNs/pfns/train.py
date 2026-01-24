@@ -495,7 +495,7 @@ def train_or_evaluate_epoch(
     importance_sampling_infos = []
     grad_norm_ema = 0.0 if last_epoch_result is None else last_epoch_result.grad_norm_ema_mean
     spike_save_count = 0 # only used if debug_spike_enabled
-    autocast_dtype = _resolve_autocast_dtype(device, c.train_mixed_precision_dtype)
+    autocast_dtype = _resolve_autocast_dtype(device, c.train_mixed_precision_dtype) if c.train_mixed_precision else torch.float32
     
     before_get_batch = time.time()
     assert (
@@ -553,7 +553,7 @@ def train_or_evaluate_epoch(
             try:
                 with autocast(
                     device.split(":")[0],
-                    enabled=scaler is not None,
+                    enabled=c.train_mixed_precision,
                     dtype=autocast_dtype,
                 ):
                     categorical_inds = None
