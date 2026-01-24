@@ -7,6 +7,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, roc_auc_score, log_loss
 
 from pfns.datasets.tabular_datasets import load_openml_list
+from pfns.evaluation.metrics import expected_calibration_error
 
 
 def evaluate_model(
@@ -45,12 +46,26 @@ def evaluate_model(
         
         acc = accuracy_score(y[test_idx], y_pred)
         n_classes = len(np.unique(y[test_idx]))
+        
+        y_proba = y_proba.astype(np.float32) # Renorm to float32 as with fp16 auc calculation is unstable (probs. deviate from 1.0)
+        y_proba /= y_proba.sum(axis=1, keepdims=True)
+        
         auc = roc_auc_score(y[test_idx], y_proba[:, 1]) if n_classes == 2 else \
               roc_auc_score(y[test_idx], y_proba, multi_class="ovr", average="weighted")
         ll = log_loss(y[test_idx], y_proba)
+        ece = expected_calibration_error(y[test_idx], y_proba)
         
-        results.append({"split": len(results), "accuracy": acc, "roc_auc": auc, "log_loss": ll, 
-                        "fit_time": fit_time, "predict_time": predict_time})
+        results.append(
+            {
+                "split": len(results),
+                "accuracy": acc,
+                "roc_auc": auc,
+                "log_loss": ll,
+                "ece": ece,
+                "fit_time": fit_time,
+                "predict_time": predict_time,
+            }
+        )
     return results
 
 
@@ -81,7 +96,16 @@ def compare_models(
         print(f"  Mean accuracy over splits: {mean_acc:.4f}")
 
     df = pd.DataFrame(results)
-    desired_cols = ["model", "split", "accuracy", "roc_auc", "log_loss", "fit_time", "predict_time"]
+    desired_cols = [
+        "model",
+        "split",
+        "accuracy",
+        "roc_auc",
+        "log_loss",
+        "ece",
+        "fit_time",
+        "predict_time",
+    ]
     cols = [c for c in desired_cols if c in df.columns] + [c for c in df.columns if c not in desired_cols]
     return df[cols]
 
@@ -107,11 +131,16 @@ def evaluate_on_openml(
     
     all_results: list[dict[str, Any]] = []
     for name, X, y, categorical_feats, _, _ in datasets:
-        print(f"\n{'='*75}")
+        header = (
+            f"{'Model':<20} {'Accuracy':>10} {'ROC-AUC':>10} {'LogLoss':>10} "
+            f"{'ECE':>10} {'Fit (s)':>10} {'Pred (s)':>10}"
+        )
+        bar_len = len(header)
+        print(f"\n{'='*bar_len}")
         print(f"{name}: {X.shape[0]} samples, {X.shape[1]} features")
-        print(f"{'='*75}")
-        print(f"{'Model':<20} {'Accuracy':>10} {'ROC-AUC':>10} {'Fit (s)':>10} {'Pred (s)':>10}")
-        print(f"{'-'*20} {'-'*10} {'-'*10} {'-'*10} {'-'*10}")
+        print(f"{'='*bar_len}")
+        print(header)
+        print("-" * bar_len)
         for model, model_name in zip(models, model_names):
             try:
                 split_results = evaluate_model(
@@ -127,9 +156,15 @@ def evaluate_on_openml(
 
                 mean_acc = float(np.mean([r["accuracy"] for r in split_results])) if split_results else float("nan")
                 mean_auc = float(np.mean([r["roc_auc"] for r in split_results])) if split_results else float("nan")
+                mean_ll = float(np.mean([r["log_loss"] for r in split_results])) if split_results else float("nan")
+                mean_ece = float(np.mean([r["ece"] for r in split_results])) if split_results else float("nan")
                 mean_fit = float(np.mean([r["fit_time"] for r in split_results])) if split_results else float("nan")
                 mean_pred = float(np.mean([r["predict_time"] for r in split_results])) if split_results else float("nan")
-                print(f"{model_name:<20} {mean_acc:>10.4f} {mean_auc:>10.4f} {mean_fit:>10.2f} {mean_pred:>10.2f}")
+                print(
+                    f"{model_name:<20} {mean_acc:>10.4f} {mean_auc:>10.4f} "
+                    f"{mean_ll:>10.4f} {mean_ece:>10.4f} {mean_fit:>10.2f} "
+                    f"{mean_pred:>10.2f}"
+                )
             except Exception as e:
                 print(f"{model_name:<20} {'Error':>10} - {e}")
     
@@ -137,4 +172,3 @@ def evaluate_on_openml(
         return pd.DataFrame()
 
     return pd.DataFrame(all_results)
-

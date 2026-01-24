@@ -77,9 +77,9 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
         print("Evaluation produced no results.")
         return
 
-    print("\n" + "=" * 95)
+    print("\n" + "=" * 111)
     print(f"SUMMARY: {title}")
-    print("=" * 95)
+    print("=" * 111)
 
     summary = summarize_results(results)
 
@@ -88,22 +88,40 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
         row = summary.loc[model]
         acc_str = f"{row['accuracy_mean']:.4f} ± {row['accuracy_std']:.4f}"
         auc_str = f"{row['roc_auc_mean']:.4f} ± {row['roc_auc_std']:.4f}"
+        ll_str = f"{row['log_loss_mean']:.4f} ± {row['log_loss_std']:.4f}"
+        ece_str = f"{row['ece_mean']:.4f} ± {row['ece_std']:.4f}"
         fit_str = f"{row['fit_time_mean']:.2f}"
         pred_str = f"{row['predict_time_mean']:.2f}"
-        print(f"{model} & {acc_str} & {auc_str} & {fit_str} & {pred_str} \\\\")
+        print(
+            f"{model} & {acc_str} & {auc_str} & {ll_str} & {ece_str} "
+            f"& {fit_str} & {pred_str} \\\\"
+        )
 
     print("\nFormatted Table:")
-    print(f"{'Model':<20} {'Accuracy':>18} {'ROC-AUC':>18} {'Fit (s)':>14} {'Pred (s)':>14}")
-    print(f"{'':20} {'mean ± std':>18} {'mean ± std':>18} {'mean':>14} {'mean':>14}")
-    print("-" * 95)
+    header = (
+        f"{'Model':<20} {'Accuracy':>18} {'ROC-AUC':>18} {'LogLoss':>18} "
+        f"{'ECE':>18} {'Fit (s)':>14} {'Pred (s)':>14}"
+    )
+    subheader = (
+        f"{'':20} {'mean ± std':>18} {'mean ± std':>18} {'mean ± std':>18} "
+        f"{'mean ± std':>18} {'mean':>14} {'mean':>14}"
+    )
+    print(header)
+    print(subheader)
+    print("-" * len(header))
     for model in summary.index:
         row = summary.loc[model]
         acc_str = f"{row['accuracy_mean']:.4f} ± {row['accuracy_std']:.4f}"
         auc_str = f"{row['roc_auc_mean']:.4f} ± {row['roc_auc_std']:.4f}"
+        ll_str = f"{row['log_loss_mean']:.4f} ± {row['log_loss_std']:.4f}"
+        ece_str = f"{row['ece_mean']:.4f} ± {row['ece_std']:.4f}"
         fit_str = f"{row['fit_time_mean']:.2f}"
         pred_str = f"{row['predict_time_mean']:.2f}"
-        print(f"{model:<20} {acc_str:>18} {auc_str:>18} {fit_str:>14} {pred_str:>14}")
-    print("=" * 95)
+        print(
+            f"{model:<20} {acc_str:>18} {auc_str:>18} {ll_str:>18} {ece_str:>18} "
+            f"{fit_str:>14} {pred_str:>14}"
+        )
+    print("=" * len(header))
 
 
 def compute_per_dataset_stats(results):
@@ -114,6 +132,8 @@ def compute_per_dataset_stats(results):
         {
             "accuracy": ["mean", "std"],
             "roc_auc": ["mean", "std"],
+            "log_loss": ["mean", "std"],
+            "ece": ["mean", "std"],
             "fit_time": ["mean"],
             "predict_time": ["mean"],
         }
@@ -134,6 +154,10 @@ def summarize_results(results):
             "accuracy_std": "mean",
             "roc_auc_mean": "mean",
             "roc_auc_std": "mean",
+            "log_loss_mean": "mean",
+            "log_loss_std": "mean",
+            "ece_mean": "mean",
+            "ece_std": "mean",
             "fit_time_mean": "mean",
             "predict_time_mean": "mean",
         }
