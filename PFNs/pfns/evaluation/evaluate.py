@@ -48,6 +48,11 @@ def evaluate_model(
         n_classes = len(np.unique(y[test_idx]))
         
         y_proba = y_proba.astype(np.float32) # Renorm to float32 as with fp16 auc calculation is unstable (probs. deviate from 1.0)
+        if not np.isfinite(y_proba).all():
+            print(
+                f"Non-finite probabilities from {model.__class__.__name__}:"
+            )
+            print(y_proba)
         y_proba /= y_proba.sum(axis=1, keepdims=True)
         
         auc = roc_auc_score(y[test_idx], y_proba[:, 1]) if n_classes == 2 else \
