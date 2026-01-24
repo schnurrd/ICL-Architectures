@@ -252,4 +252,6 @@ def get_config(
         wandb=wandb_config,
         num_workers=8,
         aggregate_k_gradients=resolved_aggregate_k,
+        validation_period=10,
+        test_steps_per_epoch=200
     )

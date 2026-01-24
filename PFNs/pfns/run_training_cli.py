@@ -330,6 +330,7 @@ def main():
     print("Starting training with configuration:")
     print(f"  Epochs: {config.epochs}")
     print(f"  Steps per epoch: {config.steps_per_epoch}")
+    print(f"  Test steps per epoch: {config.test_steps_per_epoch}")
     print(f"  Device: {args.device or 'auto-detect'}")
     print(f"  Mixed precision: {config.train_mixed_precision}")
 

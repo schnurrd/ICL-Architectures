@@ -65,6 +65,8 @@ class MainConfig(base_config.BaseConfig):
     # Validation
     test_priors: tp.List[prior.PriorConfig] | None = None
     validation_period: int | None = None
+    test_steps_per_epoch: int = 200 # number of steps for test data loader per epoch
+
 
     # Logging
     verbose: bool = True
@@ -184,7 +186,7 @@ def train(
     test_data_loader = actual_dataloader_class(
         get_batch_method=test_get_batch_method_instance,  # Use the constructed/resolved instance
         batch_shape_sampler_function=c.batch_shape_sampler.sample_batch_shape,
-        num_steps=c.steps_per_epoch,
+        num_steps=c.test_steps_per_epoch,
         device=device,  # Pass the torch device object
         n_targets_per_input=c.n_targets_per_input,
         persistent_workers=False,  # can't have persistent workers, otherwise the epoch count is not updated
