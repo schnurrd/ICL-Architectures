@@ -15,17 +15,23 @@ def expected_calibration_error(
 
     confidences = np.max(y_proba, axis=1)
     predictions = np.argmax(y_proba, axis=1)
-    correct = (predictions == y_true).astype(int)
+    accuracies = (predictions == y_true).astype(float)
 
-    prob_true, prob_pred = calibration_curve(
-        correct,
-        confidences,
-        n_bins=n_bins,
-        strategy="uniform",
-    )
     bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
+    
     bin_ids = np.digitize(confidences, bin_edges[1:], right=True)
-    bin_counts = np.bincount(bin_ids, minlength=n_bins)
-    nonzero = bin_counts > 0
-    weights = bin_counts[nonzero] / float(bin_counts.sum())
-    return float(np.sum(weights * np.abs(prob_true - prob_pred)))
+    
+    ece = 0.0
+    total_samples = len(confidences)
+    
+    for i in range(n_bins):
+        mask = bin_ids == i
+        
+        if np.any(mask):
+            bin_acc = np.mean(accuracies[mask])
+            bin_conf = np.mean(confidences[mask])
+            weight = np.sum(mask) / total_samples
+            
+            ece += weight * np.abs(bin_acc - bin_conf)
+            
+    return ece
