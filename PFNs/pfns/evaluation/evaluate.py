@@ -132,7 +132,7 @@ def evaluate_on_openml(
     all_results: list[dict[str, Any]] = []
     for name, X, y, categorical_feats, _, _ in datasets:
         header = (
-            f"{'Model':<20} {'Accuracy':>10} {'ROC-AUC':>10} {'LogLoss':>10} "
+            f"{'Model':<18} {'Accuracy':>10} {'ROC-AUC':>10} {'LogLoss':>10} "
             f"{'ECE':>10} {'Fit (s)':>10} {'Pred (s)':>10}"
         )
         bar_len = len(header)
@@ -161,7 +161,7 @@ def evaluate_on_openml(
                 mean_fit = float(np.mean([r["fit_time"] for r in split_results])) if split_results else float("nan")
                 mean_pred = float(np.mean([r["predict_time"] for r in split_results])) if split_results else float("nan")
                 print(
-                    f"{model_name:<20} {mean_acc:>10.4f} {mean_auc:>10.4f} "
+                    f"{model_name:<18} {mean_acc:>10.4f} {mean_auc:>10.4f} "
                     f"{mean_ll:>10.4f} {mean_ece:>10.4f} {mean_fit:>10.2f} "
                     f"{mean_pred:>10.2f}"
                 )
