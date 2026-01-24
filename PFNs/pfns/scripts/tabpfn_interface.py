@@ -704,7 +704,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         )
 
         prediction_ = prediction.squeeze(0)
-        return prediction_.detach().cpu().numpy() if self.no_grad else prediction_
+        return prediction_.detach().float().cpu().numpy() if self.no_grad else prediction_
 
     def predict(self, X, return_winning_probability=False, return_prediction_probs=False):
         """Predict class labels."""

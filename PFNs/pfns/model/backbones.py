@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import typing as tp
 from abc import ABC, abstractmethod
+from contextlib import ExitStack
 from dataclasses import dataclass
 
 import torch
@@ -25,6 +26,7 @@ from pfns.model.fla_patches import (
     _maybe_patch_gla_native_recurrent,
     _maybe_patch_gla_native_recurrent_causal,
     _maybe_patch_gla_native_recurrent_vmap,
+    _maybe_patch_deltanet_native_recurrent,
 )
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.linear_attention import LinearAttention
@@ -437,7 +439,9 @@ class FLABackbone(Backbone):
             else:
                 raise ValueError("Unsupported FLA model type for cache_params.")
         try:
-            with _maybe_patch_gla_native_recurrent(use_custom_recurrent):
+            with ExitStack() as stack:
+                for ctx in self._patch_contexts(use_custom_recurrent):
+                    stack.enter_context(ctx)
                 out = self.fla(**kwargs)
         except TypeError as exc:
             raise TypeError(
@@ -462,6 +466,22 @@ class FLABackbone(Backbone):
                 self._cache_debugged = True
         return last_hidden_state, cache_params
 
+    def _patch_contexts(
+        self, use_custom_recurrent: bool
+    ) -> tp.Iterable[tp.ContextManager[tp.Any]]:
+        if not use_custom_recurrent:
+            return ()
+        model = self.fla
+        patch_registry: tuple[tuple[type[nn.Module] | tuple[type[nn.Module], ...], tp.Callable[[bool], tp.ContextManager[tp.Any]]], ...] = (
+            ((GLAModel,), _maybe_patch_gla_native_recurrent),
+            ((DeltaNetModel, GatedDeltaNetModel), _maybe_patch_deltanet_native_recurrent),
+        )
+        contexts: list[tp.ContextManager[tp.Any]] = []
+        for model_types, ctx_factory in patch_registry:
+            if isinstance(model, model_types):
+                contexts.append(ctx_factory(True))
+        return contexts
+
     def _run_test_with_cache(
         self,
         test_x: torch.Tensor,
@@ -482,7 +502,9 @@ class FLABackbone(Backbone):
         def _run_parallel_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
             chunk_len = chunk_x.size(1)
             
-            if not isinstance(self.fla, GLAModel) or not use_custom_recurrent: # GLA uses our custom repetition
+            if not use_custom_recurrent or not isinstance(
+                self.fla, (GLAModel, DeltaNetModel, GatedDeltaNetModel)
+            ):
                 expanded_cache = self._repeat_cache(cache_params, chunk_len)
             else:
                 expanded_cache = cache_params
@@ -522,6 +544,7 @@ class FLABackbone(Backbone):
 
         output_tokens = []
         seq_len = test_x.size(1)
+    
         for t in range(seq_len):
             current_input = test_x[:, t : t + 1, :]  # shape (batch, 1, dim)
             output, _ = self._run_fla(

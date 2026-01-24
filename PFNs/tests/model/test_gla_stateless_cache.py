@@ -6,10 +6,12 @@ pytest.importorskip("fla")
 from pfns.model.backbones import FLABackboneConfig
 
 
-def _build_backbone() -> torch.nn.Module:
-    config = FLABackboneConfig(
-        model_type="gla",
-        config_kwargs={
+MODEL_TYPES = ("gla", "deltanet")
+
+
+def _model_config_kwargs(model_type: str) -> dict[str, object]:
+    if model_type == "gla":
+        return {
             "hidden_size": 8,
             "num_hidden_layers": 2,
             "num_heads": 2,
@@ -17,7 +19,25 @@ def _build_backbone() -> torch.nn.Module:
             "hidden_act": "swish",
             "norm_eps": 1e-5,
             "use_cache": True,
-        },
+        }
+    if model_type == "deltanet":
+        return {
+            "hidden_size": 8,
+            "num_hidden_layers": 2,
+            "num_heads": 2,
+            "intermediate_size": 32,
+            "hidden_act": "swish",
+            "norm_eps": 1e-5,
+            "use_cache": True,
+            "use_short_conv": False,
+        }
+    raise ValueError(f"Unsupported model_type: {model_type}")
+
+
+def _build_backbone(model_type: str) -> torch.nn.Module:
+    config = FLABackboneConfig(
+        model_type=model_type,
+        config_kwargs=_model_config_kwargs(model_type),
     )
     backbone = config.create_backbone(ninp=8, attention_between_features=False)
     backbone.eval()
@@ -68,13 +88,14 @@ def _repeat_cache(cache_params: object, repeat: int) -> object:
     raise ValueError("Unsupported cache_params structure for repetition.")
 
 
-def test_gla_stateless_matches_repeated_cache_outputs_and_grads():
+@pytest.mark.parametrize("model_type", MODEL_TYPES)
+def test_gla_stateless_matches_repeated_cache_outputs_and_grads(model_type: str):
     if not torch.cuda.is_available():
-        pytest.skip("FLA GLA backend requires CUDA/Triton for this test.")
+        pytest.skip("FLA backend requires CUDA/Triton for this test.")
 
     torch.manual_seed(0)
-    backbone_stateless = _build_backbone()
-    backbone_reference = _build_backbone()
+    backbone_stateless = _build_backbone(model_type)
+    backbone_reference = _build_backbone(model_type)
     backbone_reference.load_state_dict(backbone_stateless.state_dict())
     device = torch.device("cuda")
     backbone_stateless = backbone_stateless.to(device)
@@ -115,6 +136,11 @@ def test_gla_stateless_matches_repeated_cache_outputs_and_grads():
     out_ref = out_ref.view(batch_size, test_len, embed_dim)
     out_ref.sum().backward()
 
-    torch.testing.assert_close(out_stateless, out_ref, rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(train_x_stateless.grad, train_x_ref.grad, rtol=1e-6, atol=1e-6)
-    torch.testing.assert_close(test_x_stateless.grad, test_x_ref.grad, rtol=1e-6, atol=1e-6)
+    if model_type == "deltanet":
+        rtol, atol = 1e-3, 1e-3
+    else:
+        rtol, atol = 1e-6, 1e-6
+
+    torch.testing.assert_close(out_stateless, out_ref, rtol=rtol, atol=atol)
+    torch.testing.assert_close(train_x_stateless.grad, train_x_ref.grad, rtol=rtol, atol=atol)
+    torch.testing.assert_close(test_x_stateless.grad, test_x_ref.grad, rtol=rtol, atol=atol)

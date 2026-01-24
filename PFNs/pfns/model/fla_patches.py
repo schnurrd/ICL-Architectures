@@ -5,6 +5,7 @@ import typing as tp
 from contextlib import contextmanager
 
 import torch
+import torch.nn.functional as F
 
 @contextmanager
 def _maybe_patch_gla_native_recurrent(enabled: bool):
@@ -206,3 +207,85 @@ def _maybe_patch_gla_native_recurrent_causal(enabled: bool):
         gla_layer.fused_recurrent_gla = original_fused_recurrent
         gla_layer.chunk_gla = original_chunked
         gla_layer.fused_chunk_gla = original_fused_chunked
+
+
+@contextmanager
+def _maybe_patch_deltanet_native_recurrent(enabled: bool):
+    if not enabled:
+        yield
+        return
+    import fla.layers.delta_net as deltanet_layer
+
+    @torch.compiler.disable
+    def _native_recurrent_deltanet(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        beta: torch.Tensor | None = None,
+        scale: float | None = None,
+        initial_state: torch.Tensor | None = None,
+        output_final_state: bool = False,
+        cu_seqlens: torch.LongTensor | None = None,
+        use_qk_l2norm_in_kernel: bool = False,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        assert not kwargs, f"Unsupported extra args: {sorted(kwargs)}"
+        assert cu_seqlens is None, "native_recurrent_deltanet does not support cu_seqlens."
+        assert beta is not None, "beta is required for native_recurrent_deltanet."
+        assert initial_state is not None, "stateless mode requires an initial_state."
+        
+        scale = k.shape[-1] ** -0.5 if scale is None else scale
+
+        dtype = q.dtype
+        q, k, v, beta = (t.float() for t in (q, k, v, beta))
+        s0 = initial_state.float()
+        
+        orig_batch = q.shape[0]
+        cache_batch = s0.shape[0]
+        
+        if orig_batch != cache_batch:
+            assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
+            flat_len = orig_batch // cache_batch
+            q = q.reshape(cache_batch, flat_len, *q.shape[2:])
+            k = k.reshape(cache_batch, flat_len, *k.shape[2:])
+            v = v.reshape(cache_batch, flat_len, *v.shape[2:])
+            beta = beta.reshape(cache_batch, flat_len, *beta.shape[2:])
+
+        if use_qk_l2norm_in_kernel:
+            q = F.normalize(q, dim=-1)
+            k = F.normalize(k, dim=-1)
+        
+        q = q * scale
+        
+        while beta.ndim < v.ndim:
+            beta = beta.unsqueeze(-1)
+
+        s0k = (s0.unsqueeze(1) * k.unsqueeze(-1)).sum(-2)
+        
+        v_tilde = (v - s0k) * beta
+        
+        term1 = torch.einsum("bthd,bhdm->bthm", q, s0)
+        
+        qk = (q * k).sum(-1, keepdim=True)
+        term2 = qk * v_tilde
+        
+        o = term1 + term2
+
+        if orig_batch != cache_batch:
+            o = o.reshape(orig_batch, 1, *o.shape[2:])
+            
+        final_state = initial_state if output_final_state else None
+        
+        return o.to(dtype), final_state
+
+    original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
+    original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
+    
+    deltanet_layer.fused_recurrent_delta_rule = _native_recurrent_deltanet
+    deltanet_layer.chunk_delta_rule = _native_recurrent_deltanet
+
+    try:
+        yield
+    finally:
+        deltanet_layer.fused_recurrent_delta_rule = original_fused_recurrent_delta_rule
+        deltanet_layer.chunk_delta_rule = original_chunk_delta_rule

@@ -81,6 +81,7 @@ MODEL_SETTINGS = {
             "hidden_act": "swish",
             "norm_eps": 1e-5,
             "use_cache": True,
+            "use_short_conv": False,
         },
     },
     "gated_deltanet": {
@@ -94,6 +95,7 @@ MODEL_SETTINGS = {
             "hidden_act": "swish",
             "norm_eps": 1e-5,
             "use_cache": True,
+            "use_short_conv": False,
         },
     },
 }
@@ -253,5 +255,5 @@ def get_config(
         num_workers=8,
         aggregate_k_gradients=resolved_aggregate_k,
         validation_period=10,
-        test_steps_per_epoch=200
+        test_steps_per_epoch=500
     )
