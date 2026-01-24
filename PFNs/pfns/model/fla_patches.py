@@ -13,6 +13,7 @@ def _maybe_patch_gla_native_recurrent(enabled: bool):
         return
     import fla.layers.gla as gla_layer
 
+    @torch.compiler.disable
     def _native_recurrent_gla(
         q: torch.Tensor,
         k: torch.Tensor,

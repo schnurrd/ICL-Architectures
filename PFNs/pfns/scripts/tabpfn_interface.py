@@ -30,7 +30,7 @@ from pfns.utils import (
     strip_compiled_state_dict_prefix,
 )
 from pfns.base_config import BaseConfig
-from pfns.train import MainConfig
+from pfns.train import MainConfig, _resolve_autocast_dtype
 
 # =============================================================================
 # Ensemble Configuration
@@ -67,7 +67,7 @@ class InferenceEngine:
         batch_size_inference: int = 32,
         average_logits: bool = True,
         extend_features: bool = True,
-        fp16_inference: bool = False,
+        autocast_dtype: torch.dtype | None = None,
         no_grad: bool = True,
         categorical_feats: tuple[int, ...] = (),
         seed: Optional[int] = None,
@@ -80,7 +80,7 @@ class InferenceEngine:
         self.batch_size_inference = batch_size_inference
         self.average_logits = average_logits
         self.extend_features = extend_features
-        self.fp16_inference = fp16_inference
+        self.autocast_dtype = autocast_dtype
         self.no_grad = no_grad
         self.categorical_feats = categorical_feats
         self.seed = seed
@@ -301,6 +301,8 @@ class InferenceEngine:
         from torch.utils.checkpoint import checkpoint
 
         inference_mode_ctx = torch.inference_mode() if self.no_grad else NOP()
+        autocast_dtype = self.autocast_dtype
+        autocast_enabled = autocast_dtype is not None
 
         with inference_mode_ctx:
             with warnings.catch_warnings():
@@ -328,7 +330,11 @@ class InferenceEngine:
                             use_reentrant=False,
                         )
                     else:
-                        with torch.amp.autocast("cuda", enabled=self.fp16_inference):
+                        with torch.amp.autocast(
+                            "cuda",
+                            enabled=autocast_enabled,
+                            dtype=autocast_dtype,
+                        ):
                             out = checkpoint(
                                 self._forward_fn,
                                 split_input,
@@ -666,6 +672,14 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             for cs, fs, sp, transform in combinations
         ]
 
+        autocast_dtype = (
+            _resolve_autocast_dtype(
+                self.device,
+                self.config.train_mixed_precision_dtype,
+            )
+            if self.config.train_mixed_precision
+            else None
+        )
         engine = InferenceEngine(
             model=self.model,
             ensemble_configs=ensemble_configs,
@@ -675,7 +689,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             batch_size_inference=self.batch_size_inference,
             average_logits=True,
             extend_features=True,
-            fp16_inference=False,
+            autocast_dtype=autocast_dtype,
             no_grad=self.no_grad,
             categorical_feats=self.categorical_feats,
             seed=self.seed,

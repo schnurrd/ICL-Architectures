@@ -443,9 +443,9 @@ def train(
 
 
 def _resolve_autocast_dtype(device: str, dtype_spec: str | None) -> torch.dtype:
-    dtype_spec = (dtype_spec or "fp16").lower()
+    dtype_spec = (dtype_spec or "bf16" if torch.cuda.is_bf16_supported() else "fp16").lower()
     if dtype_spec == "auto":
-        return torch.float16 if device.startswith("cuda") else torch.bfloat16
+        return torch.bfloat16
     if dtype_spec in ("fp16", "float16"):
         return torch.float16
     if dtype_spec in ("bf16", "bfloat16"):
