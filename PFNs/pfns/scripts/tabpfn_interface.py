@@ -382,7 +382,7 @@ class InferenceEngine:
         ensemble_outputs = []
         for output_i, config in zip(outputs, self.ensemble_configs):
             # Reverse class shift
-            if torch.is_nan(output_i).any():
+            if torch.isnan(output_i).any():
                 print("Warning: NaNs detected in ensemble output.")
             if torch.isinf(output_i).any():
                 print("Warning: Infs detected in ensemble output.")
