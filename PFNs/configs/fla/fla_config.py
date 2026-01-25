@@ -44,7 +44,10 @@ MODEL_SETTINGS = {
             "hidden_act": "swish",
             "norm_eps": 1e-5,
             "use_cache": True,
+            "use_short_conv": False,
+            "cache_chunk_size": 16,
         },
+        
     },
     "gla": {
         "emsize": 320,
