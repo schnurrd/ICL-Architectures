@@ -133,6 +133,9 @@ def get_config(
 ) -> MainConfig:
     max_num_classes = 10
     max_num_features = 20
+    
+    if feature_positional_embedding == "None":
+        feature_positional_embedding = None
 
     model_type = _normalize_model_type(model_type)
     sequence_mode = _normalize_sequence_mode(sequence_mode)
