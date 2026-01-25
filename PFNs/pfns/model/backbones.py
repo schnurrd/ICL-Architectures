@@ -24,9 +24,8 @@ from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 from pfns import base_config
 from pfns.model.fla_patches import (
     _maybe_patch_gla_with_stateless_recurrent,
-    _maybe_patch_gla_with_stateless_recurrent_causal,
-    _maybe_patch_gla_with_stateless_recurrent_vmap,
     _maybe_patch_deltanet_with_stateless_recurrent,
+    _maybe_patch_gated_deltanet_with_stateless_recurrent,
 )
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.linear_attention import LinearAttention
@@ -475,6 +474,7 @@ class FLABackbone(Backbone):
         patch_registry: tuple[tuple[type[nn.Module] | tuple[type[nn.Module], ...], tp.Callable[[bool], tp.ContextManager[tp.Any]]], ...] = (
             ((GLAModel,), _maybe_patch_gla_with_stateless_recurrent),
             ((DeltaNetModel), _maybe_patch_deltanet_with_stateless_recurrent),
+            ((GatedDeltaNetModel), _maybe_patch_gated_deltanet_with_stateless_recurrent),
         )
         contexts: list[tp.ContextManager[tp.Any]] = []
         for model_types, ctx_factory in patch_registry:

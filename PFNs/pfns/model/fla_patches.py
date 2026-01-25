@@ -288,3 +288,106 @@ def _maybe_patch_deltanet_with_stateless_recurrent(enabled: bool):
     finally:
         deltanet_layer.fused_recurrent_delta_rule = original_fused_recurrent_delta_rule
         deltanet_layer.chunk_delta_rule = original_chunk_delta_rule
+
+@contextmanager
+def _maybe_patch_gated_deltanet_with_stateless_recurrent(enabled: bool):
+    if not enabled:
+        yield
+        return
+    import fla.layers.gated_deltanet as gated_deltanet_layer
+
+    @torch.compiler.disable
+    def _stateless_gated_deltanet_kernel(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        g: torch.Tensor | None = None,
+        beta: torch.Tensor | None = None,
+        scale: float | None = None,
+        cu_seqlens: torch.LongTensor | None = None,
+        initial_state: torch.Tensor | None = None,
+        output_final_state: bool = False,
+        num_householder: int = 1,
+        use_qk_l2norm_in_kernel: bool = False,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        assert not kwargs, f"Unsupported extra args: {sorted(kwargs)}"
+        assert beta is not None, "beta is required for stateless_gated_deltanet."
+        assert initial_state is not None, "stateless mode requires an initial_state."
+        assert cu_seqlens is None, "stateless_gated_deltanet does not support cu_seqlens."
+        assert num_householder == 1, "stateless_gated_deltanet only supports num_householder=1."
+
+        scale = scale if scale is not None else k.shape[-1] ** -0.5
+        dtype = q.dtype
+        
+        q, k, v, beta = (t.float() for t in (q, k, v, beta))
+        g = g.float() if g is not None else None
+        s0 = initial_state.float() 
+
+        orig_batch = q.shape[0]
+        cache_batch = s0.shape[0]
+
+        if orig_batch != cache_batch:
+            flat_len = orig_batch // cache_batch
+            q = q.reshape(cache_batch, flat_len, *q.shape[2:])
+            k = k.reshape(cache_batch, flat_len * num_householder, *k.shape[2:])
+            v = v.reshape(cache_batch, flat_len * num_householder, *v.shape[2:])
+            beta = beta.reshape(cache_batch, flat_len * num_householder, *beta.shape[2:])
+            if g is not None:
+                g = g.reshape(cache_batch, flat_len, *g.shape[2:])
+
+        if use_qk_l2norm_in_kernel:
+            q = F.normalize(q, dim=-1)
+            k = F.normalize(k, dim=-1)
+        
+        q = q * scale
+
+        bsz, seq_len, num_heads, key_dim = q.shape
+        value_dim = v.shape[-1]
+
+        k = k.view(bsz, seq_len, num_householder, num_heads, key_dim)
+        v = v.view(bsz, seq_len, num_householder, num_heads, value_dim)
+        beta = beta.view(bsz, seq_len, num_householder, num_heads)
+        
+        g_exp = None
+        if g is not None:
+            if g.shape[1] == num_heads and g.shape[2] == seq_len:
+                g = g.transpose(1, 2)
+            g_exp = g.exp().unsqueeze(-1)
+
+        q_decayed = q * g_exp if g_exp is not None else q
+        
+        o = torch.einsum("bthk,bhkv->bthv", q_decayed, s0)
+
+
+        k_decayed = k * g_exp.unsqueeze(2) if g_exp is not None else k
+        k_s0 = torch.einsum("btlhk,bhkv->btlhv", k_decayed, s0)
+
+        
+        k_0 = k[:, :, 0]
+        v_0 = v[:, :, 0]
+        beta_0 = beta[:, :, 0]
+        k_s0_0 = k_s0[:, :, 0]
+
+        u_0 = v_0 - k_s0_0
+        
+        qk_score = (q * k_0).sum(dim=-1, keepdim=True)
+        o = o + (u_0 * (beta_0.unsqueeze(-1) * qk_score))
+
+        if orig_batch != cache_batch:
+            o = o.reshape(orig_batch, 1, *o.shape[2:])
+
+        final_state = initial_state if output_final_state else None
+        
+        return o.to(dtype), final_state
+
+    original_fused = gated_deltanet_layer.fused_recurrent_gated_delta_rule
+    original_chunk = gated_deltanet_layer.chunk_gated_delta_rule
+    
+    gated_deltanet_layer.fused_recurrent_gated_delta_rule = _stateless_gated_deltanet_kernel
+    gated_deltanet_layer.chunk_gated_delta_rule = _stateless_gated_deltanet_kernel
+    try:
+        yield
+    finally:
+        gated_deltanet_layer.fused_recurrent_gated_delta_rule = original_fused
+        gated_deltanet_layer.chunk_gated_delta_rule = original_chunk
