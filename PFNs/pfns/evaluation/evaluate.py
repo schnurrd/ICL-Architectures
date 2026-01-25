@@ -52,7 +52,6 @@ def evaluate_model(
             print(
                 f"Non-finite probabilities from {model.__class__.__name__}:"
             )
-            print(y_proba)
         y_proba /= y_proba.sum(axis=1, keepdims=True)
         
         auc = roc_auc_score(y[test_idx], y_proba[:, 1]) if n_classes == 2 else \

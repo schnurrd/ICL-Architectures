@@ -379,8 +379,13 @@ class InferenceEngine:
         return_logits: bool,
     ) -> torch.Tensor:
         """Aggregate outputs from all ensemble members."""
+        def _sanitize_logits(logits: torch.Tensor) -> torch.Tensor:
+            logits = torch.nan_to_num(logits, nan=0.0, posinf=0.0, neginf=0.0)
+            return logits.clamp(min=-80.0, max=80.0)
+
         ensemble_outputs = []
         for output_i, config in zip(outputs, self.ensemble_configs):
+            output_i = _sanitize_logits(output_i)
             # Reverse class shift
             if config.class_shift > 0:
                 output_i = torch.cat(
@@ -398,8 +403,15 @@ class InferenceEngine:
 
         aggregated = torch.stack(ensemble_outputs).mean(dim=0)
 
+        if self.average_logits:
+            aggregated = _sanitize_logits(aggregated)
         if self.average_logits and not return_logits:
             aggregated = torch.nn.functional.softmax(aggregated, dim=-1)
+
+        if not return_logits:
+            aggregated = torch.nan_to_num(aggregated, nan=0.0, posinf=0.0, neginf=0.0)
+            denom = aggregated.sum(dim=-1, keepdim=True)
+            aggregated = aggregated / denom.clamp_min(1e-12)
 
         return aggregated.transpose(0, 1)
 
