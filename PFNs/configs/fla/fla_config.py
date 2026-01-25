@@ -128,6 +128,7 @@ def get_config(
     cache_chunk_size: int | None = None,
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
+    interleave_x_y_pairs: bool = False,
 ) -> MainConfig:
     max_num_classes = 10
     max_num_features = 20
@@ -210,6 +211,7 @@ def get_config(
         features_per_group=20,
         attention_between_features=False,
         feature_positional_embedding="subspace",
+        interleave_x_y_pairs=interleave_x_y_pairs,
     )
 
     optimizer = OptimizerConfig(
@@ -227,6 +229,8 @@ def get_config(
         wandb_extras.append(f"lr{resolved_lr:g}")
     if aggregate_k_gradients is not None:
         wandb_extras.append(f"agg{resolved_aggregate_k}")
+    if interleave_x_y_pairs:
+        wandb_extras.append("interleaved")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
         f"{model_type}_{sequence_mode}_{training_setup}"

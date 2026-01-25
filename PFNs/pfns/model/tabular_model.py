@@ -61,6 +61,7 @@ class TabularModel(nn.Module):
         y_style_encoder: nn.Module | None = None,
         attention_between_features: bool = True,
         batch_first: bool = True,
+        interleave_x_y_pairs: bool = False,
     ):
         """Initializes the TabularModel (formerly PerFeatureTransformer).
 
@@ -103,6 +104,9 @@ class TabularModel(nn.Module):
             batch_first: If True, then the input and output tensors are provided
                 as (batch, seq, feature). Default is True. If False,
                 (seq, batch, feature).
+            interleave_x_y_pairs: If True, then the training set part of the sequence is interleaved
+                token-wise as (x1, y1, x2, y2, ...). The test set part (after single_eval_pos)
+                is kept as (x_test1, x_test2, ...).
         """
         if decoder_dict is None:
             decoder_dict = {"standard": (None, 1)}
@@ -126,6 +130,7 @@ class TabularModel(nn.Module):
         self.cached_embeddings: torch.Tensor | None = None
         self.attention_between_features = attention_between_features
         self.batch_first = batch_first
+        self.interleave_x_y_pairs = interleave_x_y_pairs
 
         assert transformer_layers is not None, "Must provide pre-built transformer_layers for TabularModel."
         self.transformer_layers = transformer_layers
@@ -468,7 +473,10 @@ class TabularModel(nn.Module):
         # Making sure no label leakage ever happens for y["main"] (batch-first indexing)
         # current_context_len is the length of the training data part
         if "main" in y and y["main"].shape[1] > current_context_len:
-            if not (getattr(self.transformer_layers, "sequence_mode", None) == "teacher_forcing" and self.transformer_layers.training):
+            if not (
+                (getattr(self.transformer_layers, "sequence_mode", None) == "teacher_forcing"
+                and self.transformer_layers.training)
+            ):
                 y["main"][:, current_context_len:] = torch.nan
 
         # Prepare y for y_encoder (transpose to sequence-first if y_encoder expects it)
@@ -524,16 +532,18 @@ class TabularModel(nn.Module):
             ),
         )
 
-        use_teacher_forcing = (
+        use_teacher_forcing_mode = (
             getattr(self.transformer_layers, "sequence_mode", None) == "teacher_forcing"
         )
-        if use_teacher_forcing and self.attention_between_features:
+        should_interleave = use_teacher_forcing_mode or self.interleave_x_y_pairs
+
+        if should_interleave and self.attention_between_features:
             raise ValueError(
-                "Teacher forcing for FLA requires attention_between_features=False."
+                "Teacher forcing or interleaved x/y pairs requires attention_between_features=False."
             )
-        if use_teacher_forcing and (style is not None or y_style is not None):
+        if should_interleave and (style is not None or y_style is not None):
             raise ValueError(
-                "Teacher forcing for FLA does not support style/y_style embeddings yet."
+                "Teacher forcing or interleaved x/y pairs does not support style/y_style embeddings yet."
             )
 
         if self.attention_between_features:
@@ -543,8 +553,9 @@ class TabularModel(nn.Module):
             assert (
                 embedded_x.shape[2] == 1
             ), f"Only 1 feature per group supported for attention_between_features=False, got {embedded_x.shape=}."
-            if use_teacher_forcing:
-                if self.transformer_layers.training:
+            
+            if should_interleave:
+                if use_teacher_forcing_mode and self.transformer_layers.training:
                     embedded_y_tokens = embedded_y.unsqueeze(2)
                     embedded_input = torch.stack(
                         (embedded_x, embedded_y_tokens), dim=2
@@ -631,8 +642,8 @@ class TabularModel(nn.Module):
 
         del embedded_input
 
-        if use_teacher_forcing:
-            if self.transformer_layers.training:
+        if should_interleave:
+            if use_teacher_forcing_mode and self.transformer_layers.training:
                 encoder_out = encoder_out[:, ::2]  # remove interleaved y tokens
             else:
                 encoder_out = torch.cat(

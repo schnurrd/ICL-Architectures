@@ -27,6 +27,7 @@ class ModelConfig(base_config.BaseConfig):
     emsize: int = 200
     features_per_group: int = 1 # number of features grouped together as one token
     attention_between_features: bool = True
+    interleave_x_y_pairs: bool = False
     feature_positional_embedding: (
         tp.Literal[
             "normal_rand_vec",
@@ -112,6 +113,7 @@ class ModelConfig(base_config.BaseConfig):
             batch_first=True,  # model is batch_first by default now
             feature_positional_embedding=self.feature_positional_embedding,
             seed=self.seed,  # Seed is important for reproducibility of feature positional embeddings
+            interleave_x_y_pairs=self.interleave_x_y_pairs,
             **(self.model_extra_args or {}),
         )
         model.criterion = criterion
