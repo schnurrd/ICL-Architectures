@@ -8,14 +8,14 @@ import torch
 import torch.nn.functional as F
 
 @contextmanager
-def _maybe_patch_gla_native_recurrent(enabled: bool):
+def _maybe_patch_gla_with_stateless_recurrent(enabled: bool):
     if not enabled:
         yield
         return
     import fla.layers.gla as gla_layer
 
     @torch.compiler.disable
-    def _native_recurrent_gla(
+    def _stateless_gla_kernel(
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
@@ -67,9 +67,9 @@ def _maybe_patch_gla_native_recurrent(enabled: bool):
     original_fused_recurrent = gla_layer.fused_recurrent_gla
     original_chunked = gla_layer.chunk_gla
     original_fused_chunked = gla_layer.fused_chunk_gla
-    gla_layer.fused_recurrent_gla = _native_recurrent_gla
-    gla_layer.fused_chunk_gla = _native_recurrent_gla
-    gla_layer.chunk_gla = _native_recurrent_gla
+    gla_layer.fused_recurrent_gla = _stateless_gla_kernel
+    gla_layer.fused_chunk_gla = _stateless_gla_kernel
+    gla_layer.chunk_gla = _stateless_gla_kernel
     try:
         yield
     finally:
@@ -79,14 +79,14 @@ def _maybe_patch_gla_native_recurrent(enabled: bool):
 
 
 @contextmanager
-def _maybe_patch_gla_native_recurrent_vmap(enabled: bool):
+def _maybe_patch_gla_with_stateless_recurrent_vmap(enabled: bool):
     if not enabled:
         yield
         return
     import fla.layers.gla as gla_layer
     from fla.ops.gla.naive import naive_recurrent_gla
     
-    def _native_recurrent_gla(
+    def _stateless_gla_kernel_with_vmap(
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
@@ -138,9 +138,9 @@ def _maybe_patch_gla_native_recurrent_vmap(enabled: bool):
     original_fused_recurrent = gla_layer.fused_recurrent_gla
     original_chunked = gla_layer.chunk_gla
     original_fused_chunked = gla_layer.fused_chunk_gla
-    gla_layer.fused_recurrent_gla = _native_recurrent_gla
-    gla_layer.fused_chunk_gla = _native_recurrent_gla
-    gla_layer.chunk_gla = _native_recurrent_gla
+    gla_layer.fused_recurrent_gla = _stateless_gla_kernel_with_vmap
+    gla_layer.fused_chunk_gla = _stateless_gla_kernel_with_vmap
+    gla_layer.chunk_gla = _stateless_gla_kernel_with_vmap
     try:
         yield
     finally:
@@ -150,13 +150,13 @@ def _maybe_patch_gla_native_recurrent_vmap(enabled: bool):
 
 
 @contextmanager
-def _maybe_patch_gla_native_recurrent_causal(enabled: bool):
+def _maybe_patch_gla_with_stateless_recurrent_causal(enabled: bool):
     if not enabled:
         yield
         return
     import fla.layers.gla as gla_layer
 
-    def _native_recurrent_gla(
+    def _stateless_gla_kernel_causal(
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
@@ -198,9 +198,9 @@ def _maybe_patch_gla_native_recurrent_causal(enabled: bool):
     original_fused_recurrent = gla_layer.fused_recurrent_gla
     original_chunked = gla_layer.chunk_gla
     original_fused_chunked = gla_layer.fused_chunk_gla
-    gla_layer.fused_recurrent_gla = _native_recurrent_gla
-    gla_layer.fused_chunk_gla = _native_recurrent_gla
-    gla_layer.chunk_gla = _native_recurrent_gla
+    gla_layer.fused_recurrent_gla = _stateless_gla_kernel_causal
+    gla_layer.fused_chunk_gla = _stateless_gla_kernel_causal
+    gla_layer.chunk_gla = _stateless_gla_kernel_causal
     try:
         yield
     finally:
@@ -210,14 +210,14 @@ def _maybe_patch_gla_native_recurrent_causal(enabled: bool):
 
 
 @contextmanager
-def _maybe_patch_deltanet_native_recurrent(enabled: bool):
+def _maybe_patch_deltanet_with_stateless_recurrent(enabled: bool):
     if not enabled:
         yield
         return
     import fla.layers.delta_net as deltanet_layer
 
     @torch.compiler.disable
-    def _native_recurrent_deltanet(
+    def _stateless_deltanet_kernel(
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
@@ -260,14 +260,13 @@ def _maybe_patch_deltanet_native_recurrent(enabled: bool):
         while beta.ndim < v.ndim:
             beta = beta.unsqueeze(-1)
 
-        s0k = (s0.unsqueeze(1) * k.unsqueeze(-1)).sum(-2)
-        
-        v_tilde = (v - s0k) * beta
-        
+        s0k = torch.einsum("bthd,bhdm->bthm", k, s0)
+
         term1 = torch.einsum("bthd,bhdm->bthm", q, s0)
-        
+
         qk = (q * k).sum(-1, keepdim=True)
-        term2 = qk * v_tilde
+        scaled_qk = qk * beta
+        term2 = scaled_qk * v - scaled_qk * s0k
         
         o = term1 + term2
 
@@ -281,8 +280,8 @@ def _maybe_patch_deltanet_native_recurrent(enabled: bool):
     original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
     original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
     
-    deltanet_layer.fused_recurrent_delta_rule = _native_recurrent_deltanet
-    deltanet_layer.chunk_delta_rule = _native_recurrent_deltanet
+    deltanet_layer.fused_recurrent_delta_rule = _stateless_deltanet_kernel
+    deltanet_layer.chunk_delta_rule = _stateless_deltanet_kernel
 
     try:
         yield

@@ -8,7 +8,7 @@ from pfns.model.backbones import FLABackboneConfig
 from fla.layers.delta_net import fused_recurrent_delta_rule
 from fla.ops.delta_rule.naive import delta_rule_recurrence
 from pfns.model.fla_patches import (
-    _maybe_patch_deltanet_native_recurrent,
+    _maybe_patch_deltanet_with_stateless_recurrent,
 )
 
 MODEL_TYPES = ("gla", "deltanet")
@@ -225,7 +225,7 @@ def test_verify_custom_stateless_implementation(model_type):
     
     scale = D ** -0.5
 
-    with _maybe_patch_deltanet_native_recurrent(enabled=True):
+    with _maybe_patch_deltanet_with_stateless_recurrent(enabled=True):
         out_patch, _ = deltanet_layer.fused_recurrent_delta_rule(
             q, k, v, beta, 
             initial_state=s0, 
