@@ -257,8 +257,8 @@ def _maybe_patch_deltanet_with_stateless_recurrent(enabled: bool):
         
         q = q * scale
         
-        while beta.ndim < v.ndim:
-            beta = beta.unsqueeze(-1)
+        if beta.ndim < v.ndim:
+            beta = beta.view(*beta.shape, *([1] * (v.ndim - beta.ndim)))
 
         s0k = torch.einsum("bthd,bhdm->bthm", k, s0)
 
