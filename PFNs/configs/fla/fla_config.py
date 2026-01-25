@@ -129,6 +129,7 @@ def get_config(
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
+    feature_positional_embedding: str | None = "subspace",
 ) -> MainConfig:
     max_num_classes = 10
     max_num_features = 20
@@ -210,7 +211,7 @@ def get_config(
         backbone=FLABackboneConfig(**backbone_kwargs),
         features_per_group=20,
         attention_between_features=False,
-        feature_positional_embedding="subspace",
+        feature_positional_embedding=feature_positional_embedding,
         interleave_x_y_pairs=interleave_x_y_pairs,
     )
 
@@ -231,6 +232,8 @@ def get_config(
         wandb_extras.append(f"agg{resolved_aggregate_k}")
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
+    if feature_positional_embedding is not None:
+        wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
         f"{model_type}_{sequence_mode}_{training_setup}"
