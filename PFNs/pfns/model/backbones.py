@@ -24,6 +24,7 @@ from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 from pfns import base_config
 from pfns.model.fla_patches import (
     _maybe_patch_gla_with_stateless_recurrent,
+    _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
     _maybe_patch_gated_deltanet_with_stateless_recurrent,
 )
@@ -473,6 +474,7 @@ class FLABackbone(Backbone):
         model = self.fla
         patch_registry: tuple[tuple[type[nn.Module] | tuple[type[nn.Module], ...], tp.Callable[[bool], tp.ContextManager[tp.Any]]], ...] = (
             ((GLAModel,), _maybe_patch_gla_with_stateless_recurrent),
+            ((KDAModel,), _maybe_patch_kda_with_stateless_recurrent),
             ((DeltaNetModel), _maybe_patch_deltanet_with_stateless_recurrent),
             ((GatedDeltaNetModel), _maybe_patch_gated_deltanet_with_stateless_recurrent),
         )
@@ -503,7 +505,7 @@ class FLABackbone(Backbone):
             chunk_len = chunk_x.size(1)
             
             if not use_custom_recurrent or not isinstance(
-                self.fla, (GLAModel, DeltaNetModel, GatedDeltaNetModel)
+                self.fla, (GLAModel, KDAModel, DeltaNetModel, GatedDeltaNetModel)
             ):
                 expanded_cache = self._repeat_cache(cache_params, chunk_len)
             else:

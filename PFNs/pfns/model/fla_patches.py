@@ -210,6 +210,123 @@ def _maybe_patch_gla_with_stateless_recurrent_causal(enabled: bool):
 
 
 @contextmanager
+def _maybe_patch_kda_with_stateless_recurrent(enabled: bool):
+    if not enabled:
+        yield
+        return
+    import fla.layers.kda as kda_layer
+    import torch.nn.functional as F
+
+    @torch.compiler.disable
+    def _stateless_kda_kernel(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        g: torch.Tensor | None = None,
+        beta: torch.Tensor | None = None,
+        scale: float | None = None,
+        initial_state: torch.Tensor | None = None,
+        output_final_state: bool = False,
+        reverse: bool = False,
+        cu_seqlens: torch.LongTensor | None = None,
+        use_qk_l2norm_in_kernel: bool = False,
+        use_gate_in_kernel: bool = False,
+        A_log: torch.Tensor | None = None,
+        dt_bias: torch.Tensor | None = None,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        assert not kwargs, f"Unsupported extra args: {sorted(kwargs)}"
+        assert g is not None, "g is required for stateless_kda."
+        assert beta is not None, "beta is required for stateless_kda."
+        assert initial_state is not None, "stateless mode requires an initial_state."
+        assert not reverse, "stateless_kda does not support reverse processing."
+        assert cu_seqlens is None, "stateless_kda does not support cu_seqlens."
+
+        scale = k.shape[-1] ** -0.5 if scale is None else scale
+        dtype = q.dtype
+        
+        q, k, v, g, beta = (t.float() for t in (q, k, v, g, beta))
+        s0 = initial_state.float() # (B_cache, H, K, V)
+
+        orig_batch = q.shape[0]
+        cache_batch = s0.shape[0]
+
+        if orig_batch != cache_batch:
+            assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
+            flat_len = orig_batch // cache_batch
+            
+            T = q.shape[1]
+            q = q.reshape(cache_batch, flat_len, T, *q.shape[2:])
+            k = k.reshape(cache_batch, flat_len, T, *k.shape[2:])
+            v = v.reshape(cache_batch, flat_len, T, *v.shape[2:])
+            g = g.reshape(cache_batch, flat_len, T, *g.shape[2:])
+            beta = beta.reshape(cache_batch, flat_len, T, *beta.shape[2:])
+
+        if use_qk_l2norm_in_kernel:
+            q = F.normalize(q, dim=-1)
+            k = F.normalize(k, dim=-1)
+
+        q = q * scale
+
+        if use_gate_in_kernel and A_log is not None:
+            if dt_bias is not None:
+                 H, K = q.shape[-2], q.shape[-1]
+                 if dt_bias.ndim == 1 and dt_bias.numel() == H * K:
+                     dt_bias = dt_bias.view(H, K)
+            
+            A = A_log.exp().view(1, 1, -1, 1) # (1, 1, H, 1)
+            bias = dt_bias.view(1, 1, *dt_bias.shape) if dt_bias is not None else 0.0
+            
+            if g.ndim == 5:
+                A = A.unsqueeze(0)
+                if isinstance(bias, torch.Tensor):
+                    bias = bias.unsqueeze(0)
+
+            g = -A * F.softplus(g + bias)
+
+        g_exp = g.exp()
+        if g_exp.ndim == q.ndim - 1:
+            g_exp = g_exp.unsqueeze(-1)
+        q_decayed = q * g_exp
+        
+        if q_decayed.ndim == 5: # (B, L, T, H, K)
+             o_base = torch.einsum("blthk,bhkv->blthv", q_decayed, s0)
+        else: # (B, T, H, K)
+             o_base = torch.einsum("bthk,bhkv->bthv", q_decayed, s0)
+
+        k_decayed = k * g_exp
+        if k_decayed.ndim == 5:
+            k_s0 = torch.einsum("blthk,bhkv->blthv", k_decayed, s0)
+        else:
+            k_s0 = torch.einsum("bthk,bhkv->bthv", k_decayed, s0)
+            
+        delta = v - k_s0
+        
+        qk_dot = (q * k).sum(dim=-1, keepdim=True) # (..., H, 1)
+        scaling = beta.unsqueeze(-1) * qk_dot      # (..., H, 1)
+        
+        o_update = delta * scaling
+
+        o = o_base + o_update
+
+        if orig_batch != cache_batch:
+            o = o.reshape(orig_batch, *o.shape[2:])
+
+        final_state = initial_state if output_final_state else None
+        
+        return o.to(dtype), final_state
+
+    original_fused_recurrent_kda = kda_layer.fused_recurrent_kda
+    original_chunk_kda = kda_layer.chunk_kda
+    kda_layer.fused_recurrent_kda = _stateless_kda_kernel
+    kda_layer.chunk_kda = _stateless_kda_kernel
+    try:
+        yield
+    finally:
+        kda_layer.fused_recurrent_kda = original_fused_recurrent_kda
+        kda_layer.chunk_kda = original_chunk_kda
+
+@contextmanager
 def _maybe_patch_deltanet_with_stateless_recurrent(enabled: bool):
     if not enabled:
         yield
