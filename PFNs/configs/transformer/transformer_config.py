@@ -78,7 +78,11 @@ TRAINING_PROFILES = {
     },
 }
 
-def get_config(config_index: int = 0, training_setup: str = "low") -> MainConfig:
+def get_config(
+    config_index: int = 0,
+    training_setup: str = "low",
+    interleave_x_y_pairs: bool = False,
+) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
     tabpfn_prior data.
@@ -136,6 +140,7 @@ def get_config(config_index: int = 0, training_setup: str = "low") -> MainConfig
         features_per_group=20,
         attention_between_features=profile["attention_between_features"], # was True before
         feature_positional_embedding="subspace",
+        interleave_x_y_pairs=interleave_x_y_pairs,
     )
 
     optimizer = OptimizerConfig(
@@ -144,10 +149,14 @@ def get_config(config_index: int = 0, training_setup: str = "low") -> MainConfig
         weight_decay=0.01,
     )
 
+    wandb_name = f"transformer_1_gpu_v4{profile['wandb_suffix']}_{config_index}"
+    if interleave_x_y_pairs:
+        wandb_name += "_interleaved"
+
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="tabpfn_transformer",
-        name=f"transformer_1_gpu_v4{profile['wandb_suffix']}_{config_index}",
+        name=wandb_name,
         mode="online",
         log_every_n_steps=10,
     )
