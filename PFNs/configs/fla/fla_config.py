@@ -105,6 +105,7 @@ MODEL_SETTINGS = {
     "gated_deltanet": {
         "emsize": 256,
         "config_kwargs": {
+            "attn_mode": "chunk",
             "hidden_size": 256,
             "num_hidden_layers": 16, # default 21
             "num_heads": 4, # default 6
