@@ -35,6 +35,7 @@ TRAINING_PROFILES = {
 
 MODEL_SETTINGS = {
     # KDA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/kda/configuration_kda.py#L10
+    # Model size: 12.59 M
     "kda": {
         "emsize": 320,
         "config_kwargs": { # per default runs in chunked mode, has a max_position_embeddings set to 2048, supports attn dict
@@ -52,6 +53,7 @@ MODEL_SETTINGS = {
         },
     },
     # GLA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gla/configuration_gla.py#L12
+    # Model size: 15.06 M
     "gla": {
         "emsize": 320,
         "config_kwargs": { # also has max_position_embeddings set to 2048, supports attn dict
@@ -67,20 +69,23 @@ MODEL_SETTINGS = {
         },
     },
     # Mamba2 Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/mamba2/configuration_mamba2.py#L21
-    "mamba2": {
-        "emsize": 512,
+    # Model size was: 20.99 M now 11.46 M
+    "mamba2": { # cached currently not patched
+        "emsize": 320,
         "config_kwargs": {
-            "hidden_size": 512, # default 2048
-            "num_hidden_layers": 12, # default 48
+            "hidden_size": 320, # default 2048
+            "num_hidden_layers": 16, # default 48
             "state_size": 128, # default 128
             "conv_kernel": 4, # default 4
             "expand": 2, # default 2, --> num_heads self.expand * hidden_size // head_dim
-            "head_dim": 64, # default
+            "head_dim": 128, # default
             "vocab_size": 1, # dummy value, not used default 32000
             "use_cache": True,
+            "cache_chunk_size": 16,  
         },
     },
     # DeltaNet Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/delta_net/configuration_delta_net.py#L7
+    # Model size: 10.46 M
     "deltanet": {
         "emsize": 320,
         "config_kwargs": {
@@ -96,6 +101,7 @@ MODEL_SETTINGS = {
         },
     },
     # Gated DeltaNet Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gated_deltanet/configuration_gated_deltanet.py#L7
+    # Model size: 12.79 M
     "gated_deltanet": {
         "emsize": 256,
         "config_kwargs": {
