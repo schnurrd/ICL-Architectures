@@ -29,76 +29,86 @@ GLOBAL_AGGREGATE_K_GRADIENTS = 2
 SUPPORTED_SEQUENCE_MODES = {"cached", "causal", "teacher_forcing"}
 
 TRAINING_PROFILES = {
-    "low": (7.5e-5, 500),
+    "low": (6.0e-5, 1000),
     "high": (3.0e-5, 4000),
 }
 
 MODEL_SETTINGS = {
+    # KDA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/kda/configuration_kda.py#L10
     "kda": {
         "emsize": 320,
-        "config_kwargs": {
-            "hidden_size": 320,
-            "num_hidden_layers": 10,
-            "num_heads": 4,
-            "intermediate_size": 320 * 2,
+        "config_kwargs": { # per default runs in chunked mode, has a max_position_embeddings set to 2048, supports attn dict
+            "hidden_size": 320, # default 2048
+            "use_short_conv": False, # typically true but we don't have temporal data
+            "num_heads": 4, # default 16
+            # "head_dim": 80, # currently 128
+            "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
-            "norm_eps": 1e-5,
+            "num_hidden_layers": 10, # default 24
+            "norm_eps": 1e-5, # default 1e-6
             "use_cache": True,
-            "use_short_conv": False,
-            "cache_chunk_size": 16,
+            "vocab_size": 1, # dummy value, not used default 32000
+            # "cache_chunk_size": 16,  
         },
-        
     },
+    # GLA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gla/configuration_gla.py#L12
     "gla": {
         "emsize": 320,
-        "config_kwargs": {
-            "hidden_size": 320,
-            "num_hidden_layers": 12,
-            "num_heads": 4,
-            "intermediate_size": 320 * 2,
+        "config_kwargs": { # also has max_position_embeddings set to 2048, supports attn dict
+            "hidden_size": 320, # default 2048
+            "use_short_conv": False, 
+            "num_heads": 4, # default 4
+            "num_hidden_layers": 12, # default 24
+            "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
-            "norm_eps": 1e-5,
+            "norm_eps": 1e-5, # default 1e-6
             "use_cache": True,
+            "vocab_size": 1, # dummy value, not used default 32000
         },
     },
+    # Mamba2 Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/mamba2/configuration_mamba2.py#L21
     "mamba2": {
         "emsize": 512,
         "config_kwargs": {
-            "hidden_size": 512,
-            "num_hidden_layers": 12,
-            "state_size": 128,
-            "conv_kernel": 4,
-            "expand": 2,
-            "head_dim": 64,
-            "vocab_size": 1,
+            "hidden_size": 512, # default 2048
+            "num_hidden_layers": 12, # default 48
+            "state_size": 128, # default 128
+            "conv_kernel": 4, # default 4
+            "expand": 2, # default 2, --> num_heads self.expand * hidden_size // head_dim
+            "head_dim": 64, # default
+            "vocab_size": 1, # dummy value, not used default 32000
             "use_cache": True,
         },
     },
+    # DeltaNet Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/delta_net/configuration_delta_net.py#L7
     "deltanet": {
         "emsize": 320,
         "config_kwargs": {
             "hidden_size": 320,
-            "num_hidden_layers": 10,
-            "num_heads": 4,
-            "intermediate_size": 320 * 2,
+            "num_hidden_layers": 10, # default 24
+            "num_heads": 4, # default 16
+            "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
-            "norm_eps": 1e-5,
+            "norm_eps": 1e-5, # default 1e-6
             "use_cache": True,
             "use_short_conv": False,
+            "vocab_size": 1, # dummy value, not used default 32000
         },
     },
+    # Gated DeltaNet Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gated_deltanet/configuration_gated_deltanet.py#L7
     "gated_deltanet": {
         "emsize": 256,
         "config_kwargs": {
             "hidden_size": 256,
-            "num_hidden_layers": 16,
-            "num_heads": 4,
-            "head_dim": 48,
-            "intermediate_size": 256 * 2,
+            "num_hidden_layers": 16, # default 21
+            "num_heads": 4, # default 6
+            "head_dim": 48, # default 256
+            "intermediate_size": 256 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
-            "norm_eps": 1e-5,
+            "norm_eps": 1e-5, # default 1e-6
             "use_cache": True,
             "use_short_conv": False,
+            "vocab_size": 1, # dummy value, not used default 32000
         },
     },
 }
@@ -127,9 +137,11 @@ def get_config(
     batch_size: int | None = None,
     cache_chunk_size: int | None = None,
     lr: float | None = None,
+    steps_per_epoch: int | None = None,
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = "subspace",
+    config_kwargs_override: dict[str, object] | None = None,
 ) -> MainConfig:
     max_num_classes = 10
     max_num_features = 20
@@ -153,8 +165,13 @@ def get_config(
         raise ValueError(
             f"Unknown training_setup {training_setup!r}. Available: {sorted(TRAINING_PROFILES)}"
         )
-    profile_lr, steps_per_epoch = TRAINING_PROFILES[training_setup]
+    profile_lr, profile_steps_per_epoch = TRAINING_PROFILES[training_setup]
     resolved_lr = float(profile_lr) if lr is None else float(lr)
+    resolved_steps_per_epoch = (
+        int(steps_per_epoch)
+        if steps_per_epoch is not None
+        else int(profile_steps_per_epoch)
+    )
     resolved_aggregate_k = (
         aggregate_k_gradients
         if aggregate_k_gradients is not None
@@ -190,9 +207,17 @@ def get_config(
         fixed_num_test_instances=None,
     )
 
+    resolved_config_kwargs = dict(MODEL_SETTINGS[model_type]["config_kwargs"])
+    if config_kwargs_override is not None:
+        if not isinstance(config_kwargs_override, dict):
+            raise ValueError(
+                "config_kwargs_override must be a dict of config kwargs to override."
+            )
+        resolved_config_kwargs.update(config_kwargs_override)
+
     backbone_kwargs = {
         "model_type": model_type,
-        "config_kwargs": MODEL_SETTINGS[model_type]["config_kwargs"],
+        "config_kwargs": resolved_config_kwargs,
         "sequence_mode": sequence_mode,
     }
     if cache_chunk_size is not None:
@@ -233,6 +258,8 @@ def get_config(
         wandb_extras.append(f"lr{resolved_lr:g}")
     if aggregate_k_gradients is not None:
         wandb_extras.append(f"agg{resolved_aggregate_k}")
+    if steps_per_epoch is not None:
+        wandb_extras.append(f"steps{resolved_steps_per_epoch}")
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
@@ -257,7 +284,7 @@ def get_config(
         batch_shape_sampler=batch_shape,
         epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=int(steps_per_epoch),
+        steps_per_epoch=resolved_steps_per_epoch,
         n_targets_per_input=1,
         train_mixed_precision=train_mixed_precision,
         train_mixed_precision_dtype=train_mixed_precision_dtype,
