@@ -12,9 +12,11 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/transformer/tabpfn_prior_config_1_gpu_v4.py", 
+                "PFNs/configs/transformer/transformer_config.py", 
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite", "--no-wandb"
+                "--config-arg", "training_setup='low'",
+                "--overwrite", "--no-wandb",
+                "--config-arg", "interleave_x_y_pairs=True",
             ]
         },
         {
@@ -28,27 +30,33 @@
                 "PFNs/configs/fla/fla_config.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb",
-                "--config-arg", "model_type='gla'",
+                "--config-arg", "model_type='gated_deltanet'",
                 "--config-arg", "sequence_mode='cached'",
                 "--config-arg", "cache_chunk_size=None",
                 "--config-arg", "training_setup='low'",
-                "--config-arg", "batch_size=8"
+                "--config-arg", "batch_size=2",
             ],
             "justMyCode": false
-
         },
         {
-            "name": "Python Debugger: Pre-training Linear Attention",
+            "name": "Python Debugger: Pre-training FLA Config Bugfix",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/linear_attention/linear_attention_test.py",
+                "PFNs/configs/fla/fla_config.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite", "--no-wandb"
-            ]
+                "--no-wandb",
+                "--config-arg", "model_type='gla'",
+                "--config-arg", "sequence_mode='cached'",
+                "--config-arg", "training_setup='low'",
+                "--config-arg", "interleave_x_y_pairs=True",
+                "--config-arg", "feature_positional_embedding=None",
+                "--config-index", "0"
+            ],
+            "justMyCode": false
         },
         {
             "name": "Python Debugger: Pre-training Linear Attention",

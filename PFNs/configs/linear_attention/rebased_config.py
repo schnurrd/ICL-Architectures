@@ -49,6 +49,8 @@ def get_config(
     batch_size: int | None = None,
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
+    interleave_x_y_pairs: bool = False,
+    feature_positional_embedding: str | None = "subspace",
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -57,6 +59,9 @@ def get_config(
 
     max_num_classes = 10
     max_num_features = 20
+
+    if feature_positional_embedding == "None":
+        feature_positional_embedding = None
 
     training_setup = training_setup.strip().lower()
     if training_setup not in TRAINING_PROFILES:
@@ -120,7 +125,8 @@ def get_config(
         ),
         features_per_group=20,
         attention_between_features=False,
-        feature_positional_embedding="subspace",
+        feature_positional_embedding=feature_positional_embedding,
+        interleave_x_y_pairs=interleave_x_y_pairs,
     )
 
     optimizer = OptimizerConfig(
@@ -136,6 +142,9 @@ def get_config(
         wandb_extras.append(f"lr{resolved_lr:g}")
     if aggregate_k_gradients is not None:
         wandb_extras.append(f"agg{resolved_aggregate_k}")
+    if interleave_x_y_pairs:
+        wandb_extras.append("interleaved")
+    wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
         f"rebased_{training_setup}"

@@ -421,7 +421,10 @@ class FLABackbone(Backbone):
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": return_cache} # cache_params is not None or return_cache
+        use_cache = return_cache or (
+            cache_params is not None and isinstance(self.fla, Mamba2Model)
+        )
+        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": use_cache}
         if cache_params is not None:
             if isinstance(self.fla, Mamba2Model):
                 kwargs["cache_params"] = cache_params
@@ -433,7 +436,7 @@ class FLABackbone(Backbone):
                     cache_position_start,
                     cache_position_start + x.size(1),
                     device=x.device,
-                )
+                ).unsqueeze(0).expand(x.size(0), -1)
             elif isinstance(self.fla, (GLAModel, KDAModel, DeltaNetModel, GatedDeltaNetModel)):
                 kwargs["past_key_values"] = cache_params
             else:

@@ -235,8 +235,7 @@ def get_config(
         wandb_extras.append(f"agg{resolved_aggregate_k}")
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
-    if feature_positional_embedding is not None:
-        wandb_extras.append(f"fpe_{feature_positional_embedding}")
+    wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
         f"{model_type}_{sequence_mode}_{training_setup}"
