@@ -84,7 +84,7 @@ def _maybe_patch_gla_with_stateless_recurrent_vmap(enabled: bool):
         yield
         return
     import fla.layers.gla as gla_layer
-    from fla.ops.gla.naive import naive_recurrent_gla
+    # from fla.ops.gla.naive import naive_recurrent_gla
     
     def _stateless_gla_kernel_with_vmap(
         q: torch.Tensor,
@@ -117,19 +117,42 @@ def _maybe_patch_gla_with_stateless_recurrent_vmap(enabled: bool):
         v = v.view(cache_batch, flat_len, *v.shape[1:])
         gk = gk.view(cache_batch, flat_len, *gk.shape[1:])
         
-        def step(q_t, k_t, v_t, gk_t):
-            o1, _ = naive_recurrent_gla(
-                q_t, 
-                k_t, 
-                v_t, 
-                gk_t, 
-                initial_state, 
-                False
-            )
-            return o1
+        def naive_recurrent_gla(
+            q: torch.Tensor,
+            k: torch.Tensor,
+            v: torch.Tensor,
+            gk: torch.Tensor,
+            initial_state: torch.Tensor
+        ):
+            dtype = q.dtype
+            q, k, v, gk = map(lambda x: x.transpose(1, 2).float(), (q, k, v, gk))
+            B, H, T, K, V = *q.shape, v.shape[-1]
+            o = torch.zeros_like(v)
+            scale = K ** -0.5
+
+            for i in range(T):
+                q_i = q[:, :, i] * scale
+                k_i = k[:, :, i]
+                v_i = v[:, :, i]
+                gk_i = gk[:, :, i].exp()
+                kv_i = k_i[..., None] * v_i[..., None, :]
+                o[:, :, i] = (q_i[..., None] * (initial_state * gk_i[..., None] + kv_i)).sum(-2)
+
+            return o.transpose(1, 2).to(dtype)
+        
+        # def step(q_t, k_t, v_t, gk_t):
+        #     o1, _ = naive_recurrent_gla(
+        #         q_t, 
+        #         k_t, 
+        #         v_t, 
+        #         gk_t, 
+        #         initial_state, 
+        #         False
+        #     )
+        #     return o1
 
         # 4. vmap over flat_len (dim 1)
-        o = torch.vmap(step, in_dims=(1, 1, 1, 1), out_dims=1)(q, k, v, gk)
+        o = torch.vmap(naive_recurrent_gla, in_dims=(1, 1, 1, 1, None), out_dims=1)(q, k, v, gk, initial_state)
 
         o = o.reshape(orig_batch, *o.shape[2:])
         h = initial_state if output_final_state else None
