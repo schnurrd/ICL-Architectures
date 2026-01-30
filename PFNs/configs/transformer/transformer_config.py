@@ -81,6 +81,7 @@ TRAINING_PROFILES = {
 def get_config(
     config_index: int = 0,
     training_setup: str = "low",
+    max_seq_len: int | None = None,
     interleave_x_y_pairs: bool = False,
 ) -> MainConfig:
     """
@@ -99,6 +100,8 @@ def get_config(
         )
     profile = TRAINING_PROFILES[training_setup]
 
+    resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
+
     prior = TabPFNPriorConfig(
         prior_type="mlp",
         max_num_classes=max_num_classes,
@@ -112,7 +115,7 @@ def get_config(
     batch_shape = BatchShapeSamplerConfig(
         batch_size=8,
         min_single_eval_pos=24,
-        max_seq_len=1000,
+        max_seq_len=resolved_max_seq_len,
         min_num_features=2,
         max_num_features=max_num_features,
         fixed_num_test_instances=None,
@@ -152,6 +155,8 @@ def get_config(
     wandb_name = f"transformer_1_gpu_v4{profile['wandb_suffix']}_{config_index}"
     if interleave_x_y_pairs:
         wandb_name += "_interleaved"
+    if max_seq_len is not None:
+        wandb_name += f"_seq{resolved_max_seq_len}"
 
     wandb_config = WandbConfig(
         entity="icl_arch",

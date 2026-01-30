@@ -47,6 +47,7 @@ def get_config(
     config_index: int = 0,
     training_setup: str = "high",
     batch_size: int | None = None,
+    max_seq_len: int | None = None,
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
@@ -72,6 +73,7 @@ def get_config(
 
     resolved_lr = float(profile["lr"]) if lr is None else float(lr)
     resolved_batch_size = batch_size or DEFAULT_BATCH_SIZE
+    resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
     resolved_aggregate_k = (
         aggregate_k_gradients
         if aggregate_k_gradients is not None
@@ -91,7 +93,7 @@ def get_config(
     batch_shape = BatchShapeSamplerConfig(
         batch_size=resolved_batch_size,
         min_single_eval_pos=24,
-        max_seq_len=1000,
+        max_seq_len=resolved_max_seq_len,
         min_num_features=2,
         max_num_features=max_num_features,
         fixed_num_test_instances=None,
@@ -138,6 +140,8 @@ def get_config(
     wandb_extras = []
     if batch_size is not None:
         wandb_extras.append(f"bs{resolved_batch_size}")
+    if max_seq_len is not None:
+        wandb_extras.append(f"seq{resolved_max_seq_len}")
     if lr is not None:
         wandb_extras.append(f"lr{resolved_lr:g}")
     if aggregate_k_gradients is not None:

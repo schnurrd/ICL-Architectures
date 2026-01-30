@@ -142,6 +142,7 @@ def get_config(
     sequence_mode: str = "cached",
     training_setup: str = "high",
     batch_size: int | None = None,
+    max_seq_len: int | None = None,
     cache_chunk_size: int | None = None,
     lr: float | None = None,
     steps_per_epoch: int | None = None,
@@ -179,6 +180,7 @@ def get_config(
         if steps_per_epoch is not None
         else int(profile_steps_per_epoch)
     )
+    resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
     resolved_aggregate_k = (
         aggregate_k_gradients
         if aggregate_k_gradients is not None
@@ -208,7 +210,7 @@ def get_config(
     batch_shape = BatchShapeSamplerConfig(
         batch_size=resolved_batch_size,
         min_single_eval_pos=24,
-        max_seq_len=1000,
+        max_seq_len=resolved_max_seq_len,
         min_num_features=2,
         max_num_features=max_num_features,
         fixed_num_test_instances=None,
@@ -259,6 +261,8 @@ def get_config(
     wandb_extras = []
     if batch_size is not None:
         wandb_extras.append(f"bs{resolved_batch_size}")
+    if max_seq_len is not None:
+        wandb_extras.append(f"seq{resolved_max_seq_len}")
     if cache_chunk_size is not None:
         wandb_extras.append(f"cache{cache_chunk_size}")
     if lr is not None:
