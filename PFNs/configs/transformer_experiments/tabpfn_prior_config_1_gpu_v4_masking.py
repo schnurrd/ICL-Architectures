@@ -19,7 +19,11 @@ from pfns.train import (
 )
 
 
-def get_config(config_index: int = 0, masking: str | None= None) -> MainConfig:
+def get_config(
+    config_index: int = 0,
+    masking: str | None = None,
+    max_seq_len: int | None = None,
+) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
     tabpfn_prior data.
@@ -40,6 +44,8 @@ def get_config(config_index: int = 0, masking: str | None= None) -> MainConfig:
     
     print(f"Using masking mode: {masking}")    
 
+    resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
+
     prior = TabPFNPriorConfig(
         prior_type="mlp",       
         max_num_classes=max_num_classes,
@@ -53,7 +59,7 @@ def get_config(config_index: int = 0, masking: str | None= None) -> MainConfig:
     batch_shape = BatchShapeSamplerConfig(
         batch_size=8,
         min_single_eval_pos=24,
-        max_seq_len=1000,
+        max_seq_len=resolved_max_seq_len,
         min_num_features=2,
         max_num_features=max_num_features,
         fixed_num_test_instances=None,
@@ -91,10 +97,14 @@ def get_config(config_index: int = 0, masking: str | None= None) -> MainConfig:
         weight_decay=0.01,
     )
     
+    wandb_name = f"transformer_modified_masking_{masking}"
+    if max_seq_len is not None:
+        wandb_name += f"_seq{resolved_max_seq_len}"
+
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="tabpfn_transformer_masking_experiments",
-        name=f"transformer_modified_masking_{masking}",
+        name=wandb_name,
         mode="online",
         log_every_n_steps=10,
     )
