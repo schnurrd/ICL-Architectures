@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+
 import typing as tp
 from dataclasses import dataclass
 
@@ -33,6 +34,8 @@ class RunManager(tp.Protocol):
         per_dataset: tp.Any,
     ) -> None: ...
 
+    def save_model(self, file_path: str, aliases: list[str] | None = None) -> None: ...
+
     def finish(self) -> None: ...
 
 
@@ -49,6 +52,9 @@ class NullRunManager:
         summary: tp.Any,
         per_dataset: tp.Any,
     ) -> None:
+        return
+
+    def save_model(self, file_path: str, aliases: list[str] | None = None) -> None:
         return
 
     def finish(self) -> None:
@@ -82,7 +88,9 @@ def _init_wandb_run(
     elif wandb_config.resume is not None:
         init_kwargs["resume"] = wandb_config.resume
 
-    return wandb.init(**{k: v for k, v in init_kwargs.items() if v is not None})
+    return wandb.init(
+        **{k: v for k, v in init_kwargs.items() if v is not None}
+    )
 
 
 def _is_main_process() -> bool:
@@ -109,7 +117,7 @@ class WandbRunManager:
         import wandb
 
         self._wandb = wandb
-        resume = "allow" if run_id is not None else None
+        resume = "must" if run_id is not None else None
         self._run = _init_wandb_run(
             wandb_config,
             full_config=full_config,
@@ -125,6 +133,9 @@ class WandbRunManager:
 
     def log(self, metrics: dict[str, tp.Any], *, step: int | None = None) -> None:
         self._wandb.log(metrics, step=step)
+
+        if self._run is not None:
+             self._run.summary.update(metrics)
 
     def log_evaluation(
         self,
@@ -156,6 +167,19 @@ class WandbRunManager:
         if results is not None and not results.empty:
             self._wandb.log({"eval/raw_results": self._wandb.Table(dataframe=results)})
 
+    def save_model(self, file_path: str, aliases: list[str] | None = None) -> None:
+        if self._run is None:
+            return
+
+        artifact = self._wandb.Artifact(
+            name=f"model-{self.run_id}",
+            type="model",
+            description=f"Trained model checkpoint",
+        )
+        artifact.add_file(file_path)
+        self._run.log_artifact(artifact, aliases=aliases or [])
+        print(f"WandbRunManager: Saved model artifact to wandb with aliases {aliases} under run id {self.run_id}.")
+
     def finish(self) -> None:
         if self._run is not None:
             self._run.finish()
@@ -172,3 +196,40 @@ def create_run_manager(
     if not _is_main_process():
         return NullRunManager()
     return WandbRunManager(wandb_config, full_config=full_config, run_id=run_id)
+
+
+def download_model_from_wandb(
+    run_path: str,
+    destination_path: str | None = None,
+) -> str:
+    import wandb
+    import shutil
+    
+    print(f"Attempting to download model from wandb run: {run_path}")
+    api = wandb.Api()
+    run = api.run(run_path)
+    
+    if destination_path is None:
+        destination_path = api.run("tabpfn_transformer/runs/rpichg7o").config['train_state_dict_save_path']
+    
+    destination_dir = os.path.dirname(destination_path)
+    
+    if os.path.exists(destination_path):
+        print(f"Model file already exists at {destination_path}, skipping download.")
+        return destination_path
+    
+    artifacts = run.logged_artifacts()
+    for artifact in artifacts:
+        if artifact.type == "model" and "latest" in artifact.aliases:
+            print(f"Found model artifact: {artifact.name}")
+            download_dir = artifact.download()
+            for root, _, files in os.walk(download_dir):
+                for file in files:
+                    if file.endswith(".pt") or len(files) == 1:
+                        src = os.path.join(root, file)
+                        os.makedirs(destination_dir, exist_ok=True)
+                        shutil.move(src, destination_path)
+                        print(f"Downloaded artifact file {file} to {destination_path}")
+                        return destination_path
+
+    raise FileNotFoundError(f"No suitable model artifact found in run {run_path}.")

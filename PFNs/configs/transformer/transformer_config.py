@@ -26,6 +26,18 @@ BASE_PROFILE = {
 }
 
 TRAINING_PROFILES = {
+    "debug": {
+        **BASE_PROFILE,
+        "emsize": 64,
+        "nhid": 64 * 4,
+        "lr": 1.5e-4,
+        "steps_per_epoch": 100,
+        "epochs": 200,
+        "warmup_epochs": 10,
+        "aggregate_k_gradients": 1,
+        "attention_between_features": False,
+        "wandb_suffix": "_debug",
+    },
     "low": {
         **BASE_PROFILE,
         "emsize": 256,

@@ -22,6 +22,7 @@ def run_tabpfn_evaluation(
     *,
     base_path: str,
     checkpoint_name: str = "checkpoint.pt",
+    wandb_run_id: str | None = None,
     device: str | None = None,
     benchmark: str = "opencc",
     max_samples: int = 1000,
@@ -47,6 +48,7 @@ def run_tabpfn_evaluation(
         base_path=base_path,
         device=device,
         model_string=checkpoint_name,
+        wandb_run_id=wandb_run_id,
         N_ensemble_configurations=n_ensemble_configurations,
         preprocess_transforms=list(preprocess_transforms),
         batch_size_inference=batch_size_inference,
@@ -167,8 +169,9 @@ def summarize_results(results):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument("--model_path", type=str, default=None)
     parser.add_argument("--checkpoint_name", type=str, default="checkpoint.pt")
+    parser.add_argument("--wandb_run_id", type=str, default=None)
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--benchmark", type=str, default="opencc", choices=["opencc", "test"])
     parser.add_argument("--max_samples", type=int, default=1000)
@@ -184,10 +187,14 @@ def main():
     parser.add_argument("--sample_order_permutation", action="store_true", help="Permute training sample order for each ensemble configuration")
     parser.add_argument("--fla_cache_chunk_size", type=int, default=None, help="Chunk size for cache-backed inference when using an FLA backbone")
     args = parser.parse_args()
-    
+
+    if args.model_path is None and args.wandb_run_id is None:
+        raise ValueError("Provide --model_path or --wandb_run_id.")
+
     results = run_tabpfn_evaluation(
         base_path=args.model_path,
         checkpoint_name=args.checkpoint_name,
+        wandb_run_id=args.wandb_run_id,
         device=args.device,
         benchmark=args.benchmark,
         max_samples=args.max_samples,

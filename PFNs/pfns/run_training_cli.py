@@ -366,6 +366,7 @@ def main():
 
     if config.train_state_dict_save_path is not None:
         print(f"Model saved to: {config.train_state_dict_save_path}")
+        run_manager.save_model(config.train_state_dict_save_path)
 
     if config.train_state_dict_save_path is None:
         print(

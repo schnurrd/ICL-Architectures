@@ -31,6 +31,8 @@ from pfns.utils import (
 )
 from pfns.base_config import BaseConfig
 from pfns.train import MainConfig, _resolve_autocast_dtype
+from pfns.run_logger import download_model_from_wandb
+
 
 # =============================================================================
 # Ensemble Configuration
@@ -425,8 +427,9 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
     def __init__(
         self,
         device: str = "cpu",
-        base_path: Path = default_base_path,
+        base_path: Path | None = None,
         model_string: str = "",
+        wandb_run_id: str | None = None,
         N_ensemble_configurations: int = 3,
         no_preprocess_mode: bool = False,
         multiclass_decoder: Literal["permutation", "none"] = "permutation",
@@ -455,6 +458,8 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                tries to load a model with that name from the models_diff directory. It looks for files named as
                follows: "prior_diff_real_checkpoint" + model_string + "_n_0_epoch_e.cpkt", where e can be a number
                between 100 and 0, and is checked in a descending order.
+        :param wandb_run_id: If provided, downloads the model from the specified wandb run (entity/project/run_id or just run_id)
+               and loads it. This overrides model_string.
         :param N_ensemble_configurations: The number of ensemble configurations used for the prediction. Thereby the
                accuracy, but also the running time, increases with this number.
         :param no_preprocess_mode: Specifies whether preprocessing is to be performed.
@@ -475,9 +480,18 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         :param preprocess_transforms: List of preprocessing transforms to consider during inference.
         :param fla_cache_chunk_size: If set and the model uses an FLA backbone, chunk size for cache-backed inference.
         """
+        if wandb_run_id is not None:
+            model_path = download_model_from_wandb(
+                wandb_run_id,
+                destination_path=str(base_path) if base_path is not None else None,
+            )
+            base_path = os.path.dirname(model_path)
+            model_string = os.path.basename(model_path)
+
         self.device = device
-        self.base_path = base_path
+        self.base_path = base_path if base_path is not None else default_base_path
         self.model_string = model_string
+        self.wandb_run_id = wandb_run_id
         self.N_ensemble_configurations = N_ensemble_configurations
         self.no_preprocess_mode = no_preprocess_mode
         self.multiclass_decoder = multiclass_decoder
@@ -493,6 +507,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.categorical_feats: tuple[int, ...] = ()
 
         model_key = model_string + "|" + str(device)
+
         if model_key in self.models_in_memory:
             model, config, results_file = self.models_in_memory[model_key]
         else:

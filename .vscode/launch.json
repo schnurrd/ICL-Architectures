@@ -79,7 +79,8 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "--model_path", "PFNs/models_diff/1_gpu_10h_v3_group_20_batch_8/tabpfn_prior_config_1_gpu_10h_v3_group_20_batch_8_0_no_seed", 
+                //"--wandb_run_id", "tabpfn_transformer/runs/rpichg7o",
+                "--model_path", "PFNs/models_diff/transformer_config_0_training_setup_debug", 
                 "--only_tabpfn", 
                 "--max_features", "20",
                 "--max_samples", "1000",
