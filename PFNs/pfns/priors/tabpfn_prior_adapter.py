@@ -36,6 +36,7 @@ class TabPFNPriorConfig(PriorConfig):
     return_categorical_mask: bool = False
     nan_handling: bool = False
     different_generating_model_per_dataset: bool = False
+    device: str | torch.device = "cpu"
 
     def create_get_batch_method(self) -> Callable[..., Batch]:
         def get_batch(
@@ -44,7 +45,6 @@ class TabPFNPriorConfig(PriorConfig):
             seq_len: int,
             num_features: int,
             single_eval_pos: int | None,
-            device: str | torch.device = "cpu",
             n_targets_per_input: int = 1,
             **kwargs,
         ) -> Batch:
@@ -68,7 +68,7 @@ class TabPFNPriorConfig(PriorConfig):
                     num_datapoints_max=seq_len,
                     num_features=num_features,
                     max_num_classes=self.max_num_classes,
-                    device=device,
+                    device=self.device,
                     prior_config=self.prior_config,
                     flexible=self.flexible,
                     differentiable=self.differentiable,

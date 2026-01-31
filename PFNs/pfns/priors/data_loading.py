@@ -119,8 +119,8 @@ class StandardDataLoader(DataLoader):
 
         print("DataLoader.__dict__", self.__dict__)
 
-        if "device" in self.get_batch_kwargs:
-            self.get_batch_kwargs["device"] = "cpu"
+        # if "device" in self.get_batch_kwargs:
+        #     self.get_batch_kwargs["device"] = "cpu"
 
         # Pass sampler and all kwargs to the dataset
         super().__init__(

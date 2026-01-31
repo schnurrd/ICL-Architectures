@@ -80,6 +80,8 @@ def get_config(
         else profile["aggregate_k_gradients"]
     )
 
+    resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences 
+
     prior = TabPFNPriorConfig(
         prior_type="mlp",
         max_num_classes=max_num_classes,
@@ -88,6 +90,7 @@ def get_config(
         differentiable=True,
         nan_handling=True,
         return_categorical_mask=True,
+        device=resolved_prior_device,
     )
 
     batch_shape = BatchShapeSamplerConfig(
@@ -175,6 +178,6 @@ def get_config(
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
-        num_workers=8,
+        num_workers=8 if resolved_prior_device == "cpu" else 0,
         aggregate_k_gradients=resolved_aggregate_k,
     )

@@ -196,6 +196,8 @@ def get_config(
         )
         train_mixed_precision = True
         train_mixed_precision_dtype = "fp16"
+        
+    resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences 
 
     prior = TabPFNPriorConfig(
         prior_type="mlp",
@@ -205,6 +207,7 @@ def get_config(
         differentiable=True,
         nan_handling=True,
         return_categorical_mask=True,
+        device=resolved_prior_device,
     )
 
     batch_shape = BatchShapeSamplerConfig(
@@ -302,7 +305,7 @@ def get_config(
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
-        num_workers=8,
+        num_workers=8 if resolved_prior_device == "cpu" else 0,
         aggregate_k_gradients=resolved_aggregate_k,
         validation_period=10,
         test_steps_per_epoch=500

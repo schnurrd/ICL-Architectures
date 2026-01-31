@@ -5,6 +5,8 @@ Combined transformer config with selectable variants.
 
 from __future__ import annotations
 
+import torch
+
 from pfns.model.backbones import TransformerBackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
@@ -32,7 +34,6 @@ TRAINING_PROFILES = {
         "steps_per_epoch": 250,
         "epochs": 200,
         "warmup_epochs": 10,
-        "num_workers": 4,
         "aggregate_k_gradients": 1,
         "attention_between_features": False,
         "wandb_suffix": "_low",
@@ -45,7 +46,6 @@ TRAINING_PROFILES = {
         "steps_per_epoch": 250,
         "epochs": 200,
         "warmup_epochs": 10,
-        "num_workers": 4,
         "aggregate_k_gradients": 1,
         "attention_between_features": True,
         "wandb_suffix": "_low2",
@@ -58,7 +58,6 @@ TRAINING_PROFILES = {
         "steps_per_epoch": 2000,
         "epochs": 200,
         "warmup_epochs": 10,
-        "num_workers": 8,
         "aggregate_k_gradients": 2,
         "attention_between_features": False,
         "wandb_suffix": "_high",
@@ -71,7 +70,6 @@ TRAINING_PROFILES = {
         "steps_per_epoch": 2000,
         "epochs": 400,
         "warmup_epochs": 20,
-        "num_workers": 8,
         "aggregate_k_gradients": 2,
         "attention_between_features": False,
         "wandb_suffix": "_very_high",
@@ -102,6 +100,8 @@ def get_config(
 
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
 
+    resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences 
+
     prior = TabPFNPriorConfig(
         prior_type="mlp",
         max_num_classes=max_num_classes,
@@ -110,6 +110,7 @@ def get_config(
         differentiable=True,
         return_categorical_mask=True,
         nan_handling=True,
+        device=resolved_prior_device,
     )
 
     batch_shape = BatchShapeSamplerConfig(
@@ -180,6 +181,6 @@ def get_config(
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,
-        num_workers=profile["num_workers"],
+        num_workers=8 if resolved_prior_device == "cpu" else 0,
         aggregate_k_gradients=profile["aggregate_k_gradients"],
     )

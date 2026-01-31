@@ -177,7 +177,7 @@ def train(
         get_batch_method=get_batch_method_instance,  # Use the constructed/resolved instance
         batch_shape_sampler_function=c.batch_shape_sampler.sample_batch_shape,
         num_steps=c.steps_per_epoch,
-        device=device,  # Pass the torch device object
+        # device=device,  # Pass the torch device object
         n_targets_per_input=c.n_targets_per_input,
         persistent_workers=True,  # can have persistent workers, as the dataset is counting the epochs itself here
         **current_extra_prior_kwargs_dict,
@@ -187,7 +187,7 @@ def train(
         get_batch_method=test_get_batch_method_instance,  # Use the constructed/resolved instance
         batch_shape_sampler_function=c.batch_shape_sampler.sample_batch_shape,
         num_steps=c.test_steps_per_epoch,
-        device=device,  # Pass the torch device object
+        # device=device,  # Pass the torch device object
         n_targets_per_input=c.n_targets_per_input,
         persistent_workers=False,  # can't have persistent workers, otherwise the epoch count is not updated
         **current_extra_prior_kwargs_dict,
