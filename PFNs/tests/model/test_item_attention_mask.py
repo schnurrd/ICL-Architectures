@@ -34,29 +34,6 @@ def test_item_attention_mask_test_to_train_only():
     torch.testing.assert_close(mask, expected)
 
 
-def test_item_attention_mask_causal():
-    layer = _build_layer()
-    seq_len = 4
-    train_len = 1
-
-    mask = layer._build_item_attention_mask(
-        mode="causal",
-        seq_len_q=seq_len,
-        seq_len_kv=seq_len,
-        train_len=train_len,
-        device=torch.device("cpu"),
-        dtype=torch.float32,
-    )
-
-    expected = torch.zeros((seq_len, seq_len))
-    expected = expected.masked_fill(
-        torch.arange(seq_len).unsqueeze(1) < torch.arange(seq_len).unsqueeze(0),
-        float("-inf"),
-    )
-
-    torch.testing.assert_close(mask, expected)
-
-
 def test_item_attention_mask_causal_train_only():
     layer = _build_layer()
     seq_len = 5

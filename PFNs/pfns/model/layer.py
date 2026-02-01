@@ -83,7 +83,7 @@ class PerFeatureLayer(Module):
             precomputed_kv: Precomputed key-value pairs for attention.
             item_attention_mask_mode:
                 Optional mask mode applied to attention between items.
-                Supported: "causal", "test_to_train_only", "causal_train_only".
+                Supported: "test_to_train_only", "causal_train_only".
         """
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
@@ -202,15 +202,7 @@ class PerFeatureLayer(Module):
         assert train_len > 0, "train_len must be > 0 for item attention masking."
         q_pos = torch.arange(q_offset, q_offset + seq_len_q, device=device)
         k_pos = torch.arange(k_offset, k_offset + seq_len_kv, device=device)
-        if mode == "causal":
-            mask = torch.zeros(
-                (seq_len_q, seq_len_kv),
-                device=device,
-                dtype=dtype,
-            )
-            disallow = k_pos.unsqueeze(0) > q_pos.unsqueeze(1)
-            mask = mask.masked_fill(disallow, float("-inf"))
-        elif mode == "test_to_train_only":
+        if mode == "test_to_train_only":
             mask = torch.full(
                 (seq_len_q, seq_len_kv),
                 float("-inf"),
