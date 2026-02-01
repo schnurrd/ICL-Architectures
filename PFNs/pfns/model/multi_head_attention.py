@@ -9,16 +9,35 @@ from pfns.model.save_peak_memory import support_save_peak_mem_factor
 from torch.utils.checkpoint import checkpoint
 from typing_extensions import override
 
-try:
-    from flash_attn.flash_attn_interface import (
-        flash_attn_unpadded_func,
-        flash_attn_unpadded_kvpacked_func,
-        flash_attn_unpadded_qkvpacked_func,
-    )
+TORCH_VERSION = torch.__version__.split(".")
 
-    HAVE_FLASH_ATTN = True
-except ImportError:
-    HAVE_FLASH_ATTN = False
+TORCH_2_ATTENTION_POSSIBLE = int(TORCH_VERSION[0]) >= 2
+
+
+def _gqa_is_supported() -> bool: # function copied from  https://github.com/PriorLabs/TabPFN/blob/ac6d961b052cdac5288a6b3be071f7e61029ad09/src/tabpfn/architectures/base/attention/full_attention.py#L25
+    """Check if PyTorch's scaled_dot_product_attention supports enable_gqa parameter.
+
+    This checks whether torch.nn.functional.scaled_dot_product_attention has a
+    kwarg enable_gqa and if we have sufficient NVIDIA compute capability.
+    PyTorch 2.5+ includes enable_gqa support.
+    """
+    if not TORCH_2_ATTENTION_POSSIBLE or not torch.cuda.is_available():
+        return False
+
+    # Check if PyTorch version is 2.5 or higher for enable_gqa support
+    torch_major, torch_minor = int(TORCH_VERSION[0]), int(TORCH_VERSION[1])
+    has_enable_gqa = torch_major > 2 or (torch_major == 2 and torch_minor >= 5)
+
+    if not has_enable_gqa:
+        return False
+
+    # We need compute capability >= 8.0 for efficient GQA
+    device = torch.cuda.current_device()
+    nvidia_compute_capability = torch.cuda.get_device_capability(device)
+    return nvidia_compute_capability[0] >= 8
+
+
+USE_TORCH_2_GQA = _gqa_is_supported()
 
 
 class MultiHeadAttention(torch.nn.Module):
@@ -30,7 +49,6 @@ class MultiHeadAttention(torch.nn.Module):
         - flash attention implementation from the flash_attn library, if installed
         - memory saving, by sequentially working off the sequences (seq. in batch dim.)
     """
-
     _input_size: int
     _output_size: int
     _nhead: int
@@ -84,7 +102,7 @@ class MultiHeadAttention(torch.nn.Module):
             self._k_cache is not None and self._v_cache is not None
         ) or self._kv_cache is not None
 
-    def empty_kv_cache(self):
+    def empty_kv_cache(self) -> None:
         self._k_cache = None
         self._v_cache = None
         self._kv_cache = None
@@ -100,7 +118,7 @@ class MultiHeadAttention(torch.nn.Module):
         precomputed_k: torch.Tensor | None = None,
         precomputed_v: torch.Tensor | None = None,
         precomputed_kv: torch.Tensor | None = None,
-    ):
+    ) -> None:
         assert (precomputed_k is None) == (precomputed_v is None)
         assert (precomputed_kv is None) or (precomputed_k is None)
         assert (precomputed_kv is None and precomputed_k is None) != (
@@ -114,7 +132,7 @@ class MultiHeadAttention(torch.nn.Module):
         def assert_tensor_shape(
             tensor: torch.Tensor | None,
             expected_shape: list[int | None],
-        ):
+        ) -> None:
             if tensor is None:
                 return
             actual_shape = tensor.size()
@@ -180,7 +198,7 @@ class MultiHeadAttention(torch.nn.Module):
         share_kv_across_n_heads: int = 1,
         dropout_p: float | None = None,
         softmax_scale: float | None = None,
-        initialize_output_to_zero: bool = True,
+        initialize_output_to_zero: bool = True, # prior labs set this to False
         precomputed_k: torch.Tensor | None = None,
         precomputed_v: torch.Tensor | None = None,
         precomputed_kv: torch.Tensor | None = None,
@@ -524,6 +542,9 @@ class MultiHeadAttention(torch.nn.Module):
         kv: torch.Tensor,
         share_kv_across_n_heads: int,
     ) -> torch.Tensor:
+        if share_kv_across_n_heads == 1:
+            return kv
+
         nhead, d = kv.shape[-2:]
         kv = kv[..., None, :].expand(
             *([-1] * (kv.dim() - 1)),
@@ -557,133 +578,12 @@ class MultiHeadAttention(torch.nn.Module):
         assert v is not None
 
         batch_size, seqlen_q, nhead, d_k = q.shape
-        _, seqlen_kv, nhead_kv, d_v = v.shape
+        _, _seqlen_kv, nhead_kv, d_v = v.shape
         share_kv_across_n_heads = nhead // nhead_kv
         if dropout_p is None:
             dropout_p = 0.0  # TODO: necessary?
 
-        use_flash_attention = (
-            HAVE_FLASH_ATTN
-            and torch.cuda.is_available()
-            and q.dtype == k.dtype == v.dtype == torch.float16
-            and attn_mask is None
-        )
-
-        # this string comparison is reliable, as it does not compare to a subversion
-        TORCH_2_ATTENTION_POSSIBLE = (
-            torch.__version__ >= "2" and torch.cuda.is_available()
-        )
-        USE_TORCH_2_GQA = False
         if TORCH_2_ATTENTION_POSSIBLE:
-            # check whether torch.nn.functional.scaled_dot_product_attention has a
-            # kwarg enable_gqa
-            # Check if enable_gqa is supported by trying to call the function with
-            # the parameter
-            # This is the case with torch 2.5 onwards
-            # TODO when upgrading requirements to 2.5: remove this
-            # torch 2.2 is the newest version supported on macos with intel chips
-            try:
-                _ = torch.nn.functional.scaled_dot_product_attention(
-                    torch.empty(1, 1, 1, 1),
-                    torch.empty(1, 1, 1, 1),
-                    torch.empty(1, 1, 1, 1),
-                    enable_gqa=True,
-                )
-                TORCH_2_SUPPORTS_GQ = True
-            except (TypeError, RuntimeError):
-                TORCH_2_SUPPORTS_GQ = False
-
-            if torch.cuda.is_available():
-                device = torch.cuda.current_device()
-                capability = torch.cuda.get_device_capability(device)
-                nvidia_compute_capability = f"{capability[0]}.{capability[1]}"
-            else:
-                nvidia_compute_capability = None
-            USE_TORCH_2_GQA = nvidia_compute_capability >= "8" and TORCH_2_SUPPORTS_GQ
-
-            # TODO: add logging for something like this
-            # if use_flash_attention and USE_TORCH_2_GQA:
-            # print("Using FlashAttention might be slower than torch's implementation,
-            # try setting `pfns.model.multi_head_attention.HAVE_FLASH_ATTN=False`.")
-
-            # print(f"USE_TORCH_2_GQA: {USE_TORCH_2_GQA}, nvidia_compute_capability:
-            # {nvidia_compute_capability}, TORCH_2_SUPPORTS_GQ: {TORCH_2_SUPPORTS_GQ}")
-
-        if use_flash_attention:
-
-            def get_seqlen_cumsums(
-                batch_size: int,
-                seqlen: int,
-                device: torch.device,
-            ) -> torch.Tensor:
-                return torch.arange(
-                    0,
-                    (batch_size + 1) * seqlen,
-                    step=seqlen,
-                    dtype=torch.int32,
-                    device=device,
-                )
-
-            if qkv is not None:
-                attention_head_outputs = flash_attn_unpadded_qkvpacked_func(  # type: ignore
-                    qkv.reshape(batch_size * seqlen_q, 3, nhead, d_k),
-                    get_seqlen_cumsums(batch_size, seqlen_q, qkv.device),
-                    seqlen_q,
-                    dropout_p=dropout_p,
-                    softmax_scale=softmax_scale,  # defaults to 1/sqrt(d_k) if None
-                    causal=False,
-                    return_attn_probs=False,
-                    deterministic=False,
-                )
-            elif kv is not None:
-                kv = MultiHeadAttention.broadcast_kv_across_heads(
-                    kv,
-                    share_kv_across_n_heads,
-                )
-                attention_head_outputs = flash_attn_unpadded_kvpacked_func(  # type: ignore
-                    q.reshape(batch_size * seqlen_q, nhead, d_k),
-                    kv.reshape(batch_size * seqlen_kv, 2, nhead, d_k),
-                    get_seqlen_cumsums(batch_size, seqlen_q, q.device),
-                    get_seqlen_cumsums(batch_size, seqlen_kv, kv.device),
-                    seqlen_q,
-                    seqlen_kv,
-                    dropout_p=dropout_p,
-                    causal=False,
-                    return_attn_probs=False,
-                    deterministic=False,
-                )
-            else:
-                assert d_k <= d_v, (
-                    "This requirement is here for safety but not strictly necessary."
-                    "Needs testing/coding to remove."
-                )
-                if d_k < d_v:
-                    k = torch.nn.functional.pad(k, d_v - d_k)
-                    q = torch.nn.functional.pad(v, d_v - d_k)
-                    d_k_ = d_v
-                k = MultiHeadAttention.broadcast_kv_across_heads(
-                    k,
-                    share_kv_across_n_heads,
-                )
-                v = MultiHeadAttention.broadcast_kv_across_heads(
-                    v,
-                    share_kv_across_n_heads,
-                )
-                attention_head_outputs = flash_attn_unpadded_func(  # type: ignore
-                    q.reshape(batch_size * seqlen_q, nhead, d_k_),  # type: ignore
-                    k.reshape(batch_size * seqlen_kv, nhead, d_k_),  # type: ignore
-                    v.reshape(batch_size * seqlen_kv, nhead, d_v),
-                    get_seqlen_cumsums(batch_size, seqlen_q, q.device),
-                    get_seqlen_cumsums(batch_size, seqlen_kv, k.device),
-                    seqlen_q,
-                    seqlen_kv,
-                    dropout_p=dropout_p,
-                    softmax_scale=softmax_scale,
-                    causal=False,
-                    return_attn_probs=False,
-                    deterministic=False,
-                )
-        elif TORCH_2_ATTENTION_POSSIBLE:
             extra_inputs = {}
             if softmax_scale is not None:
                 extra_inputs["scale"] = (
@@ -702,7 +602,9 @@ class MultiHeadAttention(torch.nn.Module):
                     )
                 attn_mask = attn_mask.to(device=q.device, dtype=q.dtype)
                 extra_inputs["attn_mask"] = attn_mask
-            if not USE_TORCH_2_GQA:
+            if USE_TORCH_2_GQA:
+                extra_inputs["enable_gqa"] = True
+            else:
                 k = MultiHeadAttention.broadcast_kv_across_heads(
                     k,
                     share_kv_across_n_heads,
@@ -711,17 +613,15 @@ class MultiHeadAttention(torch.nn.Module):
                     v,
                     share_kv_across_n_heads,
                 )
-            else:
-                extra_inputs["enable_gqa"] = True
             attention_head_outputs = torch.nn.functional.scaled_dot_product_attention(
                 # transposing just before and keeping the state in the transposed state
                 # makes things faster as this function internally transposes the state
                 # back and forth
-                q.transpose(1, 2),
-                k.transpose(1, 2),
-                v.transpose(1, 2),
-                dropout_p=dropout_p,
-                **extra_inputs,
+                    q.transpose(1, 2),
+                    k.transpose(1, 2),
+                    v.transpose(1, 2),
+                    dropout_p=dropout_p,
+                    **extra_inputs,
             )
             attention_head_outputs = attention_head_outputs.transpose(1, 2)
         else:
