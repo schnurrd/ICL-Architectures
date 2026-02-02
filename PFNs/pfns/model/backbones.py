@@ -27,6 +27,7 @@ from pfns.model.fla_patches import (
     _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
     _maybe_patch_gated_deltanet_with_stateless_recurrent,
+    _maybe_patch_mamba2_with_stateless_recurrent,
     _maybe_patch_shortconv_forward_pytorch,
 )
 from pfns.model.layer import PerFeatureLayer
@@ -466,6 +467,9 @@ class FLABackbone(Backbone):
                 cache_params = out.cache_params
             else:
                 raise RuntimeError("FLA model output does not contain past_key_values or cache_params.")
+            # Store cache_position_start as fallback for direct _run_fla calls (bypassing incontext_fit)
+            if cache_params is not None and not hasattr(cache_params, "_cache_position_start"):
+                cache_params._cache_position_start = x.size(1)
             if self._debug_cache and cache_params is not None and not self._cache_debugged:
                 print(f"[FLA cache] {self._summarize_cache(cache_params)}")
                 self._cache_debugged = True
@@ -489,6 +493,7 @@ class FLABackbone(Backbone):
             ((KDAModel,), _maybe_patch_kda_with_stateless_recurrent),
             ((DeltaNetModel), _maybe_patch_deltanet_with_stateless_recurrent),
             ((GatedDeltaNetModel), _maybe_patch_gated_deltanet_with_stateless_recurrent),
+            ((Mamba2Model), _maybe_patch_mamba2_with_stateless_recurrent),
         )
         contexts: list[tp.ContextManager[tp.Any]] = []
         contexts.append(_maybe_patch_shortconv_forward_pytorch(True))
@@ -512,6 +517,8 @@ class FLABackbone(Backbone):
             return test_x
 
         assert cache_params is not None, "Cache parameters must be provided for test-time evaluation."
+        if cache_position_start is None:
+            cache_position_start = getattr(cache_params, "_cache_position_start", None)
 
         batch_size, seq_len, embed_dim = test_x.shape
         
@@ -519,7 +526,7 @@ class FLABackbone(Backbone):
             chunk_len = chunk_x.size(1)
             
             if not use_custom_recurrent or not isinstance(
-                self.fla, (GLAModel, KDAModel, DeltaNetModel, GatedDeltaNetModel)
+                self.fla, (GLAModel, KDAModel, DeltaNetModel, GatedDeltaNetModel, Mamba2Model)
             ):
                 expanded_cache = self._repeat_cache(cache_params, chunk_len)
             else:
@@ -559,6 +566,8 @@ class FLABackbone(Backbone):
         """
         if test_x.numel() == 0:
             return test_x
+        if cache_position_start is None and cache_params is not None:
+            cache_position_start = getattr(cache_params, "_cache_position_start", None)
 
         output_tokens = []
         seq_len = test_x.size(1)

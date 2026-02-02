@@ -655,3 +655,104 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(enabled: bool):
     finally:
         gated_deltanet_layer.fused_recurrent_gated_delta_rule = original_fused
         gated_deltanet_layer.chunk_gated_delta_rule = original_chunk
+
+
+@contextmanager
+def _maybe_patch_mamba2_with_stateless_recurrent(enabled: bool):
+    """
+    Patch Mamba2 forward for stateless parallel evaluation with cached state.
+    Computes SSM output directly from initial state without materializing intermediates:
+        h_new = A * h_0 + B * x;  y = C @ h_new + D * x
+    """
+    if not enabled:
+        yield
+        return
+    import fla.models.mamba2.modeling_mamba2 as mamba_module
+    
+    original_forward = mamba_module.Mamba2.forward
+
+    @torch.compiler.disable
+    def _stateless_forward(
+        self,
+        hidden_states: torch.Tensor,  # (orig_batch, seq_len, hidden_size)
+        cache_params=None,
+        cache_position=None,
+        attention_mask=None,
+        **kwargs
+    ):
+        assert cache_params is not None, "Stateless mamba2 requires cache_params."
+        
+        dtype = hidden_states.dtype
+        orig_batch, seq_len, _ = hidden_states.shape
+        cache_batch = cache_params.conv_states[self.layer_idx].shape[0]
+        assert orig_batch % cache_batch == 0
+        flat_len = orig_batch // cache_batch  # number of test samples per cache entry
+        
+        # Input projection: split into gate, conv input, and dt
+        projected_states = self.in_proj(hidden_states.float())
+        d_mlp = (projected_states.shape[-1] - 2 * self.intermediate_size 
+                 - 2 * self.n_groups * self.ssm_state_size - self.num_heads) // 2
+        _, _, gate, hidden_states_B_C, dt = projected_states.split(
+            [d_mlp, d_mlp, self.intermediate_size, self.conv_dim, self.num_heads], dim=-1
+        )
+        
+        # Short convolution: prepend cached history and apply depthwise conv
+        hidden_states_B_C = hidden_states_B_C.view(cache_batch, flat_len, seq_len, -1)
+        conv_state = cache_params.conv_states[self.layer_idx].float()  # (cache_batch, conv_dim, kernel_size)
+        conv_history = conv_state[:, :, -(self.conv_kernel_size - 1):].unsqueeze(1)  # (cache_batch, 1, conv_dim, k-1)
+        x_transposed = hidden_states_B_C.transpose(2, 3)  # (cache_batch, flat_len, conv_dim, seq_len)
+        conv_input = torch.cat([conv_history.expand(cache_batch, flat_len, -1, -1), x_transposed], dim=-1)
+        
+        weight = self.conv1d.weight.squeeze(1).float()  # (conv_dim, kernel_size)
+        bias = self.conv1d.bias.float() if self.conv1d.bias is not None else None
+        conv_out = F.conv1d(
+            conv_input.view(cache_batch * flat_len, self.conv_dim, -1),
+            weight.unsqueeze(1), bias=bias, groups=self.conv_dim,
+        ).view(cache_batch, flat_len, self.conv_dim, seq_len)
+        hidden_states_B_C = F.silu(conv_out).transpose(2, 3)  # (cache_batch, flat_len, seq_len, conv_dim)
+        
+        # Split conv output into x, B, C and reshape for SSM
+        x, B, C = torch.split(hidden_states_B_C, [
+            self.intermediate_size, self.n_groups * self.ssm_state_size, self.n_groups * self.ssm_state_size
+        ], dim=-1)
+        x = x.view(cache_batch, flat_len, seq_len, self.num_heads, self.head_dim)
+        B = B.view(cache_batch, flat_len, seq_len, self.n_groups, self.ssm_state_size)
+        C = C.view(cache_batch, flat_len, seq_len, self.n_groups, self.ssm_state_size)
+        dt = dt.view(cache_batch, flat_len, seq_len, self.num_heads)
+        gate = gate.view(cache_batch, flat_len, seq_len, self.intermediate_size)
+        
+        # SSM discretization: A_bar = exp(A * dt), B_bar = dt * B
+        A = -torch.exp(self.A_log.float())  # (num_heads,)
+        dt = F.softplus(dt + self.dt_bias.float())  # (cache_batch, flat_len, seq_len, num_heads)
+        A_bar = torch.exp(A.view(1, 1, 1, -1) * dt).unsqueeze(-1)  # (cache_batch, flat_len, seq_len, num_heads, 1)
+        h0 = cache_params.ssm_states[self.layer_idx].float()  # (cache_batch, num_heads, head_dim, ssm_state_size)
+        
+        # Expand B, C from n_groups to num_heads
+        heads_per_group = self.num_heads // self.n_groups
+        B = B.repeat_interleave(heads_per_group, dim=-2).contiguous()  # (..., num_heads, ssm_state_size)
+        C = C.repeat_interleave(heads_per_group, dim=-2).contiguous()
+        B_bar = dt.unsqueeze(-1) * B  # (cache_batch, flat_len, seq_len, num_heads, ssm_state_size)
+        
+        # Fused SSM output: y = C @ (A_bar * h0) + sum_s(C * B_bar) * x
+        # Avoids materializing (batch, flat_len, seq_len, heads, head_dim, state_size) tensor
+        C_scaled = C * A_bar  # broadcasts A_bar over ssm_state_size
+        y_from_h0 = torch.einsum('bflhs,bhds->bflhd', C_scaled, h0)  # contract over ssm_state_size
+        CB_sum = (C * B_bar).sum(dim=-1)  # (cache_batch, flat_len, seq_len, num_heads)
+        y_from_x = CB_sum.unsqueeze(-1) * x  # (cache_batch, flat_len, seq_len, num_heads, head_dim)
+        y = y_from_h0 + y_from_x
+        
+        # D skip connection
+        if self.D is not None:
+            y = y + self.D.float().view(1, 1, 1, -1, 1) * x
+        
+        # Reshape and apply output projection with gating
+        y = y.reshape(cache_batch * flat_len, seq_len, self.intermediate_size)
+        gate = gate.reshape(cache_batch * flat_len, seq_len, self.intermediate_size)
+        return self.out_proj(self.norm(y, gate)).to(dtype)
+
+    mamba_module.Mamba2.forward = _stateless_forward
+    try:
+        yield
+    finally:
+        mamba_module.Mamba2.forward = original_forward
+

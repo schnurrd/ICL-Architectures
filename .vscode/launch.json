@@ -30,11 +30,12 @@
                 "PFNs/configs/fla/fla_config.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb",
-                "--config-arg", "model_type='gated_deltanet'",
+                "--config-arg", "model_type='deltanet'",
                 "--config-arg", "sequence_mode='cached'",
                 "--config-arg", "cache_chunk_size=None",
                 "--config-arg", "training_setup='low'",
                 "--config-arg", "batch_size=2",
+                "--config-index", "-1"
             ],
             "justMyCode": false
         },
