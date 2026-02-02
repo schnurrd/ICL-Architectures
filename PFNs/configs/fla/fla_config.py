@@ -40,13 +40,13 @@ MODEL_SETTINGS = {
         "emsize": 320,
         "config_kwargs": { # per default runs in chunked mode, has a max_position_embeddings set to 2048, supports attn dict
             "hidden_size": 320, # default 2048
-            "use_short_conv": True, # typically true but we don't have temporal data
+            "use_short_conv": False, # typically true but we don't have temporal data
             "num_heads": 4, # default 16
             # "head_dim": 80, # currently 128
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
             "num_hidden_layers": 10, # default 24
-            "norm_eps": 1e-5, # default 1e-6
+            "norm_eps": 1e-6, # default 1e-6
             "use_cache": True,
             "vocab_size": 1, # dummy value, not used default 32000
             # "cache_chunk_size": 16,  
@@ -63,7 +63,7 @@ MODEL_SETTINGS = {
             "num_hidden_layers": 12, # default 24
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
-            "norm_eps": 1e-5, # default 1e-6
+            "norm_eps": 1e-6, # default 1e-6
             "use_cache": True,
             "vocab_size": 1, # dummy value, not used default 32000
         },
@@ -94,9 +94,9 @@ MODEL_SETTINGS = {
             "num_heads": 4, # default 16
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
-            "norm_eps": 1e-5, # default 1e-6
+            "norm_eps": 1e-6, # default 1e-6
             "use_cache": True,
-            "use_short_conv": True,
+            "use_short_conv": False,
             "vocab_size": 1, # dummy value, not used default 32000
         },
     },
@@ -112,9 +112,9 @@ MODEL_SETTINGS = {
             "head_dim": 48, # default 256
             "intermediate_size": 256 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
-            "norm_eps": 1e-5, # default 1e-6
+            "norm_eps": 1e-6, # default 1e-6
             "use_cache": True,
-            "use_short_conv": True,
+            "use_short_conv": False,
             "vocab_size": 1, # dummy value, not used default 32000
         },
     },
@@ -147,6 +147,7 @@ def get_config(
     lr: float | None = None,
     steps_per_epoch: int | None = None,
     aggregate_k_gradients: int | None = None,
+    use_short_conv: bool | None = None,
     interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = "subspace",
     config_kwargs_override: dict[str, object] | None = None,
@@ -220,6 +221,12 @@ def get_config(
     )
 
     resolved_config_kwargs = dict(MODEL_SETTINGS[model_type]["config_kwargs"])
+    if use_short_conv is not None:
+        if "use_short_conv" not in resolved_config_kwargs:
+            raise ValueError(
+                f"use_short_conv is not supported for model_type {model_type!r}."
+            )
+        resolved_config_kwargs["use_short_conv"] = use_short_conv
     if config_kwargs_override is not None:
         if not isinstance(config_kwargs_override, dict):
             raise ValueError(
@@ -276,6 +283,8 @@ def get_config(
         wandb_extras.append(f"steps{resolved_steps_per_epoch}")
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
+    if use_short_conv is not None:
+        wandb_extras.append(f"shortconv{use_short_conv}")
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
