@@ -10,33 +10,49 @@ from pfns.model.fla_patches import (
 MODEL_TYPES = ("gla", "kda", "deltanet", "gated_deltanet", "mamba2")
 
 
-def _model_config_kwargs(model_type: str) -> dict[str, object]:
+def _model_config_kwargs(model_type: str, size: str = "small") -> dict[str, object]:
+    """Get model config kwargs for a given model type and size."""
+    if size == "small":
+        hidden_size = 8 if model_type != "mamba2" else 64
+        num_heads = 2
+        num_layers = 2
+        intermediate_size = 32 if model_type != "mamba2" else 128
+        state_size = 64 if model_type == "mamba2" else None
+    elif size == "medium":
+        hidden_size = 32 if model_type != "mamba2" else 128
+        num_heads = 4
+        num_layers = 3
+        intermediate_size = 128 if model_type != "mamba2" else 256
+        state_size = 64 if model_type == "mamba2" else None
+    else:
+        raise ValueError(f"Unsupported size: {size}")
+
     if model_type == "gla":
         return {
-            "hidden_size": 8,
-            "num_hidden_layers": 2,
-            "num_heads": 2,
-            "intermediate_size": 32,
+            "hidden_size": hidden_size,
+            "num_hidden_layers": num_layers,
+            "num_heads": num_heads,
+            "intermediate_size": intermediate_size,
             "hidden_act": "swish",
             "norm_eps": 1e-5,
             "use_cache": True,
         }
     if model_type == "mamba2":
         return {
-            "hidden_size": 64,
-            "num_hidden_layers": 2,
-            "state_size": 64,
+            "hidden_size": hidden_size,
+            "num_hidden_layers": num_layers,
+            "state_size": state_size,
             "conv_kernel": 4,
-            "intermediate_size": 128,
-            "num_heads": 2, 
+            "intermediate_size": intermediate_size,
+            "num_heads": num_heads, 
             "use_cache": True,
         }
     if model_type == "kda":
         return {
-            "hidden_size": 8,
-            "num_hidden_layers": 2,
-            "num_heads": 2,
-            "intermediate_size": 32,
+            "hidden_size": hidden_size,
+            "num_hidden_layers": num_layers,
+            "num_heads": num_heads,
+            "intermediate_size": intermediate_size,
             "hidden_act": "swish",
             "norm_eps": 1e-5,
             "use_cache": True,
@@ -44,10 +60,10 @@ def _model_config_kwargs(model_type: str) -> dict[str, object]:
         }
     if model_type == "deltanet":
         return {
-            "hidden_size": 8,
-            "num_hidden_layers": 2,
-            "num_heads": 2,
-            "intermediate_size": 32,
+            "hidden_size": hidden_size,
+            "num_hidden_layers": num_layers,
+            "num_heads": num_heads,
+            "intermediate_size": intermediate_size,
             "hidden_act": "swish",
             "norm_eps": 1e-5,
             "use_cache": True,
@@ -55,11 +71,11 @@ def _model_config_kwargs(model_type: str) -> dict[str, object]:
         }
     if model_type == "gated_deltanet":
         return {
-            "hidden_size": 8,
-            "num_hidden_layers": 2,
-            "num_heads": 2,
-            "head_dim": 4,
-            "intermediate_size": 32,
+            "hidden_size": hidden_size,
+            "num_hidden_layers": num_layers,
+            "num_heads": num_heads,
+            "head_dim": hidden_size // num_heads,
+            "intermediate_size": intermediate_size,
             "hidden_act": "swish",
             "norm_eps": 1e-5,
             "use_cache": True,
@@ -68,18 +84,34 @@ def _model_config_kwargs(model_type: str) -> dict[str, object]:
     raise ValueError(f"Unsupported model_type: {model_type}")
 
 
-def _build_backbone(model_type: str, cache_chunk_size: int | None = None, train: bool = False) -> torch.nn.Module:
+def _build_backbone(
+    model_type: str, 
+    cache_chunk_size: int | None = None, 
+    train: bool = False,
+    size: str = "small",
+) -> torch.nn.Module:
     config = FLABackboneConfig(
         model_type=model_type,
-        config_kwargs=_model_config_kwargs(model_type),
+        config_kwargs=_model_config_kwargs(model_type, size=size),
         cache_chunk_size=cache_chunk_size,
     )
-    backbone = config.create_backbone(ninp=8, attention_between_features=False)
+    ninp = _model_config_kwargs(model_type, size=size)["hidden_size"]
+    backbone = config.create_backbone(ninp=ninp, attention_between_features=False)
     if train:
         backbone.train()
     else:
         backbone.eval()
     return backbone
+
+
+def _get_tolerances(model_type: str) -> tuple[float, float]:
+    """Get rtol, atol for a given model type."""
+    if model_type in {"deltanet", "mamba2"}:
+        return 1e-3, 1e-3
+    elif model_type in {"kda", "gated_deltanet"}:
+        return 1e-4, 1e-4
+    else:
+        return 1e-6, 1e-6
 
 
 @pytest.mark.parametrize("model_type", MODEL_TYPES)
@@ -97,7 +129,7 @@ def test_fla_test_cache_matches_naive(model_type: str):
     batch_size = 2
     seq_len = 20
     num_tokens = 1
-    embed_dim = 8
+    embed_dim = 8 if model_type != "mamba2" else 64
     train_len = 12
     assert 0 < train_len < seq_len
 
@@ -169,7 +201,7 @@ def test_fla_cache_allows_train_gradients(model_type: str):
     batch_size = 2
     seq_len = 20
     num_tokens = 1
-    embed_dim = 8
+    embed_dim = 8 if model_type != "mamba2" else 64
     train_len = 12
     assert 0 < train_len < seq_len
 
@@ -221,7 +253,7 @@ def test_fla_cache_chunking_matches_gradients(model_type: str):
     batch_size = 2
     seq_len = 20
     num_tokens = 1
-    embed_dim = 8
+    embed_dim = 8 if model_type != "mamba2" else 64
     train_len = 10
     assert 0 < train_len < seq_len
 
@@ -274,7 +306,7 @@ def test_stateless_matches_repeated_cache_outputs_and_grads(model_type: str):
     batch_size = 2
     seq_len = 10
     num_tokens = 1
-    embed_dim = 8
+    embed_dim = 8 if model_type != "mamba2" else 64
     train_len = 6
     assert 0 < train_len < seq_len
 
@@ -321,12 +353,7 @@ def test_stateless_matches_repeated_cache_outputs_and_grads(model_type: str):
     
     out_ref.sum().backward()
 
-    if model_type in {"deltanet", "mamba2"}:
-        rtol, atol = 1e-3, 1e-3
-    elif model_type in {"kda", "gated_deltanet"}:
-        rtol, atol = 1e-4, 1e-4
-    else:
-        rtol, atol = 1e-6, 1e-6
+    rtol, atol = _get_tolerances(model_type)
 
     torch.testing.assert_close(out_stateless, out_ref, rtol=rtol, atol=atol)
     
@@ -335,6 +362,157 @@ def test_stateless_matches_repeated_cache_outputs_and_grads(model_type: str):
     if model_type != "mamba2":
         torch.testing.assert_close(train_x_stateless.grad, train_x_ref.grad, rtol=rtol, atol=atol)
         torch.testing.assert_close(test_x_stateless.grad, test_x_ref.grad, rtol=rtol, atol=atol)
+
+
+@pytest.mark.parametrize("model_type", MODEL_TYPES)
+@pytest.mark.parametrize("batch_size,test_len,size", [(1, 4, "small"), (2, 1, "small"), (2, 6, "medium")])
+def test_edge_cases(model_type: str, batch_size: int, test_len: int, size: str):
+    if not torch.cuda.is_available():
+        pytest.skip("FLA backend requires CUDA/Triton for this test.")
+
+    torch.manual_seed(42)
+    backbone = _build_backbone(model_type, train=True, size=size)
+    device = torch.device("cuda")
+    backbone = backbone.to(device)
+
+    embed_dim = _model_config_kwargs(model_type, size=size)["hidden_size"]
+    train_len = 8
+    train_x = torch.randn(batch_size, train_len, embed_dim, device=device)
+    test_x = torch.randn(batch_size, test_len, embed_dim, device=device)
+
+    with torch.no_grad():
+        _, past = backbone._run_fla(train_x)
+        out_fast = backbone._run_test_with_cache(test_x, past, cache_position_start=train_len)
+        out_naive = backbone._run_test_with_cache_naive(test_x, backbone._copy_cache(past), use_custom_recurrent=False)
+
+    rtol, atol = _get_tolerances(model_type)
+    torch.testing.assert_close(out_fast, out_naive, rtol=rtol, atol=atol)
+
+
+@pytest.mark.parametrize("model_type", MODEL_TYPES)
+def test_model_parameter_gradients(model_type: str):
+    """Test that model parameter gradients match between naive and fast implementations."""
+    if not torch.cuda.is_available():
+        pytest.skip("FLA backend requires CUDA/Triton for this test.")
+
+    torch.manual_seed(0)
+    backbone_naive = _build_backbone(model_type, train=True)
+    backbone_fast = _build_backbone(model_type, train=True)
+    backbone_fast.load_state_dict(backbone_naive.state_dict())
+    device = torch.device("cuda")
+    backbone_naive = backbone_naive.to(device)
+    backbone_fast = backbone_fast.to(device)
+
+    batch_size = 2
+    embed_dim = _model_config_kwargs(model_type)["hidden_size"]
+    train_len = 8
+    test_len = 4
+
+    train_x = torch.randn(batch_size, train_len, embed_dim, device=device, requires_grad=True)
+    test_x = torch.randn(batch_size, test_len, embed_dim, device=device)
+
+    train_x_naive = train_x.detach().clone().requires_grad_(True)
+    _, past_naive = backbone_naive._run_fla(train_x_naive)
+    # mamba2 & gated_deltanet: native kernels don't support correct gradients through cache for model parameters
+    use_custom = model_type in {"mamba2", "gated_deltanet"}
+    out_naive = backbone_naive._run_test_with_cache_naive(
+        test_x, past_naive, use_custom_recurrent=use_custom, use_custom_shortconv=True
+    )
+    out_naive.sum().backward()
+
+    train_x_fast = train_x.detach().clone().requires_grad_(True)
+    _, past_fast = backbone_fast._run_fla(train_x_fast)
+    out_fast = backbone_fast._run_test_with_cache(test_x, past_fast, cache_position_start=train_len)
+    out_fast.sum().backward()
+
+    rtol, atol = _get_tolerances(model_type)
+    
+    for (name_naive, param_naive), (name_fast, param_fast) in zip(
+        backbone_naive.named_parameters(), backbone_fast.named_parameters()
+    ):
+        assert name_naive == name_fast, f"Parameter name mismatch: {name_naive} vs {name_fast}"
+        if param_naive.grad is None and param_fast.grad is None:
+            continue
+        assert param_naive.grad is not None, f"param_naive.grad is None for {name_naive}"
+        assert param_fast.grad is not None, f"param_fast.grad is None for {name_fast}"
+        torch.testing.assert_close(
+            param_fast.grad, param_naive.grad, rtol=rtol, atol=atol,
+            msg=f"Gradient mismatch for parameter {name_naive}"
+        )
+
+
+@pytest.mark.parametrize("model_type", MODEL_TYPES)
+def test_outputs_different_from_autoregressive(model_type: str):
+    """Stateless parallel outputs should differ from autoregressive full-sequence outputs."""
+    if not torch.cuda.is_available():
+        pytest.skip("FLA backend requires CUDA/Triton for this test.")
+
+    torch.manual_seed(42)
+    backbone = _build_backbone(model_type, train=True)
+    device = torch.device("cuda")
+    backbone = backbone.to(device)
+
+    batch_size = 2
+    embed_dim = _model_config_kwargs(model_type)["hidden_size"]
+    train_len = 8
+    test_len = 4
+    full_len = train_len + test_len
+
+    full_x = torch.randn(batch_size, full_len, embed_dim, device=device)
+    train_x = full_x[:, :train_len]
+    test_x = full_x[:, train_len:]
+
+    with torch.no_grad():
+        out_full, _ = backbone._run_fla(full_x)
+        out_full_test = out_full[:, train_len:]
+
+        _, past = backbone._run_fla(train_x)
+        out_cached = backbone._run_test_with_cache(test_x, past, cache_position_start=train_len)
+
+    assert not torch.allclose(out_full_test, out_cached, rtol=1e-4, atol=1e-4), (
+        "Stateless cached output should differ from full autoregressive output"
+    )
+
+
+@pytest.mark.parametrize("model_type", MODEL_TYPES)
+@pytest.mark.parametrize("train_len", [128, 256])
+def test_long_training_context(model_type: str, train_len: int):
+    """Test with long training contexts to stress-test cache handling.
+    Note: DeltaNet requires bfloat16 for sequences ≥64 tokens (chunk kernel limitation).
+    """
+    if not torch.cuda.is_available():
+        pytest.skip("FLA backend requires CUDA/Triton for this test.")
+
+    torch.manual_seed(42)
+    backbone = _build_backbone(model_type, train=True)
+    device = torch.device("cuda")
+    
+    # DeltaNet's chunk kernel requires bfloat16
+    use_bf16 = model_type == "deltanet"
+    if use_bf16:
+        backbone = backbone.to(device).to(torch.bfloat16)
+    else:
+        backbone = backbone.to(device)
+
+    batch_size = 2
+    embed_dim = _model_config_kwargs(model_type)["hidden_size"]
+    test_len = 8
+    
+    dtype = torch.bfloat16 if use_bf16 else torch.float32
+    train_x = torch.randn(batch_size, train_len, embed_dim, device=device, dtype=dtype)
+    test_x = torch.randn(batch_size, test_len, embed_dim, device=device, dtype=dtype)
+
+    with torch.no_grad():
+        _, past = backbone._run_fla(train_x)
+        assert past is not None
+        out_fast = backbone._run_test_with_cache(test_x, past, cache_position_start=train_len)
+        out_naive = backbone._run_test_with_cache_naive(test_x, backbone._copy_cache(past), use_custom_recurrent=False)
+
+    rtol, atol = _get_tolerances(model_type)
+    if use_bf16:
+        rtol, atol = max(rtol, 5e-3), max(atol, 5e-3)
+    torch.testing.assert_close(out_fast, out_naive, rtol=rtol, atol=atol)
+
 
 if __name__ == "__main__":
     test_fla_test_cache_matches_naive("deltanet")
