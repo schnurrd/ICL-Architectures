@@ -1,11 +1,132 @@
 """Context managers for patching FLA/Gla ops during evaluation."""
 from __future__ import annotations
 
+import os
 import typing as tp
 from contextlib import contextmanager
 
 import torch
 import torch.nn.functional as F
+
+from fla.modules.l2norm import l2norm
+
+@contextmanager
+def _maybe_patch_shortconv_forward_pytorch(enabled: bool):
+    if not enabled:
+        yield
+        return
+    try:
+        import fla.modules.convolution as conv_module
+    except Exception:
+        yield
+        return
+
+    if not hasattr(conv_module, "ShortConvolution"):
+        yield
+        return
+
+    original_forward = conv_module.ShortConvolution.forward
+
+    def _forward_pytorch(
+        self,
+        x: torch.Tensor,
+        residual: torch.Tensor | None = None,
+        mask: torch.Tensor | None = None,
+        cache: torch.Tensor | None = None,
+        output_final_state: bool = False,
+        cu_seqlens: torch.LongTensor | None = None,
+        chunk_indices: torch.LongTensor | None = None,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Copied from FLA ShortConvolution forward with modifications for stateless processing in PyTorch. 
+        Only supports decode-like 1 step per sequence path.
+        Args:
+            x (`torch.Tensor`):
+                Tensor of shape `[B, T, D]`. `B` must be 1 if `cu_seqlens` is provided.
+            residual (`Optional[torch.Tensor]`):
+                Residual tensor of shape `[B, T, D]`. Default: `None`.
+            mask (`Optional[torch.Tensor]`):
+                Attention mask dealing with padded positions.
+            cache (`Optional[torch.Tensor]`):
+                Previous cache tensor of shape `[N, D, W]`, where `W` is the kernel size.
+                If provided, the cache is updated **inplace**.
+            output_final_state (Optional[bool]):
+                Whether to output the final state of shape `[N, D, W]`. Default: `False`.
+            cu_seqlens (Optional[torch.LongTensor]):
+                Cumulative sequence lengths for each batch. Used for varlen. Default: `None`.
+                Shape: [B+1]
+            chunk_indices (Optional[torch.LongTensor]):
+                Chunk indices for variable-length sequences. Default: `None`.
+
+        Returns:
+            Tensor of shape `[B, T, D]`.
+        """
+        assert chunk_indices is None, "chunk_indices not supported in pytorch ShortConvolution patch."
+        assert output_final_state is False, "output_final_state must be False in pytorch ShortConvolution patch."
+        assert cu_seqlens is None, "cu_seqlens must be None in pytorch ShortConvolution patch."
+        assert mask is None, "mask must be None in pytorch ShortConvolution patch."
+
+        x = x.contiguous()
+        cache = cache.contiguous()
+        if residual is not None:
+            residual = residual.contiguous()
+
+        B, T, D = x.shape
+
+        assert T == 1, "We only support decode-like path in pytorch ShortConvolution patch."
+        assert cache is not None, "cache must be provided in pytorch ShortConvolution patch."
+
+        weight = self.weight.squeeze(1)
+        W = weight.shape[1]
+
+        cache_batch = cache.shape[0]
+        assert B % cache_batch == 0, "B must be divisible by cache_batch."
+        flat_len = B // cache_batch
+
+        x3d = x.view(cache_batch, flat_len, D).float()
+        weight_f = weight.float()
+
+        if W > 1:
+            cache_f = cache.float()
+            cache_window = cache_f[:, :, 1:].unsqueeze(1).expand(cache_batch, flat_len, D, W - 1)
+            cache_shifted = torch.cat([cache_window, x3d.unsqueeze(-1)], dim=-1)
+        else:
+            cache_shifted = x3d.unsqueeze(-1)
+
+        y3d = (cache_shifted * weight_f.view(1, 1, D, W)).sum(dim=-1)
+
+        if self.bias is not None:
+            y3d = y3d + self.bias.float().view(1, 1, D)
+        if self.activation in ("silu", "swish"):
+            y3d = F.silu(y3d)
+        if residual is not None:
+            y3d = y3d + residual.reshape(cache_batch, flat_len, D).float()
+
+        y = y3d.to(x.dtype).reshape(B, T, D)
+        
+        # Stateless path: expand cache to match flattened batch and delegate to original forward.
+        # cache_for_real = cache.repeat_interleave(flat_len, dim=0)
+        # residual_for_real = residual if residual is not None else None
+        # y_real, cache_real = original_forward(
+        #     self,
+        #     x,
+        #     residual=residual_for_real,
+        #     mask=mask,
+        #     cache=cache_for_real,
+        #     output_final_state=output_final_state,
+        #     cu_seqlens=cu_seqlens,
+        #     chunk_indices=chunk_indices,
+        #     **kwargs,
+        # )
+        # return y_real, cache_real
+        return y, cache
+
+    conv_module.ShortConvolution.forward = _forward_pytorch
+    try:
+        yield
+    finally:
+        conv_module.ShortConvolution.forward = original_forward
 
 @contextmanager
 def _maybe_patch_gla_with_stateless_recurrent(enabled: bool):
@@ -285,9 +406,10 @@ def _maybe_patch_kda_with_stateless_recurrent(enabled: bool):
             g = g.reshape(cache_batch, flat_len, T, *g.shape[2:])
             beta = beta.reshape(cache_batch, flat_len, T, *beta.shape[2:])
 
+        # Use FLA's l2norm to match the original kernel's normalization and don't fail tests
         if use_qk_l2norm_in_kernel:
-            q = F.normalize(q, dim=-1)
-            k = F.normalize(k, dim=-1)
+            q = l2norm(q)
+            k = l2norm(k)
 
         q = q * scale
 
@@ -391,9 +513,10 @@ def _maybe_patch_deltanet_with_stateless_recurrent(enabled: bool):
             v = v.reshape(cache_batch, flat_len, *v.shape[2:])
             beta = beta.reshape(cache_batch, flat_len, *beta.shape[2:])
 
+        # Use FLA's l2norm to match the original kernel's normalization and don't fail tests
         if use_qk_l2norm_in_kernel:
-            q = F.normalize(q, dim=-1)
-            k = F.normalize(k, dim=-1)
+            q = l2norm(q)
+            k = l2norm(k)
         
         q = q * scale
         
@@ -476,9 +599,10 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(enabled: bool):
             if g is not None:
                 g = g.reshape(cache_batch, flat_len, *g.shape[2:])
 
+        # Use FLA's l2norm to match the original kernel's normalization and don't fail tests
         if use_qk_l2norm_in_kernel:
-            q = F.normalize(q, dim=-1)
-            k = F.normalize(k, dim=-1)
+            q = l2norm(q)
+            k = l2norm(k)
         
         q = q * scale
 

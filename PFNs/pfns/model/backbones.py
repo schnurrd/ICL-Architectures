@@ -27,6 +27,7 @@ from pfns.model.fla_patches import (
     _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
     _maybe_patch_gated_deltanet_with_stateless_recurrent,
+    _maybe_patch_shortconv_forward_pytorch,
 )
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.linear_attention import LinearAttention
@@ -420,6 +421,7 @@ class FLABackbone(Backbone):
         cache_position_start: int | None = None,
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
+        use_custom_shortconv: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
         use_cache = return_cache or (
             cache_params is not None and isinstance(self.fla, Mamba2Model)
@@ -443,7 +445,7 @@ class FLABackbone(Backbone):
                 raise ValueError("Unsupported FLA model type for cache_params.")
         try:
             with ExitStack() as stack:
-                for ctx in self._patch_contexts(use_custom_recurrent):
+                for ctx in self._patch_contexts(use_custom_recurrent, use_custom_shortconv):
                     stack.enter_context(ctx)
                 out = self.fla(**kwargs)
         except TypeError as exc:
@@ -470,10 +472,17 @@ class FLABackbone(Backbone):
         return last_hidden_state, cache_params
 
     def _patch_contexts(
-        self, use_custom_recurrent: bool
+        self, 
+        use_custom_recurrent: bool,
+        use_custom_shortconv : bool = False,
     ) -> tp.Iterable[tp.ContextManager[tp.Any]]:
+        """
+        Get context managers for patching FLA model behavior. 
+        If use_custom_recurrent is True, we also patch the shortconv forward.
+        """
         if not use_custom_recurrent:
-            return ()
+            return (_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv),)
+        
         model = self.fla
         patch_registry: tuple[tuple[type[nn.Module] | tuple[type[nn.Module], ...], tp.Callable[[bool], tp.ContextManager[tp.Any]]], ...] = (
             ((GLAModel,), _maybe_patch_gla_with_stateless_recurrent),
@@ -482,6 +491,7 @@ class FLABackbone(Backbone):
             ((GatedDeltaNetModel), _maybe_patch_gated_deltanet_with_stateless_recurrent),
         )
         contexts: list[tp.ContextManager[tp.Any]] = []
+        contexts.append(_maybe_patch_shortconv_forward_pytorch(True))
         for model_types, ctx_factory in patch_registry:
             if isinstance(model, model_types):
                 contexts.append(ctx_factory(True))
@@ -493,6 +503,7 @@ class FLABackbone(Backbone):
         cache_params: tp.Any,
         cache_position_start: int | None = None,
         use_custom_recurrent: bool = True,
+        use_custom_shortconv: bool = True,
     ) -> torch.Tensor:
         """
         Run the FLA model on test inputs using cached past key values in parallel.
@@ -520,6 +531,7 @@ class FLABackbone(Backbone):
                 cache_position_start=cache_position_start,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
+                use_custom_shortconv=use_custom_shortconv,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
@@ -540,6 +552,7 @@ class FLABackbone(Backbone):
         cache_params: tp.Any | None,
         cache_position_start: int | None = None,
         use_custom_recurrent: bool = False,
+        use_custom_shortconv: bool = False,
     ) -> torch.Tensor:
         """
         Sequentially processes the test sequence one token at a time.
@@ -558,6 +571,7 @@ class FLABackbone(Backbone):
                 cache_position_start=cache_position_start,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
+                use_custom_shortconv=use_custom_shortconv,
             )
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)

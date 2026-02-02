@@ -40,7 +40,7 @@ MODEL_SETTINGS = {
         "emsize": 320,
         "config_kwargs": { # per default runs in chunked mode, has a max_position_embeddings set to 2048, supports attn dict
             "hidden_size": 320, # default 2048
-            "use_short_conv": False, # typically true but we don't have temporal data
+            "use_short_conv": True, # typically true but we don't have temporal data
             "num_heads": 4, # default 16
             # "head_dim": 80, # currently 128
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
@@ -96,7 +96,7 @@ MODEL_SETTINGS = {
             "hidden_act": "swish",
             "norm_eps": 1e-5, # default 1e-6
             "use_cache": True,
-            "use_short_conv": False,
+            "use_short_conv": True,
             "vocab_size": 1, # dummy value, not used default 32000
         },
     },
@@ -114,7 +114,7 @@ MODEL_SETTINGS = {
             "hidden_act": "swish",
             "norm_eps": 1e-5, # default 1e-6
             "use_cache": True,
-            "use_short_conv": False,
+            "use_short_conv": True,
             "vocab_size": 1, # dummy value, not used default 32000
         },
     },

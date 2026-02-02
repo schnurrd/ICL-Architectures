@@ -120,7 +120,8 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python"
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
+            "justMyCode": false
         }
     ]
 }
