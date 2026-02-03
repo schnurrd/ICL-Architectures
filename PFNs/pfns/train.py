@@ -108,9 +108,6 @@ def train(
             f"{c.from_yaml(c.to_yaml())=} vs {c=}"
         )
 
-    # Arguments from original signature not in MainConfig are set to defaults here
-    load_weights_from_this_state_dict = None
-
     total_start_time = time.time()
 
     if device is None:
@@ -199,9 +196,6 @@ def train(
 
     model = c.model.create_model()
     criterion = model.criterion
-
-    if load_weights_from_this_state_dict is not None:
-        model.load_state_dict(load_weights_from_this_state_dict)
 
     print(
         f"Using a model with {sum(p.numel() for p in model.parameters()) / 1000 / 1000:.{2}f} M parameters"

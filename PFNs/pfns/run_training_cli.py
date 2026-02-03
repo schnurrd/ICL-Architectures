@@ -19,7 +19,8 @@ from pfns.run_evaluation_cli import (
     compute_per_dataset_stats,
 )
 from pfns.utils import get_default_device
-from pfns.run_logger import WandbConfig, create_run_manager
+from pfns.run_logger import WandbConfig, create_run_manager, download_model_from_wandb
+import wandb
 
 
 def parse_args():
@@ -73,6 +74,14 @@ def parse_args():
         "--new-wandb-id",
         action="store_true",
         help="Start a new wandb run ID when resuming from a checkpoint.",
+    )
+    parser.add_argument(
+        "--continue-from-wandb",
+        type=str,
+        default=None,
+        metavar="RUN_PATH",
+        help="Continue training from a wandb run (e.g., 'entity/project/run_id' or 'project/runs/run_id'). "
+             "Downloads the checkpoint from wandb if not present locally.",
     )
 
     parser.add_argument(
@@ -209,144 +218,141 @@ def load_config_from_python(
         raise ValueError(f"Failed to load config from {config_file}: {e}")
 
 
+def _update_config(config: pfns.train.MainConfig, **updates) -> pfns.train.MainConfig:
+    """Helper to update frozen config dataclass."""
+    return config.__class__(**{**config.__dict__, **updates})
+
+
+def _update_wandb(config: pfns.train.MainConfig, **updates) -> pfns.train.MainConfig:
+    """Helper to update wandb config within MainConfig."""
+    base = config.wandb or WandbConfig()
+    return _update_config(config, wandb=WandbConfig(**{**base.__dict__, **updates}))
+
+
+def _build_checkpoint_path(
+    prefix: str,
+    config_file: str,
+    config_index: int,
+    run_id: str,
+    config_kwargs: dict | None = None,
+    suffix: str = "",
+) -> str:
+    """Build checkpoint directory path: {prefix}/{config_name}_{index}[_{kwargs}][_{suffix}]_{run_id}
+    
+    Directory name is truncated to 255 bytes if needed (with hash to preserve uniqueness).
+    """
+    import hashlib
+    
+    config_name = config_file.split("/")[-1].split(".")[0]
+    parts = [config_name, str(config_index)]
+    
+    # Add config kwargs to path
+    if config_kwargs:
+        for key in sorted(config_kwargs):
+            value = config_kwargs[key]
+            if value is not None:
+                safe_val = str(value).replace(os.sep, "_").replace(" ", "")
+                parts.append(f"{key}_{safe_val}")
+    
+    if suffix:
+        parts.append(suffix)
+    
+    parts.append(run_id)
+    
+    dirname = "_".join(parts)
+    
+    max_len = 255
+    if len(dirname.encode('utf-8')) > max_len:
+        full_hash = hashlib.sha256(dirname.encode('utf-8')).hexdigest()[:8]
+        
+        # Format: {truncated_parts}_{hash}_{run_id}
+        available_len = max_len - len(run_id.encode('utf-8')) - len(full_hash) - 2  # 2 underscores
+        
+        parts_without_runid = parts[:-1]
+        truncated = "_".join(parts_without_runid).encode('utf-8')[:available_len].decode('utf-8', errors='ignore')
+        dirname = f"{truncated}_{full_hash}_{run_id}"
+    
+    return os.path.join(prefix, dirname)
+
+
 def main():
     """Main CLI entry point."""
     args = parse_args()
-
-    # Load configuration from Python file
     config_kwargs = dict(args.config_arg)
-    config = load_config_from_python(
-        args.config_file,
-        args.config_index,
-        config_kwargs=config_kwargs,
-    )
+    print("Loading configuration...")
+    config = load_config_from_python(args.config_file, args.config_index, config_kwargs=config_kwargs)
 
-    def get_filename(config_file):
-        return f"{config_file.split('/')[-1].split('.')[0]}"
+    # --- Handle continuation from wandb ---
+    if args.continue_from_wandb is not None:
+        assert args.checkpoint_save_load_prefix, "--checkpoint-save-load-prefix required with --continue-from-wandb"
+        
+        run_id = args.continue_from_wandb.rstrip("/").split("/")[-1]
+        
+        checkpoint_path = download_model_from_wandb(args.continue_from_wandb)
+        
+        config = pfns.train.load_config(checkpoint_path)
+        print(f"Continuing from wandb run: {run_id}")
 
-    def format_config_suffix(kwargs: dict[str, object]) -> str:
-        if not kwargs:
-            return ""
-        parts = []
-        for key in sorted(kwargs):
-            value = kwargs[key]
-            if value is None:
-                continue
-            safe_key = str(key).replace(os.sep, "_")
-            safe_value = str(value).replace(os.sep, "_").replace(" ", "")
-            parts.append(f"{safe_key}_{safe_value}")
-        return "_" + "_".join(parts) if parts else ""
-
-    if args.checkpoint_save_load_suffix:
-        assert (
-            args.checkpoint_save_load_prefix is not None
-        ), "checkpoint_save_load_prefix is required when checkpoint_save_load_suffix is provided"
-
-    # Override checkpoint paths if specified via CLI
-    if args.checkpoint_save_load_prefix is not None:
-        assert (
-            config.train_state_dict_save_path is None
-        ), "train_state_dict_save_path is already set"
-        assert (
-            config.train_state_dict_load_path is None
-        ), "train_state_dict_load_path is already set"
-
-        # Add suffix if it exists
-        suffix = f"_{args.config_index}"
-        suffix += format_config_suffix(config_kwargs)
-        if args.checkpoint_save_load_suffix:
-            suffix += f"_{args.checkpoint_save_load_suffix}"
-
-        path = f"{args.checkpoint_save_load_prefix}/{get_filename(args.config_file)}{suffix}"
-
-        config = config.__class__(
-            **{
-                **config.__dict__,
-                "train_state_dict_save_path": path + "/checkpoint.pt",
-                "train_state_dict_load_path": path + "/checkpoint.pt",
-            }
-        )
-        os.makedirs(path, exist_ok=True)
-
-    # If no wandb dir is set but we have a train_state_dict_save_path, set wandb dir to this directory
-    if config.wandb is not None and config.wandb.dir is None and config.train_state_dict_save_path is not None:
-        config = config.__class__(
-            **{
-                **config.__dict__,
-                "wandb": WandbConfig(
-                    **{
-                        **config.wandb.__dict__,
-                        "dir": os.path.dirname(config.train_state_dict_save_path),
-                    }
-                ),
-            }
-        )
-
-    if args.wandb is not None: # Wandb CLI flag overrides config file
-        if args.wandb:  # enable wandb if requrested via cli
+    # --- Apply CLI overrides ---
+    if args.wandb is not None:
+        if args.wandb:
             if config.wandb is None:
-                raise ValueError(
-                    "--wandb was set, but config.wandb is None. Configure wandb in the config file."
-                )
-            if config.wandb.mode == "disabled":  # overrides config file
-                config = config.__class__(
-                    **{
-                        **config.__dict__,
-                        "wandb": WandbConfig(
-                            **{
-                                **config.wandb.__dict__,
-                                "mode": "online",
-                            }
-                        ),
-                    }
-                )
-        else:  # disable wandb if requested via cli
-            existing = config.wandb or WandbConfig()
-            config = config.__class__(
-                **{
-                    **config.__dict__,
-                    "wandb": WandbConfig(**{**existing.__dict__, "mode": "disabled"}),
-                }
-            )
-
-    # We overwrite the config with the one from the checkpoint if it exists
-    # as there is some randomness in the config and we want to use the exact
-    # same config again. When --overwrite is set, skip loading so we start fresh.
-    if not args.overwrite and pfns.train.should_load_checkpoint(config):
-        config = pfns.train.load_config(
-            config.train_state_dict_load_path,
-        )
-        if args.new_wandb_id and config.wandb_run_id is not None:
-            config = config.__class__(**{**config.__dict__, "wandb_run_id": None})
+                raise ValueError("--wandb requires wandb to be configured in config file")
+            if config.wandb.mode == "disabled":
+                config = _update_wandb(config, mode="online")
+        else:
+            config = _update_wandb(config, mode="disabled")
 
     if args.train_mixed_precision is not None:
-        config = config.__class__(
-            **{
-                **config.__dict__,
-                "train_mixed_precision": args.train_mixed_precision,
-            }
-        )
+        config = _update_config(config, train_mixed_precision=args.train_mixed_precision)
 
-    print("Starting training with configuration:")
-    print(f"  Epochs: {config.epochs}")
-    print(f"  Steps per epoch: {config.steps_per_epoch}")
-    print(f"  Test steps per epoch: {config.test_steps_per_epoch}")
+    # --- Initialize wandb ---
+    run_manager = create_run_manager(config.wandb, full_config=config.to_dict(), run_id=config.wandb_run_id)
+    
+    if run_manager.run_id and config.wandb_run_id != run_manager.run_id:
+        config = _update_config(config, wandb_run_id=run_manager.run_id)
+
+    # --- Set up checkpoint paths ---
+    if args.checkpoint_save_load_prefix and args.continue_from_wandb is None and config.train_state_dict_save_path is None:
+        # Use wandb run_id if available, otherwise use fixed ID (allows auto-resume)
+        if run_manager.run_id:
+            run_id = run_manager.run_id
+        else:
+            run_id = "default"
+            print(f"No wandb enabled - using fixed ID: {run_id} (will auto-resume from same path)")
+            print(f"Consider enabling wandb or using unique --checkpoint-save-load-suffix to avoid overwriting checkpoints.")
+        
+        path = _build_checkpoint_path(
+            args.checkpoint_save_load_prefix, args.config_file, args.config_index,
+            run_id, config_kwargs, args.checkpoint_save_load_suffix,
+        )
+        checkpoint_path = os.path.join(path, "checkpoint.pt")
+        config = _update_config(config,
+            train_state_dict_save_path=checkpoint_path,
+            train_state_dict_load_path=checkpoint_path,
+        )
+        if config.wandb and not config.wandb.dir:
+            config = _update_wandb(config, dir=path)
+        
+        os.makedirs(path, exist_ok=True)
+        print(f"Checkpoint path: {checkpoint_path}")
+
+    # --- Update wandb config with all changes ---
+    if run_manager.run_id:
+        wandb.config.update(config.to_dict(), allow_val_change=True)
+
+    if run_manager.run_id:
+        print(f"Wandb run: {run_manager.run_id}")
+
+    should_run_eval = config.train_state_dict_save_path is not None
+    
+    print(f"Starting / Continuing training:")
+    print(f"  Epochs: {config.epochs} epochs")
+    print(f"  Steps / epoch: {config.steps_per_epoch}")
+    print(f"  Test steps / epoch: {config.test_steps_per_epoch}")
     print(f"  Device: {args.device or 'auto-detect'}")
     print(f"  Mixed precision: {config.train_mixed_precision}")
-
-    run_manager = create_run_manager(
-        config.wandb,
-        full_config=config.to_dict(),
-        run_id=config.wandb_run_id,
-    )
-    if run_manager.run_id is not None and config.wandb_run_id != run_manager.run_id:
-        config = config.__class__(
-            **{**config.__dict__, "wandb_run_id": run_manager.run_id}
-        )
-    should_run_eval = config.train_state_dict_save_path is not None
-    if run_manager.run_id is not None:
-        print("wandb logging enabled.")
-
+    
     try:
         result = pfns.train.train(
             c=config,

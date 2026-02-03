@@ -284,7 +284,7 @@ def get_config(
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
     if use_short_conv is not None:
-        wandb_extras.append(f"shortconv{use_short_conv}")
+        wandb_extras.append(f"shortconv_{use_short_conv}")
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
