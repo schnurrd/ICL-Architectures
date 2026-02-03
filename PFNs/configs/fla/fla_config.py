@@ -138,20 +138,24 @@ def _normalize_sequence_mode(sequence_mode: str) -> str:
 
 def get_config(
     config_index: int = 0,
+    # Architecture
     model_type: str = "kda",
     sequence_mode: str = "cached",
+    # Training
     training_setup: str = "high",
     batch_size: int | None = None,
     max_seq_len: int | None = None,
-    cache_chunk_size: int | None = None,
     lr: float | None = None,
     steps_per_epoch: int | None = None,
     aggregate_k_gradients: int | None = None,
+    # Model options
+    cache_chunk_size: int | None = None,
     use_short_conv: bool | None = None,
     interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = "subspace",
     config_kwargs_override: dict[str, object] | None = None,
 ) -> MainConfig:
+    """Build a MainConfig for FLA backbone training."""
     max_num_classes = 10
     max_num_features = 20
     
@@ -268,30 +272,20 @@ def get_config(
         weight_decay=0.01,
     )
 
-    wandb_extras = []
-    if batch_size is not None:
-        wandb_extras.append(f"bs{resolved_batch_size}")
-    if max_seq_len is not None:
-        wandb_extras.append(f"seq{resolved_max_seq_len}")
-    if cache_chunk_size is not None:
-        wandb_extras.append(f"cache{cache_chunk_size}")
-    if lr is not None:
-        wandb_extras.append(f"lr{resolved_lr:g}")
-    if aggregate_k_gradients is not None:
-        wandb_extras.append(f"agg{resolved_aggregate_k}")
-    if steps_per_epoch is not None:
-        wandb_extras.append(f"steps{resolved_steps_per_epoch}")
-    if interleave_x_y_pairs:
-        wandb_extras.append("interleaved")
-    if use_short_conv is not None:
-        wandb_extras.append(f"shortconv_{use_short_conv}")
-    wandb_extras.append(f"fpe_{feature_positional_embedding}")
-    wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
-    wandb_name = (
-        f"{model_type}_{sequence_mode}_{training_setup}"
-        f"{wandb_suffix}"
-        f"_config_{config_index}"
-    )
+    # Build descriptive wandb run name
+    extras = [
+        f"bs{resolved_batch_size}" if batch_size else None,
+        f"seq{resolved_max_seq_len}" if max_seq_len else None,
+        f"cache{cache_chunk_size}" if cache_chunk_size else None,
+        f"lr{resolved_lr:g}" if lr else None,
+        f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
+        f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
+        "interleaved" if interleave_x_y_pairs else None,
+        f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
+        f"fpe_{feature_positional_embedding}",
+    ]
+    extras_str = "_".join(e for e in extras if e)
+    wandb_name = f"{model_type}_{sequence_mode}_{training_setup}_{extras_str}_config_{config_index}"
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
