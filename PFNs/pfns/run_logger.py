@@ -212,7 +212,7 @@ def download_model_from_wandb(
     run = api.run(run_path)
     
     if destination_path is None:
-        destination_path = api.run("tabpfn_transformer/runs/rpichg7o").config['train_state_dict_save_path']
+        destination_path = run.config['train_state_dict_save_path']
     
     destination_dir = os.path.dirname(destination_path)
     
