@@ -239,7 +239,6 @@ def train(
             device,
             load_function=load_object_function,
         )
-        set_model_to(model, optimizer, "train")
     else:
         print(
             f"Checkpoint file {c.train_state_dict_load_path} not found or load/save paths are identical and file doesn't exist. Starting from scratch."
