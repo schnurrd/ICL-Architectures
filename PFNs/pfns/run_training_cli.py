@@ -291,6 +291,11 @@ def main():
         checkpoint_path = download_model_from_wandb(args.continue_from_wandb)
         
         config = pfns.train.load_config(checkpoint_path)
+        # overwrite save/load path to local path to avoid backwards compatibility issues
+        config = _update_config(config, 
+            train_state_dict_load_path=checkpoint_path,
+            train_state_dict_save_path=checkpoint_path,
+        )
         print(f"Continuing from wandb run: {run_id}")
 
     # --- Apply CLI overrides ---
