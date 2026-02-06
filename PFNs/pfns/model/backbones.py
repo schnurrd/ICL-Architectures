@@ -522,9 +522,6 @@ class FLABackbone(Backbone):
             cached_state = {
                 "cache_params": cache_params,
                 "cache_position_start": seq_len,
-                "batch_size": batch_size,
-                "num_tokens": num_tokens,
-                "embed_dim": embed_dim,
             }
             out = (
                 train_out.reshape(batch_size, num_tokens, seq_len, embed_dim)
