@@ -63,7 +63,7 @@ TRAINING_PROFILES = {
         "steps_per_epoch": 4000,
         "epochs": 200,
         "warmup_epochs": 10,
-        "aggregate_k_gradients": 2,
+        "aggregate_k_gradients": 3,
         "attention_between_features": False,
         "features_per_group": MAX_NUM_FEATURES,
         "wandb_suffix": "_high",
