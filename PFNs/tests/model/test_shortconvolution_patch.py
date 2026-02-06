@@ -4,6 +4,11 @@ import torch
 from pfns.model.fla_patches import _maybe_patch_shortconv_forward_pytorch
 from fla.modules.convolution import ShortConvolution
 
+pytestmark = pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="ShortConvolution patch tests require CUDA.",
+)
+
 
 
 def test_shortconv_patch_matches_original_forward():
