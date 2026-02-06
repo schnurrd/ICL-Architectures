@@ -19,6 +19,9 @@ from pfns.train import (
     ModelConfig,
 )
 
+MAX_NUM_CLASSES = 10
+MAX_NUM_FEATURES = 20
+
 BASE_PROFILE = {
     "nhead": 8,
     "nlayers": 12,
@@ -36,6 +39,7 @@ TRAINING_PROFILES = {
         "warmup_epochs": 10,
         "aggregate_k_gradients": 1,
         "attention_between_features": False,
+        "features_per_group": MAX_NUM_FEATURES,
         "wandb_suffix": "_debug",
     },
     "low": {
@@ -48,30 +52,33 @@ TRAINING_PROFILES = {
         "warmup_epochs": 10,
         "aggregate_k_gradients": 1,
         "attention_between_features": False,
+        "features_per_group": MAX_NUM_FEATURES,
         "wandb_suffix": "_low",
-    },
-    "low2": {
-        **BASE_PROFILE,
-        "emsize": 256,
-        "nhid": 256 * 4,
-        "lr": 1.5e-4,
-        "steps_per_epoch": 250,
-        "epochs": 200,
-        "warmup_epochs": 10,
-        "aggregate_k_gradients": 1,
-        "attention_between_features": True,
-        "wandb_suffix": "_low2",
     },
     "high": {
         **BASE_PROFILE,
-        "emsize": 384,
-        "nhid": 384 * 4,
+        "emsize": 320,
+        "nhid": 320 * 4,
         "lr": 3.0e-5,
         "steps_per_epoch": 4000,
         "epochs": 200,
         "warmup_epochs": 10,
         "aggregate_k_gradients": 2,
         "attention_between_features": False,
+        "features_per_group": MAX_NUM_FEATURES,
+        "wandb_suffix": "_high",
+    },
+    "high_feature_att": {
+        **BASE_PROFILE,
+        "emsize": 320,
+        "nhid": 320 * 4,
+        "lr": 3.0e-5,
+        "steps_per_epoch": 4000,
+        "epochs": 200,
+        "warmup_epochs": 10,
+        "aggregate_k_gradients": 2,
+        "attention_between_features": True,
+        "features_per_group": 2,
         "wandb_suffix": "_high",
     },
     "very_high": {
@@ -84,6 +91,7 @@ TRAINING_PROFILES = {
         "warmup_epochs": 20,
         "aggregate_k_gradients": 2,
         "attention_between_features": False,
+        "features_per_group": MAX_NUM_FEATURES,
         "wandb_suffix": "_very_high",
     },
 }
@@ -99,9 +107,6 @@ def get_config(
     tabpfn_prior data.
     """
 
-    max_num_classes = 10
-    max_num_features = 20
-
     training_setup = training_setup.strip().lower()
     if training_setup not in TRAINING_PROFILES:
         raise ValueError(
@@ -116,8 +121,8 @@ def get_config(
 
     prior = TabPFNPriorConfig(
         prior_type="mlp",
-        max_num_classes=max_num_classes,
-        max_num_features=max_num_features,
+        max_num_classes=MAX_NUM_CLASSES,
+        max_num_features=MAX_NUM_FEATURES,
         flexible=True,
         differentiable=True,
         return_categorical_mask=True,
@@ -130,12 +135,12 @@ def get_config(
         min_single_eval_pos=24,
         max_seq_len=resolved_max_seq_len,
         min_num_features=2,
-        max_num_features=max_num_features,
+        max_num_features=MAX_NUM_FEATURES,
         fixed_num_test_instances=None,
     )
 
     model = ModelConfig(
-        criterion=CrossEntropyConfig(num_classes=max_num_classes),
+        criterion=CrossEntropyConfig(num_classes=MAX_NUM_CLASSES),
         encoder=EncoderConfig(
             variable_num_features_normalization=True,
             nan_handling=True,  # currently only nan to mean imputation works
@@ -153,7 +158,7 @@ def get_config(
             nhead=profile["nhead"],
             layer_kwargs=profile["layer_kwargs"],
         ),
-        features_per_group=20,
+        features_per_group=profile["features_per_group"],
         attention_between_features=profile["attention_between_features"], # was True before
         feature_positional_embedding="subspace",
         interleave_x_y_pairs=interleave_x_y_pairs,

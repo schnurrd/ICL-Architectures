@@ -81,23 +81,23 @@ def get_config(
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=256,
+        emsize=320,
         backbone=TransformerBackboneConfig(
-            nhid=256 * 4,
+            nhid=320 * 4,
             nlayers=12,
-            nhead=4,
+            nhead=8,
             layer_kwargs={
                 "item_attention_mask_mode": masking,
             },
         ),
         features_per_group=20,
-        attention_between_features=True,
+        attention_between_features=False,
         feature_positional_embedding="subspace",
     )
 
     optimizer = OptimizerConfig(
         optimizer="adamw",
-        lr=7.5e-5,
+        lr=3.0e-5,
         weight_decay=0.01,
     )
     
@@ -120,7 +120,7 @@ def get_config(
         batch_shape_sampler=batch_shape,
         epochs=200,
         warmup_epochs=10,
-        steps_per_epoch=1000,
+        steps_per_epoch=4000,
         n_targets_per_input=1,
         train_mixed_precision=False,
         train_mixed_precision_dtype="fp32",
