@@ -113,6 +113,52 @@ class LinearAttention(nn.Module):
         out = torch.einsum("bshnm,bshmd->bshnd", attn, v)
         return out.permute(0, 1, 3, 2, 4)
 
+    def _apply_feature_attention_block(
+        self,
+        x: torch.Tensor,
+        norm_idx: int,
+    ) -> tuple[torch.Tensor, int]:
+        if not self.attention_between_features:
+            return x, norm_idx
+
+        x_norm = self.norms[norm_idx](x)
+        b, s, n, e = x_norm.shape
+        q = self.q_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
+        k = self.k_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
+        v = self.v_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
+        if self.feature_attention_softmax:
+            attn_feat = self._softmax_attention_features(q, k, v)
+        else:
+            attn_feat = self._linear_attention_features(q, k, v)
+        attn_feat = attn_feat.reshape(b, s, n, e)
+        attn_feat = self.dropout(self.out_proj_feat(attn_feat))
+        return x + attn_feat, norm_idx + 1
+
+    def _project_item_qkv(
+        self,
+        x: torch.Tensor,
+        norm_idx: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        x_norm = self.norms[norm_idx](x)
+        b, s, n, _ = x_norm.shape
+        q = self.q_proj_item(x_norm).view(b, s, n, self.num_heads, self.feature_dim)
+        k = self.k_proj_item(x_norm).view(b, s, n, self.num_heads, self.feature_dim)
+        v = self.v_proj_item(x_norm).view(b, s, n, self.num_heads, self.head_dim)
+        return q, k, v
+
+    def _apply_item_output_and_mlp(
+        self,
+        x: torch.Tensor,
+        attn: torch.Tensor,
+        norm_idx: int,
+    ) -> torch.Tensor:
+        b, s, n, _ = x.shape
+        attn = attn.reshape(b, s, n, self.d_model)
+        attn = self.dropout(self.out_proj_item(attn))
+        x = x + attn
+        norm_idx += 1
+        return x + self.mlp(self.norms[norm_idx](x))
+
     def forward(self, x, *, single_eval_pos: int | None = None, **kwargs):
         # x: (batch, num_items, num_feature_blocks, embed_dim)
         norm_idx = 0
@@ -125,26 +171,8 @@ class LinearAttention(nn.Module):
             f"single_eval_pos must be in the range [1, {s} - 1], got {single_eval_pos}."
         )
 
-        if self.attention_between_features:
-            x_norm = self.norms[norm_idx](x)
-            b, s, n, e = x_norm.shape
-            q = self.q_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
-            k = self.k_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
-            v = self.v_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
-            if self.feature_attention_softmax:
-                attn_feat = self._softmax_attention_features(q, k, v)
-            else:
-                attn_feat = self._linear_attention_features(q, k, v)
-            attn_feat = attn_feat.reshape(b, s, n, e)
-            attn_feat = self.dropout(self.out_proj_feat(attn_feat))
-            x = x + attn_feat
-            norm_idx += 1
-
-        x_norm = self.norms[norm_idx](x)
-        b, s, n, _ = x_norm.shape
-        q_all = self.q_proj_item(x_norm).view(b, s, n, self.num_heads, self.feature_dim)
-        k_all = self.k_proj_item(x_norm).view(b, s, n, self.num_heads, self.feature_dim)
-        v_all = self.v_proj_item(x_norm).view(b, s, n, self.num_heads, self.head_dim)
+        x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
+        q_all, k_all, v_all = self._project_item_qkv(x, norm_idx)
 
         # Train Part
         q_train = q_all[:, :single_eval_pos]
@@ -155,9 +183,6 @@ class LinearAttention(nn.Module):
         q_test = q_all[:, single_eval_pos:]
         k_test = k_all[:, single_eval_pos:]
         v_test = v_all[:, single_eval_pos:]
-
-        s_train = q_train.shape[1]
-        s_test = q_test.shape[1]
 
         kv_state_train, k_sum_train = compute_kv_state_5d(
             self._feature_map(k_train), v_train
@@ -179,16 +204,59 @@ class LinearAttention(nn.Module):
             v_self=v_test,
         )
 
-        attn_all = torch.cat([attn_train, attn_test], dim=1).reshape(
-            b, s_train + s_test, n, self.d_model
-        )
-        attn_item = self.dropout(self.out_proj_item(attn_all))
-        
-        x = x + attn_item
-        norm_idx += 1
+        attn_all = torch.cat([attn_train, attn_test], dim=1)
+        return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
 
-        x = x + self.mlp(self.norms[norm_idx](x))
-        return x
+    def incontext_fit(
+        self,
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Process the training context and return the cached KV state.
+
+        Args:
+            x: (batch, seq_len_train, num_feature_blocks, embed_dim)
+
+        Returns:
+            Tuple of (output, state) where state contains kv_state and k_sum.
+        """
+        norm_idx = 0
+        assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
+        x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
+        q, k, v = self._project_item_qkv(x, norm_idx)
+
+        q = self._feature_map(q)
+        k = self._feature_map(k)
+        kv_state, k_sum = compute_kv_state_5d(k, v)
+
+        attn = apply_state_to_query_5d(q, kv_state, k_sum, eps=self.eps)
+        x = self._apply_item_output_and_mlp(x, attn, norm_idx)
+        return x, {"kv_state": kv_state, "k_sum": k_sum}
+
+    def incontext_predict(
+        self,
+        x: torch.Tensor,
+        state: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Process test tokens using cached KV state from the training context."""
+        norm_idx = 0
+        assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
+        x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
+        q, k, v = self._project_item_qkv(x, norm_idx)
+
+        q = self._feature_map(q)
+        k = self._feature_map(k)
+        kv_state = state["kv_state"]
+        k_sum = state["k_sum"]
+
+        attn = apply_state_to_query_5d(
+            q,
+            kv_state,
+            k_sum,
+            eps=self.eps,
+            k_self=k,
+            v_self=v,
+        )
+        return self._apply_item_output_and_mlp(x, attn, norm_idx)
 
     def empty_trainset_representation_cache(self) -> None:
         return None

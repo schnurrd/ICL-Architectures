@@ -77,6 +77,27 @@ class Backbone(nn.Module, ABC):
         """
         pass
 
+    def incontext_fit(
+        self,
+        x: torch.Tensor,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, tp.Any]:
+        """Process training context and return cached state."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement incontext_fit."
+        )
+
+    def incontext_predict(
+        self,
+        x: torch.Tensor,
+        cached_state: tp.Any,
+        **kwargs: tp.Any,
+    ) -> torch.Tensor:
+        """Process test tokens using cached state."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement incontext_predict."
+        )
+
 
 @dataclass(frozen=True)
 class BackboneConfig(base_config.BaseConfig, ABC):
@@ -178,6 +199,16 @@ class TransformerBackbone(Backbone):
     @property
     def layers(self):
         return self.layer_stack.layers
+
+    @staticmethod
+    def _assert_item_mask_disabled_for_incontext(layers: tp.Iterable[nn.Module]) -> None:
+        for i, layer in enumerate(layers):
+            mask_mode = getattr(layer, "item_attention_mask_mode", None)
+            assert mask_mode is None, (
+                "item_attention_mask_mode must be None when using "
+                "incontext_fit/incontext_predict. "
+                f"Found {mask_mode!r} on layer index {i}."
+            )
         
     def forward(
         self,
@@ -195,6 +226,88 @@ class TransformerBackbone(Backbone):
             cache_trainset_representation=cache_trainset_representation,
             **kwargs,
         )
+
+    @staticmethod
+    def _extract_item_attention_cache(layers: tp.Iterable[nn.Module]) -> dict[str, tp.Any]:
+        cache_layers: list[dict[str, torch.Tensor | None]] = []
+        for layer in layers:
+            attn = getattr(layer, "self_attn_between_items", None)
+            if attn is None:
+                cache_layers.append({"k": None, "v": None, "kv": None})
+                continue
+            cache_layers.append(
+                {
+                    "k": getattr(attn, "_k_cache", None), # None
+                    "v": getattr(attn, "_v_cache", None), # None
+                    "kv": getattr(attn, "_kv_cache", None), # only one used
+                }
+            )
+        return {"layers": cache_layers}
+
+    @staticmethod
+    def _clear_attention_cache(layers: tp.Iterable[nn.Module]) -> None:
+        for layer in layers:
+            if hasattr(layer, "empty_trainset_representation_cache"):
+                layer.empty_trainset_representation_cache()
+            
+    @staticmethod
+    def _take_item_attention_cache(layers: tp.Iterable[nn.Module]) -> dict[str, tp.Any]:
+        # Transfer cache ownership from layers into a plain Python state object.
+        cache_state = TransformerBackbone._extract_item_attention_cache(layers)
+        TransformerBackbone._clear_attention_cache(layers)
+        return cache_state
+
+    @staticmethod
+    def _load_item_attention_cache(
+        layers: tp.Iterable[nn.Module],
+        cache_state: dict[str, tp.Any],
+    ) -> None:
+        layer_states = cache_state.get("layers", [])
+        for layer, state in zip(layers, layer_states):
+            attn = getattr(layer, "self_attn_between_items", None)
+            if attn is None:
+                continue
+            attn._k_cache = state.get("k")
+            attn._v_cache = state.get("v")
+            attn._kv_cache = state.get("kv")
+
+    def incontext_fit(
+        self,
+        x: torch.Tensor,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, tp.Any]:
+        self._assert_item_mask_disabled_for_incontext(self.layers)
+        train_len = x.shape[1]
+        for layer in self.layers:
+            if hasattr(layer, "empty_trainset_representation_cache"):
+                layer.empty_trainset_representation_cache()
+        out = self.forward(
+            x,
+            single_eval_pos=train_len,
+            half_layers=False,
+            cache_trainset_representation=True,
+            **kwargs,
+        )
+        cache_state = self._take_item_attention_cache(self.layers)
+        return out, cache_state
+
+    def incontext_predict(
+        self,
+        x: torch.Tensor,
+        cached_state: tp.Any,
+        **kwargs: tp.Any,
+    ) -> torch.Tensor:
+        self._assert_item_mask_disabled_for_incontext(self.layers)
+        self._load_item_attention_cache(self.layers, cached_state)
+        output= self.forward(
+            x,
+            single_eval_pos=0,
+            half_layers=False,
+            cache_trainset_representation=True,
+            **kwargs,
+        )
+        self._clear_attention_cache(self.layers) # keep cache ownership in external state
+        return output
 
 
 @dataclass(frozen=True)
@@ -388,31 +501,72 @@ class FLABackbone(Backbone):
             return cache_params_copy
         return FLABackbone._shallow_copy(cache_params)
 
+    @staticmethod
+    def _prepare_fla_input(
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, tuple[int, int, int, int] | None]:
+        if x.dim() != 4:
+            return x, None
+        batch_size, seq_len, num_tokens, embed_dim = x.shape
+        assert num_tokens == 1, (
+            "Currently we only support num_tokens=1 for FLA backbones, "
+            f"got num_tokens={num_tokens}"
+        )
+        x_batched = (
+            x.transpose(1, 2)
+            .reshape(batch_size * num_tokens, seq_len, embed_dim)
+        )
+        return x_batched, (batch_size, num_tokens, seq_len, embed_dim)
+
+    @staticmethod
+    def _unprepare_fla_output(
+        out: torch.Tensor,
+        shape_info: tuple[int, int, int, int] | None,
+    ) -> torch.Tensor:
+        if shape_info is None:
+            return out
+        batch_size, num_tokens, seq_len, embed_dim = shape_info
+        return (
+            out.reshape(batch_size, num_tokens, seq_len, embed_dim)
+            .transpose(1, 2)
+        )
+
     def incontext_fit(
         self,
         train_x: torch.Tensor,
+        **kwargs: tp.Any,
     ) -> tuple[torch.Tensor, tp.Any]:
-        """Run the FLA model on the training context and return cached state."""
-        train_out, cache_params = self._run_fla(train_x, return_cache=True)
-        cached_state = {'cache_params': cache_params, 'cache_position_start': train_x.size(1)}
-        return train_out, cached_state
+        """Run the FLA model on the training context and return cached state.
+
+        Accepts either flattened input (B, S, E) or unflattened PFN input
+        (B, S, N, E). However we currently only support N=1 for unflattened input.
+        """
+        x_batched, shape_info = self._prepare_fla_input(train_x)
+        train_out, cache_params = self._run_fla(x_batched, return_cache=True)
+        cached_state = {
+            "cache_params": cache_params,
+            "cache_position_start": x_batched.size(1),
+        }
+        out = self._unprepare_fla_output(train_out, shape_info)
+        return out, cached_state
 
     def incontext_predict(
         self,
         test_x: torch.Tensor,
         cached_state: tp.Any,
+        **kwargs: tp.Any,
     ) -> torch.Tensor:
         """Run the FLA model on test inputs using cached past key values in parallel."""
-        cache_position_start = cached_state.get('cache_position_start', None)
-        cache_params = cached_state['cache_params']
+        cache_position_start = cached_state.get("cache_position_start", None)
+        cache_params = cached_state["cache_params"]
 
+        x_batched, shape_info = self._prepare_fla_input(test_x)
         output = self._run_test_with_cache(
-            test_x,
+            x_batched,
             cache_params,
             cache_position_start=cache_position_start,
         )
-        
-        return output
+        return self._unprepare_fla_output(output, shape_info)
 
     def _run_fla(
         self,
@@ -689,6 +843,31 @@ class LinearAttentionBackbone(Backbone):
         ), "cache_trainset_representation not supported in LinearAttention backbone"
         for layer in self.layers:
             out = layer(out, single_eval_pos=single_eval_pos)
+        return out
+
+    def incontext_fit(
+        self,
+        x: torch.Tensor,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, tp.Any]:
+        out = x
+        layer_states: list[dict[str, torch.Tensor]] = []
+        for layer in self.layers:
+            out, state = layer.incontext_fit(out)
+            layer_states.append(state)
+        cached_state = {"layer_states": layer_states}
+        return out, cached_state
+
+    def incontext_predict(
+        self,
+        x: torch.Tensor,
+        cached_state: tp.Any,
+        **kwargs: tp.Any,
+    ) -> torch.Tensor:
+        out = x
+        layer_states = cached_state.get("layer_states", [])
+        for layer, state in zip(self.layers, layer_states):
+            out = layer.incontext_predict(out, state)
         return out
 
 
