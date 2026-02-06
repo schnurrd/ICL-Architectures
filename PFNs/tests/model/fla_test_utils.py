@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+import os
+
 import torch
 
-FLA_MODEL_TYPES = ("gla", "kda", "deltanet", "gated_deltanet", "mamba2")
+
+def _filter_model_types(model_types: tuple[str, ...]) -> tuple[str, ...]:
+    raw_excluded = os.getenv("FLA_EXCLUDE_MODEL_TYPES", "")
+    if not raw_excluded:
+        return model_types
+    excluded = {item.strip() for item in raw_excluded.split(",") if item.strip()}
+    if not excluded:
+        return model_types
+    return tuple(model_type for model_type in model_types if model_type not in excluded)
+
+
+FLA_MODEL_TYPES = _filter_model_types(
+    ("gla", "kda", "deltanet", "gated_deltanet", "mamba2")
+)
 
 
 def fla_model_config_kwargs(

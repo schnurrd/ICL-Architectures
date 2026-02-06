@@ -1,0 +1,16 @@
+# CI-only requirements, excludes packages that are difficult to build on GitHub runners.
+torch==2.9.0
+pandas
+seaborn
+ipykernel
+nvidia-ml-py
+numpy
+scipy
+gpytorch
+openml
+xgboost
+catboost
+tabicl
+flash-linear-attention
+tabpfn
+wandb
