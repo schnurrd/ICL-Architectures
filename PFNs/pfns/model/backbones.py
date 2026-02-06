@@ -501,6 +501,36 @@ class FLABackbone(Backbone):
             return cache_params_copy
         return FLABackbone._shallow_copy(cache_params)
 
+    @staticmethod
+    def _prepare_fla_input(
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, tuple[int, int, int, int] | None]:
+        if x.dim() != 4:
+            return x, None
+        batch_size, seq_len, num_tokens, embed_dim = x.shape
+        assert num_tokens == 1, (
+            "Currently we only support num_tokens=1 for FLA backbones, "
+            f"got num_tokens={num_tokens}"
+        )
+        x_batched = (
+            x.transpose(1, 2)
+            .reshape(batch_size * num_tokens, seq_len, embed_dim)
+        )
+        return x_batched, (batch_size, num_tokens, seq_len, embed_dim)
+
+    @staticmethod
+    def _unprepare_fla_output(
+        out: torch.Tensor,
+        shape_info: tuple[int, int, int, int] | None,
+    ) -> torch.Tensor:
+        if shape_info is None:
+            return out
+        batch_size, num_tokens, seq_len, embed_dim = shape_info
+        return (
+            out.reshape(batch_size, num_tokens, seq_len, embed_dim)
+            .transpose(1, 2)
+        )
+
     def incontext_fit(
         self,
         train_x: torch.Tensor,
@@ -511,30 +541,14 @@ class FLABackbone(Backbone):
         Accepts either flattened input (B, S, E) or unflattened PFN input
         (B, S, N, E). However we currently only support N=1 for unflattened input.
         """
-        if train_x.dim() == 4:
-            batch_size, seq_len, num_tokens, embed_dim = train_x.shape
-            assert num_tokens == 1, f"Currently we only support num_tokens=1 for FLA backbones, got num_tokens={num_tokens}"
-            x_batched = (
-                train_x.transpose(1, 2)
-                .reshape(batch_size * num_tokens, seq_len, embed_dim)
-            )
-            train_out, cache_params = self._run_fla(x_batched, return_cache=True)
-            cached_state = {
-                "cache_params": cache_params,
-                "cache_position_start": seq_len,
-            }
-            out = (
-                train_out.reshape(batch_size, num_tokens, seq_len, embed_dim)
-                .transpose(1, 2)
-            )
-            return out, cached_state
-
-        train_out, cache_params = self._run_fla(train_x, return_cache=True)
+        x_batched, shape_info = self._prepare_fla_input(train_x)
+        train_out, cache_params = self._run_fla(x_batched, return_cache=True)
         cached_state = {
             "cache_params": cache_params,
-            "cache_position_start": train_x.size(1),
+            "cache_position_start": x_batched.size(1),
         }
-        return train_out, cached_state
+        out = self._unprepare_fla_output(train_out, shape_info)
+        return out, cached_state
 
     def incontext_predict(
         self,
@@ -546,29 +560,13 @@ class FLABackbone(Backbone):
         cache_position_start = cached_state.get("cache_position_start", None)
         cache_params = cached_state["cache_params"]
 
-        if test_x.dim() == 4:
-            batch_size, seq_len, num_tokens, embed_dim = test_x.shape
-            assert num_tokens == 1, f"Currently we only support num_tokens=1 for FLA backbones, got num_tokens={num_tokens}"
-            x_batched = (
-                test_x.transpose(1, 2)
-                .reshape(batch_size * num_tokens, seq_len, embed_dim)
-            )
-            output = self._run_test_with_cache(
-                x_batched,
-                cache_params,
-                cache_position_start=cache_position_start,
-            )
-            return (
-                output.reshape(batch_size, num_tokens, seq_len, embed_dim)
-                .transpose(1, 2)
-            )
-
+        x_batched, shape_info = self._prepare_fla_input(test_x)
         output = self._run_test_with_cache(
-            test_x,
+            x_batched,
             cache_params,
             cache_position_start=cache_position_start,
         )
-        return output
+        return self._unprepare_fla_output(output, shape_info)
 
     def _run_fla(
         self,
