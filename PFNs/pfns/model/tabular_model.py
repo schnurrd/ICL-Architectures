@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import partial
 from typing import Any, Literal
 
@@ -19,6 +20,39 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 
 DEFAULT_EMSIZE = 128
+
+
+def _iter_tensors(obj: Any) -> list[torch.Tensor]:
+    if torch.is_tensor(obj):
+        return [obj]
+    if isinstance(obj, dict):
+        tensors: list[torch.Tensor] = []
+        for v in obj.values():
+            tensors.extend(_iter_tensors(v))
+        return tensors
+    if isinstance(obj, (list, tuple)):
+        tensors = []
+        for v in obj:
+            tensors.extend(_iter_tensors(v))
+        return tensors
+    if hasattr(obj, "__dict__"):
+        return _iter_tensors(vars(obj))
+    return []
+
+
+def estimate_state_size_bytes(state: Any) -> int:
+    total = 0
+    for t in _iter_tensors(state):
+        total += t.numel() * t.element_size()
+    return total
+
+
+@dataclass
+class InContextState:
+    backbone_state: Any
+
+    def size_bytes(self) -> int:
+        return estimate_state_size_bytes(self.backbone_state)
 
 
 class TabularModel(nn.Module):
@@ -202,6 +236,118 @@ class TabularModel(nn.Module):
                 old_key = new_key.replace(new_prefix, old_prefix, 1)
                 state_dict[old_key] = state_dict.pop(new_key)
 
+    def _prepare_batch_first_inputs(
+        self,
+        x: torch.Tensor | None,
+        y: torch.Tensor | None,
+        test_x: torch.Tensor | None,
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+        
+        # Prepare batch-first versions of x, y, test_x for _forward
+        # and clone all to be sure not to change outside data
+        x_bf = x.clone() if x is not None else None
+        y_bf = y.clone() if y is not None else None
+        test_x_bf = test_x.clone() if test_x is not None else None
+
+        if not self.batch_first:
+            if x_bf is not None:
+                x_bf = x_bf.transpose(0, 1)
+            if y_bf is not None:
+                # Ensure y_bf is a tensor before transposing. _forward will handle dict conversion.
+                if y_bf.numel() > 0:
+                    y_bf = y_bf.transpose(0, 1)
+            if test_x_bf is not None:
+                test_x_bf = test_x_bf.transpose(0, 1)
+
+        # Now x_bf, y_bf, test_x_bf are batch-first (or None)
+        return x_bf, y_bf, test_x_bf
+
+    def incontext_fit(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        *,
+        style: torch.Tensor | None = None,
+        y_style: torch.Tensor | None = None,
+        categorical_inds: list[int] | None = None,
+    ) -> InContextState:
+        """Run the training context through the model and return cached state."""
+        assert style is None and y_style is None, (
+            "incontext_fit currently does not support style/y_style. "
+            "Please use style=None and y_style=None."
+        )
+        x_bf, y_bf, _ = self._prepare_batch_first_inputs(x, y, None)
+        assert x_bf is not None and y_bf is not None
+        single_eval_pos = y_bf.shape[1]
+
+        embedded_input, current_context_len, _, _ = self._build_embedded_input(
+            x_bf,
+            y_bf,
+            single_eval_pos=single_eval_pos,
+            style=style,
+            y_style=y_style,
+            categorical_inds=categorical_inds,
+            # Keep encoder preprocessing state (e.g. NaN replacement stats)
+            # for the matching incontext_predict call.
+            cache_trainset_representation=True,
+        )
+
+        _, backbone_state = self.transformer_layers.incontext_fit(
+            embedded_input,
+        )
+        return InContextState(backbone_state=backbone_state)
+
+    def incontext_predict(
+        self,
+        state: InContextState,
+        test_x: torch.Tensor,
+        *,
+        style: torch.Tensor | None = None,
+        y_style: torch.Tensor | None = None,
+        categorical_inds: list[int] | None = None,
+        only_return_standard_out: bool = True,
+    ) -> dict[str, torch.Tensor] | torch.Tensor:
+        """Run the test inputs using a cached state from incontext_fit."""
+        assert style is None and y_style is None, (
+            "incontext_predict currently does not support style/y_style. "
+            "Please use style=None and y_style=None."
+        )
+
+        x_bf, _, _ = self._prepare_batch_first_inputs(test_x, None, None)
+        assert x_bf is not None
+
+        embedded_input, current_context_len, should_interleave, use_teacher_forcing_mode = self._build_embedded_input(
+            x_bf,
+            None,
+            # single_eval_pos=None signals pure test-time transform while
+            # reusing train-time cached encoder preprocessing state.
+            single_eval_pos=None,
+            style=style,
+            y_style=y_style,
+            categorical_inds=categorical_inds,
+            cache_trainset_representation=True,
+        )
+
+        encoder_out = self.transformer_layers.incontext_predict(
+            embedded_input,
+            state.backbone_state,
+        )
+
+        output_decoded = self._decode_from_encoder_out(
+            encoder_out,
+            current_context_len,
+            should_interleave,
+            use_teacher_forcing_mode,
+        )
+        
+        if not self.batch_first:
+            for key, value in output_decoded.items():
+                output_decoded[key] = value.transpose(0, 1)
+        
+        if only_return_standard_out:
+            return output_decoded["standard"]
+        return output_decoded
+
     def forward(
         self,
         x: torch.Tensor | None,
@@ -239,22 +385,7 @@ class TabularModel(nn.Module):
                 - `half_layers`: Whether to use the first half of the layers.
         """
 
-        # Prepare batch-first versions of x, y, test_x for _forward
-        # and clone all to be sure not to change outside data
-        x_bf = x.clone() if x is not None else None
-        y_bf = y.clone() if y is not None else None
-        test_x_bf = test_x.clone() if test_x is not None else None
-
-        if not self.batch_first:
-            if x_bf is not None:
-                x_bf = x_bf.transpose(0, 1)
-            if y_bf is not None:
-                # Ensure y_bf is a tensor before transposing. _forward will handle dict conversion.
-                if y_bf.numel() > 0:
-                    y_bf = y_bf.transpose(0, 1)
-            if test_x_bf is not None:
-                test_x_bf = test_x_bf.transpose(0, 1)
-
+        x_bf, y_bf, test_x_bf = self._prepare_batch_first_inputs(x, y, test_x)
         # Now x_bf, y_bf, test_x_bf are batch-first (or None)
 
         # Determine single_eval_pos based on the original y shape
@@ -302,35 +433,18 @@ class TabularModel(nn.Module):
 
         return output_decoded
 
-    def _forward(  # noqa: PLR0912, C901
-        self,
-        x: torch.Tensor | dict,  # Expected to be batch-first
-        y: torch.Tensor | dict | None,  # Expected to be batch-first
-        *,
-        single_eval_pos: int
-        | None = None,  # Length of the training part of the sequence
-        style: torch.Tensor | None = None,  # Assumed batch-first
-        y_style: torch.Tensor | None = None,  # Assumed batch-first
-        categorical_inds: list[int] | None = None,
-        half_layers: bool = False,
-    ) -> Any | dict[str, torch.Tensor]:
-        """The core forward pass of the model. Assumes batch-first inputs for x and y."""
-        # Assertions and initial setup
-        if self.cache_trainset_representation:
-            if not single_eval_pos:  # none or 0
-                assert (
-                    y is None
-                ), "_forward expects y=None if single_eval_pos is 0/None and caching"
-        else:
-            assert (
-                y is not None
-            ), "_forward expects y if not caching for pure inference or during training"
-            assert (
-                single_eval_pos is not None
-            ), "_forward expects single_eval_pos if not caching for pure inference or during training"
 
-        # single_eval_pos is the length of the training sequence part.
-        # If None (e.g. pure inference from cache), treat as 0.
+    def _build_embedded_input(
+        self,
+        x: torch.Tensor | dict,
+        y: torch.Tensor | dict | None,
+        *,
+        single_eval_pos: int | None,
+        style: torch.Tensor | None,
+        y_style: torch.Tensor | None,
+        categorical_inds: list[int] | None,
+        cache_trainset_representation: bool,
+    ) -> tuple[torch.Tensor, int, bool, bool]:
         current_context_len = single_eval_pos or 0
 
         if isinstance(x, dict):
@@ -343,7 +457,7 @@ class TabularModel(nn.Module):
 
         if (
             y is None
-        ):  # Should only happen if self.cache_trainset_representation and not single_eval_pos
+        ):  # Should only happen if cache_trainset_representation and not single_eval_pos
             y_main_ref = x["main"]
             y = {
                 "main": torch.zeros(
@@ -487,7 +601,7 @@ class TabularModel(nn.Module):
         embedded_y = self.y_encoder(
             y_for_y_encoder,
             single_eval_pos=current_context_len,  # Length of training part for y_encoder
-            cache_trainset_representation=self.cache_trainset_representation,
+            cache_trainset_representation=cache_trainset_representation,
         ).transpose(0, 1)
 
         del y, y_for_y_encoder
@@ -511,7 +625,7 @@ class TabularModel(nn.Module):
             self.encoder(
                 x,
                 single_eval_pos=current_context_len,
-                cache_trainset_representation=self.cache_trainset_representation,
+                cache_trainset_representation=cache_trainset_representation,
                 **extra_encoders_args,
             ),
             "s (b f) e -> b s f e",
@@ -524,12 +638,8 @@ class TabularModel(nn.Module):
             embedded_y,  # (b s e)
             num_features=_num_features_orig_main,
             seq_len=_seq_len,
-            cache_embeddings=(
-                self.cache_trainset_representation and single_eval_pos is not None
-            ),
-            use_cached_embeddings=(
-                self.cache_trainset_representation and single_eval_pos is None
-            ),
+            cache_embeddings=(cache_trainset_representation and single_eval_pos is not None),
+            use_cached_embeddings=(cache_trainset_representation and single_eval_pos is None),
         )
 
         use_teacher_forcing_mode = (
@@ -553,7 +663,7 @@ class TabularModel(nn.Module):
             assert (
                 embedded_x.shape[2] == 1
             ), f"Only 1 feature per group supported for attention_between_features=False, got {embedded_x.shape=}."
-            
+
             if should_interleave:
                 if use_teacher_forcing_mode and self.transformer_layers.training:
                     embedded_y_tokens = embedded_y.unsqueeze(2)
@@ -563,11 +673,11 @@ class TabularModel(nn.Module):
                 else:
                     embedded_y_tokens = embedded_y[:, :current_context_len].unsqueeze(2)
                     embedded_input = torch.stack(
-                        (embedded_x[:,:current_context_len], embedded_y_tokens), dim=2
+                        (embedded_x[:, :current_context_len], embedded_y_tokens), dim=2
                     ).reshape(embedded_x.shape[0], -1, 1, embedded_x.shape[-1])
                     embedded_input = torch.cat(
-                        (embedded_input, embedded_x[:,current_context_len:]),
-                        dim=1
+                        (embedded_input, embedded_x[:, current_context_len:]),
+                        dim=1,
                     )
                 current_context_len *= 2  # Each x token is followed by a y token
             else:
@@ -633,15 +743,15 @@ class TabularModel(nn.Module):
             )
         del embedded_y, embedded_x
 
-        encoder_out = self.transformer_layers(
-            embedded_input,  # (b s_effective (num_groups+1_for_y) e)
-            single_eval_pos=current_context_len,
-            half_layers=half_layers,
-            cache_trainset_representation=self.cache_trainset_representation,
-        )  # b s (num_groups+1_for_y) e -> b s (num_groups+1_for_y) e
+        return embedded_input, current_context_len, should_interleave, use_teacher_forcing_mode
 
-        del embedded_input
-
+    def _decode_from_encoder_out(
+        self,
+        encoder_out: torch.Tensor,
+        current_context_len: int,
+        should_interleave: bool,
+        use_teacher_forcing_mode: bool,
+    ) -> dict[str, torch.Tensor]:
         if should_interleave:
             if use_teacher_forcing_mode and self.transformer_layers.training:
                 encoder_out = encoder_out[:, ::2]  # remove interleaved y tokens
@@ -679,6 +789,59 @@ class TabularModel(nn.Module):
         output_decoded["test_embeddings"] = test_encoder_out  # Already batch-first
 
         return output_decoded
+
+    def _forward(  # noqa: PLR0912, C901
+        self,
+        x: torch.Tensor | dict,  # Expected to be batch-first
+        y: torch.Tensor | dict | None,  # Expected to be batch-first
+        *,
+        single_eval_pos: int
+        | None = None,  # Length of the training part of the sequence
+        style: torch.Tensor | None = None,  # Assumed batch-first
+        y_style: torch.Tensor | None = None,  # Assumed batch-first
+        categorical_inds: list[int] | None = None,
+        half_layers: bool = False,
+    ) -> Any | dict[str, torch.Tensor]:
+        """The core forward pass of the model. Assumes batch-first inputs for x and y."""
+        # Assertions and initial setup
+        if self.cache_trainset_representation:
+            if not single_eval_pos:  # none or 0
+                assert (
+                    y is None
+                ), "_forward expects y=None if single_eval_pos is 0/None and caching"
+        else:
+            assert (
+                y is not None
+            ), "_forward expects y if not caching for pure inference or during training"
+            assert (
+                single_eval_pos is not None
+            ), "_forward expects single_eval_pos if not caching for pure inference or during training"
+
+        embedded_input, current_context_len, should_interleave, use_teacher_forcing_mode = self._build_embedded_input(
+            x,
+            y,
+            single_eval_pos=single_eval_pos,
+            style=style,
+            y_style=y_style,
+            categorical_inds=categorical_inds,
+            cache_trainset_representation=self.cache_trainset_representation,
+        )
+
+        encoder_out = self.transformer_layers(
+            embedded_input,  # (b s_effective (num_groups+1_for_y) e)
+            single_eval_pos=current_context_len,
+            half_layers=half_layers,
+            cache_trainset_representation=self.cache_trainset_representation,
+        )  # b s (num_groups+1_for_y) e -> b s (num_groups+1_for_y) e
+
+        del embedded_input
+
+        return self._decode_from_encoder_out(
+            encoder_out,
+            current_context_len,
+            should_interleave,
+            use_teacher_forcing_mode,
+        )
 
     def add_embeddings(  # noqa: C901, PLR0912
         self,

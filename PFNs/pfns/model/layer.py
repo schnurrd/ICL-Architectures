@@ -307,7 +307,6 @@ class PerFeatureLayer(Module):
             )
 
         if self.self_attn_between_features is None:
-            assert not cache_trainset_representation, "`cache_trainset_representation` is not supported without `attention_between_features`. It should be easy to implement, but we didn't need it yet."
             assert state.shape[2] == 1, (
                 f"One group architecture expects one feature group, "
                 f"but got {state.shape[2]} feature groups."
@@ -483,7 +482,5 @@ class PerFeatureLayer(Module):
     def empty_trainset_representation_cache(self) -> None:
         """Empty the trainset representation cache."""
         self.self_attn_between_items.empty_kv_cache()
-
-        # TODO: This could be None but this just ignored that fact here.
-        assert self.self_attn_between_features is not None
-        self.self_attn_between_features.empty_kv_cache()  # not necessary, just in case
+        if self.self_attn_between_features is not None:
+            self.self_attn_between_features.empty_kv_cache()  # not necessary, just in case

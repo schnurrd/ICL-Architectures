@@ -68,6 +68,59 @@ class RebasedLinearAttention(nn.Module):
         self.norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(2)])
         self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
 
+    def _prepare_input(
+        self,
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, bool, int, int, int, int]:
+        is_three_dim = x.dim() == 3
+        if is_three_dim:
+            x = x.unsqueeze(2)
+        b, s, n, d = x.shape
+        return x, is_three_dim, b, s, n, d
+
+    def _project_qkv_with_feature_map(
+        self,
+        x: torch.Tensor,
+        *,
+        b: int,
+        s: int,
+        n: int,
+        d: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        x_norm = self.norms[0](x)
+        x_flat = x_norm.transpose(1, 2).reshape(b * n, s, d)
+
+        q = self.q_proj(x_flat).view(b * n, s, self.num_heads, self.feature_dim)
+        k = self.k_proj(x_flat).view(b * n, s, self.num_heads, self.feature_dim)
+        v = self.v_proj(x_flat).view(b * n, s, self.num_heads, self.head_dim)
+
+        with _checkpoint_no_reentrant():
+            q, k = self.feature_map(q), self.feature_map(k)
+
+        return q, k, v
+
+    def _apply_output_residual_and_mlp(
+        self,
+        x: torch.Tensor,
+        attn_out: torch.Tensor,
+        *,
+        b: int,
+        s: int,
+        n: int,
+        d: int,
+        is_three_dim: bool,
+    ) -> torch.Tensor:
+        attn_out = attn_out.reshape(b * n, s, self.num_heads * self.head_dim)
+        attn_out = self.dropout(self.o_proj(attn_out))
+        attn_out = attn_out.reshape(b, n, s, d).transpose(1, 2)
+
+        x = x + attn_out
+        x = x + self.mlp(self.norms[1](x))
+
+        if is_three_dim:
+            x = x.squeeze(2)
+        return x
+
 
     def forward(
         self,
@@ -80,27 +133,11 @@ class RebasedLinearAttention(nn.Module):
         assert single_eval_pos is not None, (
             "single_eval_pos must be provided for RebasedLinearAttention."
         )
-        
-        is_three_dim = x.dim() == 3
-        if is_three_dim:
-            x = x.unsqueeze(2)
-        
-        b, s, n, d = x.shape
+        x, is_three_dim, b, s, n, d = self._prepare_input(x)
         assert 0 < single_eval_pos < s, (
             f"single_eval_pos must be in the range [1, {s} - 1], got {single_eval_pos}."
         )
-
-        x_norm = self.norms[0](x)
-        x_flat = x_norm.transpose(1, 2).reshape(b * n, s, d)
-        
-        # Projects: (B*N, S, D) -> Proj Dim
-        q = self.q_proj(x_flat).view(b*n, s, self.num_heads, self.feature_dim)
-        k = self.k_proj(x_flat).view(b*n, s, self.num_heads, self.feature_dim)
-        v = self.v_proj(x_flat).view(b*n, s, self.num_heads, self.head_dim)
-        
-        # Apply Feature Map
-        with _checkpoint_no_reentrant():
-            q, k = self.feature_map(q), self.feature_map(k)
+        q, k, v = self._project_qkv_with_feature_map(x, b=b, s=s, n=n, d=d)
 
         q_train = q[:, :single_eval_pos]
         k_train = k[:, :single_eval_pos]
@@ -129,17 +166,63 @@ class RebasedLinearAttention(nn.Module):
         
         attn_out = torch.cat([attn_out_train, attn_out_test], dim=1)        
 
-        # Output projection
-        attn_out = attn_out.reshape(b*n, s, self.num_heads * self.head_dim)
-        attn_out = self.dropout(self.o_proj(attn_out))
-        
-        # Rearrange
-        attn_out = attn_out.reshape(b, n, s, d).transpose(1, 2)
-        
-        x = x + attn_out
-        
-        x = x + self.mlp(self.norms[1](x))
+        return self._apply_output_residual_and_mlp(
+            x,
+            attn_out,
+            b=b,
+            s=s,
+            n=n,
+            d=d,
+            is_three_dim=is_three_dim,
+        )
 
-        if is_three_dim:
-            x = x.squeeze(2)
-        return x
+    def incontext_fit(
+        self,
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Process the training context and return the cached KV state."""
+        x, is_three_dim, b, s, n, d = self._prepare_input(x)
+        q, k, v = self._project_qkv_with_feature_map(x, b=b, s=s, n=n, d=d)
+
+        kv_state, k_sum = compute_kv_state_4d(k, v)
+        attn_out = apply_state_to_query_4d(q, kv_state, k_sum, eps=self.eps)
+        x = self._apply_output_residual_and_mlp(
+            x,
+            attn_out,
+            b=b,
+            s=s,
+            n=n,
+            d=d,
+            is_three_dim=is_three_dim,
+        )
+        return x, {"kv_state": kv_state, "k_sum": k_sum}
+
+    def incontext_predict(
+        self,
+        x: torch.Tensor,
+        state: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Process test tokens using cached KV state from the training context."""
+        x, is_three_dim, b, s, n, d = self._prepare_input(x)
+        q, k, v = self._project_qkv_with_feature_map(x, b=b, s=s, n=n, d=d)
+
+        kv_state = state["kv_state"]
+        k_sum = state["k_sum"]
+        attn_out = apply_state_to_query_4d(
+            q,
+            kv_state,
+            k_sum,
+            eps=self.eps,
+            k_self=k,
+            v_self=v,
+        )
+
+        return self._apply_output_residual_and_mlp(
+            x,
+            attn_out,
+            b=b,
+            s=s,
+            n=n,
+            d=d,
+            is_three_dim=is_three_dim,
+        )
