@@ -212,3 +212,7 @@ PFNs/pfns/datasets/openml_local_cache/
 
 
 wandb/
+
+# Experiment outputs (notebooks)
+PFNs/notebookes/exp_outputs/
+PFNs/notebookes/artifacts/
