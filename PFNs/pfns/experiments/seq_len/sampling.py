@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import time
 from typing import Any
 
@@ -12,8 +13,11 @@ class ClassCoverageBatchGenerator:
     """Iterably sample batches that contain all classes in train and eval slices."""
 
     @staticmethod
-    def patch_class_sampler_to_max_num_classes() -> None:
+    @contextmanager
+    def patch_class_sampler_to_max_num_classes():
         import tabpfn_prior.priors.flexible_categorical as fc
+
+        original_class_sampler_f = fc.class_sampler_f
 
         def class_sampler_f(_min_: int, max_: int):
             def sampler() -> int:
@@ -22,6 +26,10 @@ class ClassCoverageBatchGenerator:
             return sampler
 
         fc.class_sampler_f = class_sampler_f
+        try:
+            yield
+        finally:
+            fc.class_sampler_f = original_class_sampler_f
 
     @classmethod
     def create_prior_get_batch(
@@ -34,9 +42,6 @@ class ClassCoverageBatchGenerator:
         force_max_num_classes: bool = False,
         prior_overrides: dict[str, Any] | None = None,
     ):
-        if force_max_num_classes:
-            cls.patch_class_sampler_to_max_num_classes()
-
         prior_kwargs = {
             "prior_type": prior_type,
             "max_num_classes": num_classes,
@@ -51,7 +56,16 @@ class ClassCoverageBatchGenerator:
             prior_kwargs.update(prior_overrides)
 
         prior = TabPFNPriorConfig(**prior_kwargs)
-        return prior.create_get_batch_method()
+        get_batch = prior.create_get_batch_method()
+
+        if not force_max_num_classes:
+            return get_batch
+
+        def get_batch_with_forced_num_classes(**kwargs):
+            with cls.patch_class_sampler_to_max_num_classes():
+                return get_batch(**kwargs)
+
+        return get_batch_with_forced_num_classes
 
     def __init__(
         self,

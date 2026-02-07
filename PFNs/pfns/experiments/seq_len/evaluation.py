@@ -181,7 +181,8 @@ def _evaluate_model_at_seqlen(
                     multi_class="ovr",
                 )
                 auc = float(auc.item() if torch.is_tensor(auc) else auc)
-            except Exception:
+            except Exception as err:
+                print(f"Error computing AUC: {err}")
                 auc = float("nan")
         else:
             acc = float("nan")
