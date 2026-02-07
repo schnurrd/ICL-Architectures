@@ -206,6 +206,7 @@ def download_model_from_wandb(
 ) -> str:
     import wandb
     import shutil
+    import tempfile
     
     print(f"Attempting to download model from wandb run: {run_path}")
     api = wandb.Api()
@@ -237,14 +238,15 @@ def download_model_from_wandb(
     for artifact in artifacts:
         if artifact.type == "model" and "latest" in artifact.aliases:
             print(f"Found model artifact: {artifact.name}")
-            download_dir = artifact.download()
-            for root, _, files in os.walk(download_dir):
-                for file in files:
-                    if file.endswith(".pt") or len(files) == 1:
-                        src = os.path.join(root, file)
-                        os.makedirs(destination_dir, exist_ok=True)
-                        shutil.move(src, destination_path)
-                        print(f"Downloaded artifact file {file} to {destination_path}")
-                        return destination_path
+            with tempfile.TemporaryDirectory(prefix="wandb_model_downloads_") as tmp_dir:
+                download_dir = artifact.download(root=tmp_dir)
+                for root, _, files in os.walk(download_dir):
+                    for file in files:
+                        if file.endswith(".pt") or len(files) == 1:
+                            src = os.path.join(root, file)
+                            os.makedirs(destination_dir, exist_ok=True)
+                            shutil.copy2(src, destination_path)
+                            print(f"Downloaded artifact file {file} to {destination_path}")
+                            return destination_path
 
     raise FileNotFoundError(f"No suitable model artifact found in run {run_path}.")

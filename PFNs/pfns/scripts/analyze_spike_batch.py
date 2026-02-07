@@ -5,8 +5,13 @@ from collections import defaultdict
 
 import torch
 
-from pfns.train import compute_losses, load_config
-from pfns.training_utils import move_style_and_check_shape, move_y_style_and_check_shape
+from pfns.train import load_config
+from pfns.training_utils import (
+    categorical_mask_to_inds,
+    compute_losses,
+    move_style_and_check_shape,
+    move_y_style_and_check_shape,
+)
 from pfns.utils import strip_compiled_state_dict_prefix
 
 
@@ -82,14 +87,7 @@ def main() -> None:
     style = spike.get("style")
     y_style = spike.get("y_style")
 
-    categorical_inds = None
-    if categorical_mask is not None:
-        mask = categorical_mask
-        if mask.ndim > 1:
-            if not torch.all(mask == mask[0]):
-                raise ValueError("Per-sample categorical masks not supported.")
-            mask = mask[0]
-        categorical_inds = torch.nonzero(mask, as_tuple=True)[0].tolist()
+    categorical_inds = categorical_mask_to_inds(categorical_mask)
 
     print(_tensor_stats("x", x))
     print(_tensor_stats("y", y))

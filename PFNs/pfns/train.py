@@ -9,9 +9,7 @@ import typing as tp
 from contextlib import nullcontext
 from dataclasses import dataclass
 
-import einops
 import torch
-from torch import nn
 from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 
@@ -25,6 +23,8 @@ from .priors import data_loading, prior, utils as priors_utils
 
 from .training_utils import (
     Metrics,
+    categorical_mask_to_inds,
+    compute_losses,
     move_style_and_check_shape,
     move_y_style_and_check_shape,
     set_model_to,
@@ -550,18 +550,7 @@ def train_or_evaluate_epoch(
                     enabled=c.train_mixed_precision,
                     dtype=autocast_dtype,
                 ):
-                    categorical_inds = None
-                    if hasattr(batch, 'categorical_mask') and batch.categorical_mask is not None:
-                        mask = batch.categorical_mask
-                        if mask.ndim > 1:
-                            if not torch.all(mask == mask[0]):
-                                raise NotImplementedError(
-                                    "Per-sample categorical masks are not yet supported. "
-                                    "All samples in a batch must have the same categorical features. "
-                                    "This should not happen with TabPFN prior (flexible=True)."
-                                )
-                            mask = mask[0]
-                        categorical_inds = torch.nonzero(mask, as_tuple=True)[0].tolist()
+                    categorical_inds = categorical_mask_to_inds(getattr(batch, "categorical_mask", None))
                     
                     output = model(
                         x=batch.x.to(device),
@@ -743,75 +732,6 @@ def train_or_evaluate_epoch(
         before_get_batch = time.time()
 
     return metrics.get_epoch_result(importance_sampling_infos)
-
-
-def compute_losses(
-    output: torch.Tensor,
-    targets: torch.Tensor,
-    criterion: torch.nn.Module,
-    n_targets_per_input: int,
-):
-    """
-    Compute the losses for the given output and targets.
-
-    Args:
-        output: The output of the model, shape (batch_size, num_eval_positions, n_out)
-        targets: The targets, shape (batch_size, num_eval_positions[, n_targets_per_input])
-        criterion: The criterion to use.
-        n_targets_per_input: The number of targets per input.
-
-    Returns:
-        The losses, shape (batch_size, num_eval_positions)
-    """
-    # Repeat output in the semi-last dimension n_targets_per_input times
-    output = output.unsqueeze(2).expand(
-        *output.shape[:2],
-        n_targets_per_input,
-        output.shape[-1],
-    )
-
-    if len(targets.shape) == 2:
-        # This implies we only have a single target per input
-        targets = targets.unsqueeze(2)
-
-    assert targets.shape == output.shape[:-1], (
-        f"Target shape {targets.shape} "
-        f"does not match output shape {output.shape}."
-        f"This might be because you are missing trailing "
-        "1 dimension in the target."
-    )
-
-    output = einops.rearrange(output, "b s t l -> (b t) s l")
-    targets = einops.rearrange(targets, "b s t -> (b t) s")
-
-    if isinstance(criterion, nn.GaussianNLLLoss):
-        assert (
-            output.shape[-1] == 2
-        ), "need to write a little bit of code to handle multiple regression targets at once"
-
-        mean_pred = output[..., 0]
-        var_pred = output[..., 1].abs()
-        losses = criterion(
-            mean_pred.flatten(),
-            targets.flatten(),
-            var=var_pred.flatten(),
-        )
-    elif isinstance(criterion, (nn.MSELoss, nn.BCEWithLogitsLoss)):
-        targets[torch.isnan(targets)] = -100
-        losses = criterion(output.flatten(), targets.flatten())
-        losses = losses.view(*targets.shape)
-    elif isinstance(criterion, nn.CrossEntropyLoss):
-        targets[torch.isnan(targets)] = -100
-        losses = criterion(
-            output.reshape(-1, len(criterion.weight)),
-            targets.long().flatten(),
-        )
-        losses = losses.view(*targets.shape)
-    else:
-        losses = criterion(output, targets.unsqueeze(-1))
-    losses = einops.rearrange(losses, "(b t) s -> b s t", t=n_targets_per_input)
-    losses = losses.mean(-1)
-    return losses
 
 
 def should_load_checkpoint(
