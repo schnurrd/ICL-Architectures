@@ -32,6 +32,7 @@ from typing import Any
 
 import pandas as pd
 import torch
+import wandb
 
 from .analysis import long_df_to_nested_metric_table, nested_metric_table_to_long_df
 from .constants import SCHEMA_VERSION
@@ -44,6 +45,10 @@ BUNDLE_FILES: dict[str, str] = {
     "memory": "memory.csv",
     "raw": "raw_results.pt",
 }
+WANDB_ENTITY = "icl_arch"
+WANDB_PROJECT = "seq_len_exp"
+WANDB_ARTIFACT_ALIAS = "latest"
+WANDB_RUN_MODE = "online"
 
 
 def make_bundle_path(root_dir: str | Path, experiment_name: str) -> Path:
@@ -59,6 +64,17 @@ def _to_jsonable(value: Any) -> Any:
     if isinstance(value, set):
         return [_to_jsonable(v) for v in sorted(value, key=lambda x: str(x))]
     if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, torch.dtype):
+        return str(value)
+    if isinstance(value, torch.device):
+        return str(value)
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return value.item()
+        except Exception:
+            pass
+    if hasattr(value, "__module__") and value.__module__.startswith(("torch", "numpy")):
         return str(value)
     return value
 
@@ -105,6 +121,71 @@ def save_results_bundle(
         torch.save(results, bundle / files["raw"])
 
     return bundle
+
+
+def download_results_bundle_from_wandb(
+    *,
+    artifact_name: str,
+    download_root: str | Path = ".",
+) -> Path | None:
+    """Download a bundle artifact from the default icl_arch/seq_len_exp target."""
+    reference = f"{WANDB_ENTITY}/{WANDB_PROJECT}/{artifact_name}:{WANDB_ARTIFACT_ALIAS}"
+    root = Path(download_root)
+    root.mkdir(parents=True, exist_ok=True)
+
+    try:
+        downloaded_dir = Path(wandb.Api().artifact(reference).download(root=str(root)))
+    except Exception as err:
+        message = str(err).lower()
+        if "not found" in message or "does not exist" in message:
+            return None
+        raise
+
+    required_files = [
+        BUNDLE_FILES["metadata"],
+        BUNDLE_FILES["oom"],
+        BUNDLE_FILES["metric"],
+        BUNDLE_FILES["timing"],
+        BUNDLE_FILES["memory"],
+    ]
+    missing_files = [name for name in required_files if not (downloaded_dir / name).exists()]
+    if missing_files:
+        missing = ", ".join(missing_files)
+        raise FileNotFoundError(
+            f"Downloaded artifact is missing required bundle files: {missing}. "
+            f"Downloaded path: {downloaded_dir}"
+        )
+    return downloaded_dir
+
+
+def upload_results_bundle_to_wandb(
+    bundle_dir: str | Path,
+    *,
+    artifact_name: str,
+    run_name: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    """Upload a bundle directory to the default icl_arch/seq_len_exp target."""
+    bundle = Path(bundle_dir)
+    if not bundle.exists():
+        raise FileNotFoundError(f"Bundle directory does not exist: {bundle}")
+
+    with wandb.init(
+        project=WANDB_PROJECT,
+        entity=WANDB_ENTITY,
+        mode=WANDB_RUN_MODE,
+        name=run_name,
+        job_type="seq_len_bundle_upload",
+    ) as run:
+        artifact = wandb.Artifact(
+            name=artifact_name,
+            type="dataset",
+            metadata=_to_jsonable(metadata or {}),
+        )
+        artifact.add_dir(str(bundle))
+        run.log_artifact(artifact, aliases=[WANDB_ARTIFACT_ALIAS])
+
+    return f"{WANDB_ENTITY}/{WANDB_PROJECT}/{artifact_name}:{WANDB_ARTIFACT_ALIAS}"
 
 
 def load_results_bundle(bundle_dir: str | Path, *, load_raw_torch: bool = False) -> dict[str, Any]:

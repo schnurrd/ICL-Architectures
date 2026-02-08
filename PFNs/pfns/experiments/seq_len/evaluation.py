@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import random
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import numpy as np
 import torch
 from tqdm.auto import tqdm
 
@@ -19,6 +21,14 @@ from pfns.utils import get_default_device, torch_nanmean
 
 from .constants import MEMORY_NAMES, METRIC_NAMES, SCHEMA_VERSION, TIMING_NAMES
 from .sampling import ClassCoverageBatchGenerator
+
+
+def _set_data_generation_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 @dataclass
@@ -223,6 +233,7 @@ def evaluate_models_over_seqlens(
     autocast_models: dict[str, torch.dtype] | None | Literal["auto"] = "auto", # Dict of (model_name, dtype) pairs to apply autocast to, or "auto" to infer from configs
     device: str | None = None,
     progress_desc: str = "Overall progress",
+    data_generation_seed: int | None = None,
 ) -> dict[str, Any]:
     """Run sequence-length evaluation for all models and return nested result tables."""
     if not models:
@@ -241,6 +252,9 @@ def evaluate_models_over_seqlens(
             if configs[name].train_mixed_precision
         }
     warmup_iters = 3 if use_warmup_iters else 0
+
+    if data_generation_seed is not None:
+        _set_data_generation_seed(int(data_generation_seed))
 
     tables = BenchmarkTables.create(list(models))
     smallest, largest = min(seqlen_list), max(seqlen_list)
@@ -322,5 +336,8 @@ def evaluate_models_over_seqlens(
             "number_of_test_samples": number_of_test_samples,
             "number_of_repetitions": number_of_repetitions,
             "device": resolved_device,
+            "data_generation_seed": (
+                int(data_generation_seed) if data_generation_seed is not None else None
+            ),
         },
     }

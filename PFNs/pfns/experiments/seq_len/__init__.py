@@ -20,7 +20,13 @@ from .evaluation import (
     BenchmarkTables,
     evaluate_models_over_seqlens,
 )
-from .io import load_results_bundle, make_bundle_path, save_results_bundle
+from .io import (
+    download_results_bundle_from_wandb,
+    load_results_bundle,
+    make_bundle_path,
+    save_results_bundle,
+    upload_results_bundle_to_wandb,
+)
 from .models import load_models_for_benchmark
 from .model_registry import (
     DELTANET_MODELS,
@@ -75,4 +81,6 @@ __all__ = [
     "make_bundle_path",
     "save_results_bundle",
     "load_results_bundle",
+    "download_results_bundle_from_wandb",
+    "upload_results_bundle_to_wandb",
 ]
