@@ -257,7 +257,7 @@ def evaluate_models_over_seqlens(
         _set_data_generation_seed(int(data_generation_seed))
 
     tables = BenchmarkTables.create(list(models))
-    smallest, largest = min(seqlen_list), max(seqlen_list)
+    smallest_seqlen, largest_seqlen = min(seqlen_list), max(seqlen_list)
 
     def tprint(*args, **kwargs):
         if print_timing:
@@ -265,8 +265,8 @@ def evaluate_models_over_seqlens(
 
     batch_generator = ClassCoverageBatchGenerator(
         num_batches=number_of_repetitions,
-        largest_seqlen=largest,
-        smallest_seqlen=smallest,
+        smallest_seqlen=smallest_seqlen,
+        largest_seqlen=largest_seqlen,
         num_features=num_features,
         num_classes=num_classes,
         number_of_test_samples=number_of_test_samples,
@@ -297,7 +297,7 @@ def evaluate_models_over_seqlens(
                                 config=config,
                                 base_batch=base_batch,
                                 seqlen=seqlen,
-                                largest_seqlen=largest,
+                                largest_seqlen=largest_seqlen,
                                 number_of_test_samples=number_of_test_samples,
                                 resolved_device=resolved_device,
                                 is_cuda=is_cuda,

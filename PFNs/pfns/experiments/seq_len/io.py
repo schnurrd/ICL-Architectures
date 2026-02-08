@@ -26,6 +26,7 @@ Notes:
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,85 @@ def _to_jsonable(value: Any) -> Any:
     return value
 
 
+def sanitize_wandb_artifact_component(value: str) -> str:
+    """Normalize artifact-name parts to a conservative W&B-safe token."""
+    token = re.sub(r"[^A-Za-z0-9_-]+", "_", str(value).strip())
+    return token.strip("_") or "unnamed"
+
+
+def make_model_artifact_name(
+    *,
+    base_artifact_name: str,
+    model_name: str,
+    model_hash: str,
+) -> str:
+    """Build deterministic per-model artifact names."""
+    return (
+        f"{sanitize_wandb_artifact_component(base_artifact_name)}_"
+        f"{sanitize_wandb_artifact_component(model_name)}_"
+        f"{sanitize_wandb_artifact_component(model_hash)}"
+    )
+
+
+def run_metadata_matches(
+    run_metadata: dict[str, Any],
+    *,
+    expected: dict[str, Any],
+    keys: tuple[str, ...],
+) -> bool:
+    """Return True when all selected metadata keys match expected values exactly."""
+    return all(run_metadata.get(key) == expected.get(key) for key in keys)
+
+
+def merge_model_results(
+    results_by_model: dict[str, dict[str, Any]],
+    *,
+    merged_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Merge single-model benchmark outputs into one canonical results dict."""
+    if not results_by_model:
+        raise ValueError("results_by_model cannot be empty.")
+
+    merged_metric: dict[str, dict[str, dict[int, list[float]]]] = {}
+    merged_timing: dict[str, dict[str, dict[int, list[float]]]] = {}
+    merged_memory: dict[str, dict[str, dict[int, list[float]]]] = {}
+    merged_oom: dict[str, list[int]] = {}
+    schema_version = SCHEMA_VERSION
+    fallback_metadata: dict[str, Any] | None = None
+
+    for model_name, result in results_by_model.items():
+        raw_schema = result.get("schema_version", SCHEMA_VERSION)
+        schema_version = int(float(raw_schema if raw_schema is not None else SCHEMA_VERSION))
+        fallback_metadata = fallback_metadata or result.get("metadata", {})
+
+        metric_table = result.get("metric_table", {})
+        timing_table = result.get("timing_table", {})
+        memory_table = result.get("memory_table", {})
+        oom_errors = result.get("oom_errors", {})
+
+        if model_name not in metric_table or model_name not in timing_table:
+            raise KeyError(
+                f"Model '{model_name}' not found in result tables. "
+                "Expected one-model result dict per model."
+            )
+
+        merged_metric[model_name] = metric_table[model_name]
+        merged_timing[model_name] = timing_table[model_name]
+        merged_memory[model_name] = memory_table.get(model_name, {})
+
+        raw_oom = oom_errors.get(model_name, [])
+        merged_oom[model_name] = sorted({int(x) for x in raw_oom})
+
+    return {
+        "schema_version": schema_version,
+        "metric_table": merged_metric,
+        "timing_table": merged_timing,
+        "memory_table": merged_memory,
+        "oom_errors": merged_oom,
+        "metadata": merged_metadata if merged_metadata is not None else (fallback_metadata or {}),
+    }
+
+
 def save_results_bundle(
     results: dict[str, Any],
     bundle_dir: str | Path,
@@ -128,7 +208,11 @@ def download_results_bundle_from_wandb(
     artifact_name: str,
     download_root: str | Path = ".",
 ) -> Path | None:
-    """Download a bundle artifact from the default icl_arch/seq_len_exp target."""
+    """Download a bundle artifact from the default icl_arch/seq_len_exp target.
+
+    Returns ``None`` when the artifact is unavailable or cannot be read, so callers
+    can treat this as a cache miss and recompute results.
+    """
     reference = f"{WANDB_ENTITY}/{WANDB_PROJECT}/{artifact_name}:{WANDB_ARTIFACT_ALIAS}"
     root = Path(download_root)
     root.mkdir(parents=True, exist_ok=True)
@@ -137,7 +221,12 @@ def download_results_bundle_from_wandb(
         downloaded_dir = Path(wandb.Api().artifact(reference).download(root=str(root)))
     except Exception as err:
         message = str(err).lower()
-        if "not found" in message or "does not exist" in message:
+        cache_miss_markers = (
+            "not found",
+            "does not exist",
+            "unable to fetch files for artifact",
+        )
+        if any(marker in message for marker in cache_miss_markers):
             return None
         raise
 
@@ -150,11 +239,8 @@ def download_results_bundle_from_wandb(
     ]
     missing_files = [name for name in required_files if not (downloaded_dir / name).exists()]
     if missing_files:
-        missing = ", ".join(missing_files)
-        raise FileNotFoundError(
-            f"Downloaded artifact is missing required bundle files: {missing}. "
-            f"Downloaded path: {downloaded_dir}"
-        )
+        # Treat incomplete artifacts as cache misses and rerun the model.
+        return None
     return downloaded_dir
 
 
