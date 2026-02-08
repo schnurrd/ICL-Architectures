@@ -30,7 +30,7 @@ from pfns.utils import (
     strip_compiled_state_dict_prefix,
 )
 from pfns.base_config import BaseConfig
-from pfns.train import MainConfig, _resolve_autocast_dtype
+from pfns.train import MainConfig, resolve_autocast_dtype
 from pfns.run_logger import download_model_from_wandb
 
 
@@ -693,7 +693,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         ]
 
         autocast_dtype = (
-            _resolve_autocast_dtype(
+            resolve_autocast_dtype(
                 self.device,
                 self.config.train_mixed_precision_dtype,
             )
