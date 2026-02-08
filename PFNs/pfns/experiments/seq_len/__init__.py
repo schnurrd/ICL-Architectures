@@ -22,6 +22,20 @@ from .evaluation import (
 )
 from .io import load_results_bundle, make_bundle_path, save_results_bundle
 from .models import load_models_for_benchmark
+from .model_registry import (
+    DELTANET_MODELS,
+    GATED_DELTANET_MODELS,
+    GLA_MODELS,
+    KDA_MODELS,
+    LINEAR_ATTENTION_MODELS,
+    REBASED_MODELS,
+    MODEL_FAMILIES,
+    OTHER_MODELS,
+    TRANSFORMER_MODELS,
+    get_all_models,
+    get_models_from_families,
+    get_models_from_names,
+)
 from .plotting import build_model_style_map, plot_curves_from_df
 from .sampling import ClassCoverageBatchGenerator
 
@@ -35,7 +49,19 @@ __all__ = [
     "METRIC_NAMES",
     "TIMING_NAMES",
     "MEMORY_NAMES",
+    "TRANSFORMER_MODELS",
+    "KDA_MODELS",
+    "GLA_MODELS",
+    "DELTANET_MODELS",
+    "GATED_DELTANET_MODELS",
+    "LINEAR_ATTENTION_MODELS",
+    "REBASED_MODELS",
+    "OTHER_MODELS",
+    "MODEL_FAMILIES",
     "load_models_for_benchmark",
+    "get_all_models",
+    "get_models_from_families",
+    "get_models_from_names",
     "ClassCoverageBatchGenerator",
     "BenchmarkOOMError",
     "BenchmarkTables",

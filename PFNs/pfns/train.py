@@ -29,7 +29,7 @@ from .training_utils import (
     move_y_style_and_check_shape,
     set_model_to,
     update_importance_sampling_infos,
-    compute_update_ratio
+    resolve_autocast_dtype
 )
 from .debug_spike import log_loss_spike
 from .utils import get_cosine_schedule_with_warmup, init_dist
@@ -437,25 +437,6 @@ def train(
         "total_time": time.time() - total_start_time,
     }
 
-
-def _resolve_autocast_dtype(device: str, dtype_spec: str | None) -> torch.dtype:
-    dtype_spec = (dtype_spec or "bf16" if torch.cuda.is_bf16_supported() else "fp16").lower()
-    if dtype_spec == "auto":
-        return torch.bfloat16
-    if dtype_spec in ("fp16", "float16"):
-        return torch.float16
-    if dtype_spec in ("bf16", "bfloat16"):
-        if device.startswith("cuda") and not torch.cuda.is_bf16_supported():
-            raise ValueError(
-                "Requested bf16 autocast but CUDA device does not support bf16."
-            )
-        return torch.bfloat16
-    raise ValueError(
-        f"Unsupported train_mixed_precision_dtype '{dtype_spec}'. "
-        "Use 'auto', 'bf16', or 'fp16'."
-    )
-
-
 # we could think about removing c as arg here to make the dep's clearer
 def train_or_evaluate_epoch(
     c: MainConfig,
@@ -489,7 +470,7 @@ def train_or_evaluate_epoch(
     importance_sampling_infos = []
     grad_norm_ema = 0.0 if last_epoch_result is None else last_epoch_result.grad_norm_ema_mean
     spike_save_count = 0 # only used if debug_spike_enabled
-    autocast_dtype = _resolve_autocast_dtype(device, c.train_mixed_precision_dtype) if c.train_mixed_precision else torch.float32
+    autocast_dtype = resolve_autocast_dtype(device, c.train_mixed_precision_dtype) if c.train_mixed_precision else torch.float32
     
     before_get_batch = time.time()
     assert (

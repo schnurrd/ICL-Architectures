@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import torch
 from tqdm.auto import tqdm
@@ -13,6 +13,7 @@ from pfns.training_utils import (
     compute_losses,
     move_style_and_check_shape,
     move_y_style_and_check_shape,
+    resolve_autocast_dtype
 )
 from pfns.utils import get_default_device, torch_nanmean
 
@@ -100,6 +101,7 @@ def _evaluate_model_at_seqlen(
     resolved_device: str,
     is_cuda: bool,
     warmup_iters: int,
+    num_classes: int,
     categorical_inds: list[int] | None,
 ) -> dict[str, float | None]:
     train_x = base_batch.x[:, :seqlen]
@@ -173,7 +175,7 @@ def _evaluate_model_at_seqlen(
         if valid.any():
             pred = output.argmax(dim=-1)
             acc = (pred[valid] == targets[valid]).float().mean().item()
-            probs = torch.softmax(output, dim=-1)[valid]
+            probs = torch.softmax(output[..., :num_classes], dim=-1)[valid]
             try:
                 auc = auc_metric(
                     targets[valid].cpu(),
@@ -218,7 +220,7 @@ def evaluate_models_over_seqlens(
     number_of_repetitions: int = 100,
     use_warmup_iters: bool = False,
     print_timing: bool = False,
-    autocast_models: set[str] | None = None,
+    autocast_models: dict[tuple[str, torch.dtype]] | None | Literal["auto"] = "auto", # Dict of (model_name, dtype) pairs to apply autocast to, or "auto" to infer from configs
     device: str | None = None,
     progress_desc: str = "Overall progress",
 ) -> dict[str, Any]:
@@ -231,7 +233,13 @@ def evaluate_models_over_seqlens(
     resolved_device = device or get_default_device()
     device_type = torch.device(resolved_device).type
     is_cuda = device_type == "cuda"
-    autocast_models = autocast_models or set()
+    if autocast_models == "auto":
+        print("Inferring autocast settings from configs...")
+        autocast_models = { 
+            name: resolve_autocast_dtype(resolved_device, configs[name].train_mixed_precision_dtype )
+            for name in configs.keys() 
+            if configs[name].train_mixed_precision
+        }
     warmup_iters = 3 if use_warmup_iters else 0
 
     tables = BenchmarkTables.create(list(models))
@@ -263,7 +271,7 @@ def evaluate_models_over_seqlens(
                 with torch.autocast(
                     device_type=device_type,
                     enabled=is_cuda and model_name in autocast_models,
-                    dtype=torch.bfloat16,
+                    dtype=autocast_models.get(model_name, torch.float32),
                 ):
                     for seqlen in seqlen_list:
                         if tables.should_skip_seqlen(model_name, seqlen):
@@ -280,6 +288,7 @@ def evaluate_models_over_seqlens(
                                 resolved_device=resolved_device,
                                 is_cuda=is_cuda,
                                 warmup_iters=warmup_iters,
+                                num_classes=num_classes,
                                 categorical_inds=categorical_inds,
                             )
                         except BenchmarkOOMError:

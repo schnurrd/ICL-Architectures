@@ -271,3 +271,24 @@ def compute_losses(
     losses = einops.rearrange(losses, "(b t) s -> b s t", t=n_targets_per_input)
     losses = losses.mean(-1)
     return losses
+
+
+
+def resolve_autocast_dtype(device: str, dtype_spec: str | None) -> torch.dtype:
+    dtype_spec = (dtype_spec or "bf16" if torch.cuda.is_bf16_supported() else "fp16").lower()
+    if dtype_spec == "auto":
+        return torch.bfloat16
+    if dtype_spec in ("fp16", "float16"):
+        return torch.float16
+    if dtype_spec in ("bf16", "bfloat16"):
+        if device.startswith("cuda") and not torch.cuda.is_bf16_supported():
+            raise ValueError(
+                "Requested bf16 autocast but CUDA device does not support bf16."
+            )
+        return torch.bfloat16
+    if dtype_spec in ("fp32", "float32"):
+        return torch.float32
+    raise ValueError(
+        f"Unsupported train_mixed_precision_dtype '{dtype_spec}'. "
+        "Use 'auto', 'bf16', 'fp16', or 'fp32'."
+    )
