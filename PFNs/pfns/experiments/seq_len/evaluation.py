@@ -22,6 +22,8 @@ from pfns.utils import get_default_device, torch_nanmean
 from .constants import MEMORY_NAMES, METRIC_NAMES, SCHEMA_VERSION, TIMING_NAMES
 from .sampling import ClassCoverageBatchGenerator
 
+EVAL_MODES = ["fit_predict", "forward"]
+
 
 def _set_data_generation_seed(seed: int) -> None:
     random.seed(seed)
@@ -113,6 +115,7 @@ def _evaluate_model_at_seqlen(
     warmup_iters: int,
     num_classes: int,
     categorical_inds: list[int] | None,
+    eval_mode: Literal["fit_predict", "forward"],
 ) -> dict[str, float | None]:
     train_x = base_batch.x[:, :seqlen]
     train_y = base_batch.y[:, :seqlen]
@@ -142,11 +145,24 @@ def _evaluate_model_at_seqlen(
         "categorical_inds": categorical_inds,
         "only_return_standard_out": True,
     }
+    forward_kwargs = {
+        "x": x_train,
+        "y": y_train,
+        "test_x": x_test,
+        "style": style,
+        "y_style": y_style,
+        "categorical_inds": categorical_inds,
+        "only_return_standard_out": True,
+    }
 
     try:
-        for _ in range(warmup_iters):
-            warm_state = model.incontext_fit(**fit_kwargs)
-            _ = model.incontext_predict(warm_state, **pred_kwargs)
+        if eval_mode == "fit_predict":
+            for _ in range(warmup_iters):
+                warm_state = model.incontext_fit(**fit_kwargs)
+                _ = model.incontext_predict(warm_state, **pred_kwargs)
+        else:
+            for _ in range(warmup_iters):
+                _ = model(**forward_kwargs)
 
         peak_allocated_mb = None
         peak_reserved_mb = None
@@ -157,11 +173,20 @@ def _evaluate_model_at_seqlen(
             base_alloc = torch.cuda.memory_allocated() / (1024**2)
             base_reserved = torch.cuda.memory_reserved() / (1024**2)
 
-        state, fit_ms = _timed(lambda: model.incontext_fit(**fit_kwargs), is_cuda=is_cuda)
-        output, pred_ms = _timed(
-            lambda: model.incontext_predict(state, **pred_kwargs),
-            is_cuda=is_cuda,
-        )
+        if eval_mode == "fit_predict":
+            state, fit_ms = _timed(lambda: model.incontext_fit(**fit_kwargs), is_cuda=is_cuda)
+            output, pred_ms = _timed(
+                lambda: model.incontext_predict(state, **pred_kwargs),
+                is_cuda=is_cuda,
+            )
+            context_size_mb = state.size_bytes() / (1024**2)
+        elif eval_mode == "forward":
+            output, pred_ms = _timed(lambda: model(**forward_kwargs), is_cuda=is_cuda)
+            fit_ms = 0.0
+            context_size_mb = 0.0
+        else:
+            raise ValueError(f"Unknown eval_mode {eval_mode!r}. Expected one of: {', '.join(EVAL_MODES)}.")
+
         forward_ms = fit_ms + pred_ms
 
         if is_cuda:
@@ -169,8 +194,6 @@ def _evaluate_model_at_seqlen(
             peak_reserved = torch.cuda.max_memory_reserved() / (1024**2)
             peak_allocated_mb = max(0.0, peak_alloc - base_alloc)
             peak_reserved_mb = max(0.0, peak_reserved - base_reserved)
-
-        context_size_mb = state.size_bytes() / (1024**2)
 
         targets = test_target_y.to(resolved_device)
         losses = compute_losses(
@@ -231,6 +254,7 @@ def evaluate_models_over_seqlens(
     use_warmup_iters: bool = False,
     print_timing: bool = False,
     autocast_models: dict[str, torch.dtype] | None | Literal["auto"] = "auto", # Dict of (model_name, dtype) pairs to apply autocast to, or "auto" to infer from configs
+    forward_models: list[str] | None = None,
     device: str | None = None,
     progress_desc: str = "Overall progress",
     data_generation_seed: int | None = None,
@@ -240,7 +264,8 @@ def evaluate_models_over_seqlens(
         raise ValueError("No models provided.")
     if not seqlen_list:
         raise ValueError("seqlen_list cannot be empty.")
-
+    forward_models_set = set(forward_models or [])
+    
     resolved_device = device or get_default_device()
     device_type = torch.device(resolved_device).type
     is_cuda = device_type == "cuda"
@@ -281,6 +306,7 @@ def evaluate_models_over_seqlens(
 
         for model_name, model in models.items():
             config = configs[model_name]
+            model_eval_mode = "forward" if model_name in forward_models_set else "fit_predict"
             with torch.inference_mode():
                 with torch.autocast(
                     device_type=device_type,
@@ -304,6 +330,7 @@ def evaluate_models_over_seqlens(
                                 warmup_iters=warmup_iters,
                                 num_classes=num_classes,
                                 categorical_inds=categorical_inds,
+                                eval_mode=model_eval_mode,
                             )
                         except BenchmarkOOMError:
                             tables.mark_oom(model_name, seqlen)
@@ -336,6 +363,7 @@ def evaluate_models_over_seqlens(
             "number_of_test_samples": number_of_test_samples,
             "number_of_repetitions": number_of_repetitions,
             "device": resolved_device,
+            "forward_models": sorted(forward_models_set),
             "data_generation_seed": (
                 int(data_generation_seed) if data_generation_seed is not None else None
             ),
