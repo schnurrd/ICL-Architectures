@@ -220,7 +220,7 @@ def evaluate_models_over_seqlens(
     number_of_repetitions: int = 100,
     use_warmup_iters: bool = False,
     print_timing: bool = False,
-    autocast_models: dict[tuple[str, torch.dtype]] | None | Literal["auto"] = "auto", # Dict of (model_name, dtype) pairs to apply autocast to, or "auto" to infer from configs
+    autocast_models: dict[str, torch.dtype] | None | Literal["auto"] = "auto", # Dict of (model_name, dtype) pairs to apply autocast to, or "auto" to infer from configs
     device: str | None = None,
     progress_desc: str = "Overall progress",
 ) -> dict[str, Any]:
