@@ -1,5 +1,3 @@
---extra-index-url https://download.pytorch.org/whl/cu118
-torch==2.9.0
 pandas
 seaborn
 ipykernel
@@ -14,5 +12,3 @@ tabicl
 flash-linear-attention
 tabpfn
 wandb
-causal-conv1d
-mamba-ssm

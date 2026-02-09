@@ -1,0 +1,18 @@
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch==2.7.1
+pandas
+seaborn
+ipykernel
+nvidia-ml-py
+numpy 
+scipy 
+gpytorch
+openml
+xgboost
+catboost
+tabicl
+flash-linear-attention
+tabpfn
+wandb
+causal-conv1d
+mamba-ssm

@@ -43,13 +43,36 @@ Install the required packages and editable installs for the repositories PFNs, T
 conda create -n icl_arch python=3.11
 conda activate icl_arch
 
-pip install -r requirements.txt \
+pip install -r requirements/requirements.txt \
     -e ./PFNs \
     -e ./prior-repos/tabpfn-v1-prior \
     -e ./prior-repos/tabularpriors
 ```
 
-Tested for Nvidia RTX 5070 with Cuda 12.8. For old GPUs with compute capability < 7.0 you might need to install requirements_old_gpus.txt instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, the tabularpriors repository can't be installed and torch compile will not work.
+Tested for Nvidia RTX 5070 with Cuda 12.8. For old GPUs with compute capability < 7.0 you might need to install requirements/requirements_old_gpus.txt instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, the tabularpriors repository can't be installed and torch compile will not work.
+
+
+On the obsession cluster note with cuda 12.0 the following versions work:
+```bash
+conda create -n icl_arch python=3.11
+conda activate icl_arch
+
+conda install -y -c nvidia/label/cuda-11.8.0 cuda-toolkit
+
+export CUDA_HOME=$CONDA_PREFIX
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+
+python -m pip install --no-cache-dir \
+  --index-url https://download.pytorch.org/whl/cu118 \
+  torch==2.7.1
+
+python -m pip install --no-cache-dir --no-build-isolation causal-conv1d mamba-ssm
+
+pip install -r requirements/requirements_obsession.txt \
+    -e ./PFNs \
+    -e ./prior-repos/tabpfn-v1-prior
+```
 
 ### Pulling latest changes 
 
