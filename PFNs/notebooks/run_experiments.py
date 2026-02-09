@@ -8,6 +8,8 @@ from pfns.experiments.seq_len import (
     MODEL_FAMILIES,
     download_results_bundle_from_wandb,
     evaluate_models_over_seqlens,
+    get_autocast_models_from_registry,
+    get_forward_models_from_registry,
     get_models_from_families,
     get_all_models,
     get_models_from_names,
@@ -21,8 +23,6 @@ from pfns.experiments.seq_len import (
     upload_results_bundle_to_wandb,
 )
 
-import torch
-
 EXPERIMENT = {
     "name": "seq_len_comparison",
     "num_classes": 5,
@@ -33,11 +33,6 @@ EXPERIMENT = {
     "use_warmup_iters": False,
     "print_timing": False,
     "seqlen_list": [250, 500, 750, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000],
-    "autocast_models": {
-        "DeltaNet_Cached": torch.bfloat16,
-        "DeltaNet_Causal": torch.bfloat16,
-        "DeltaNet_Teacher_Forcing": torch.bfloat16
-    },  # Set to "auto" to infer from model configs, or specify dtypes directly here.
 }
 
 WANDB = {
@@ -56,10 +51,10 @@ EXPECTED_RUN_METADATA_KEYS = (
     "data_generation_seed",
 )
 
-BUNDLE_ROOT = Path.cwd().resolve() / "exp_outputs" / "seq_len" / "bundles"
-BUNDLE_ROOT.mkdir(parents=True, exist_ok=True)
+OUTPUT_ROOT = Path.cwd().resolve() / "exp_outputs" / "seq_len"
+OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
-print(f"Bundles are stored in: {BUNDLE_ROOT}")
+print(f"Results are stored in: {OUTPUT_ROOT}")
 print(f"Available model families: {list(MODEL_FAMILIES)}")
 
 # Example by family:
@@ -106,8 +101,6 @@ expected_run_metadata = {
 
 results_by_model = {}
 model_bundle_paths = {}
-per_model_root = BUNDLE_ROOT / "per_model"
-per_model_root.mkdir(parents=True, exist_ok=True)
 
 if WANDB["enabled"] and WANDB["overwrite"]:
     print("WANDB overwrite=True: skipping per-model download and forcing rerun.")
@@ -124,7 +117,7 @@ for model_name, model_config in models_to_compare.items():
     if WANDB["enabled"] and not WANDB["overwrite"]:
         cached_bundle_path = download_results_bundle_from_wandb(
             artifact_name=model_artifact_name,
-            download_root=BUNDLE_ROOT / "wandb_model_cache",
+            download_root=OUTPUT_ROOT / "wandb_model_cache",
         )
         if cached_bundle_path is not None:
             cached_bundle = load_results_bundle(cached_bundle_path)
@@ -176,16 +169,19 @@ for model_name, model_config in models_to_compare.items():
         number_of_repetitions=EXPERIMENT["num_repetitions"],
         use_warmup_iters=EXPERIMENT["use_warmup_iters"],
         print_timing=EXPERIMENT["print_timing"],
-        autocast_models={model_name: EXPERIMENT["autocast_models"].get(model_name, torch.float32)},  # Use "auto" to infer from configs, or provide a dict
+        autocast_models=get_autocast_models_from_registry(
+            {model_name: model_config},
+            device=device,
+        ),
         device=device,
         data_generation_seed=EXPERIMENT["data_generation_seed"],
         progress_desc=f"{model_name} progress",
-        forward_models= ["Non-Causal_TabPFN", "Causal_TabPFN", "Test_To_Train_Only_TabPFN"]
+        forward_models=get_forward_models_from_registry({model_name: model_config}),
     )
     results_by_model[model_name] = model_results
 
     model_bundle_path = make_bundle_path(
-        per_model_root,
+        OUTPUT_ROOT,
         f"{EXPERIMENT['name']}_{sanitize_wandb_artifact_component(model_name)}",
     )
     save_results_bundle(

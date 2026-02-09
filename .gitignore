@@ -216,3 +216,5 @@ wandb/
 # Experiment outputs (notebooks)
 PFNs/notebooks/exp_outputs/
 PFNs/notebooks/artifacts/
+
+exp_outputs/*

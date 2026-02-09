@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 from typing import Any, Iterable
+from pfns.training_utils import resolve_autocast_dtype
+from pfns.utils import get_default_device
 
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = { # currently running softmax with feature att
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/90rqcrr2",  # no feature attention like fla
     },
     # "Non-Causal_TabPFN": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", 
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd",
+    #     "eval_mode": "forward",
     # },
     # "Causal_TabPFN": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz",  
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz",
+    #     "eval_mode": "forward",
     # },
     # "Test_To_Train_Only_TabPFN": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",  
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
+    #     "eval_mode": "forward",
     # },
 }
 
@@ -59,18 +64,23 @@ GLA_MODELS: dict[str, dict[str, Any]] = {
 DELTANET_MODELS: dict[str, dict[str, Any]] = {
     "DeltaNet_Cached": {
         "wandb_run_id": "fla_models/runs/q67a0x92", 
+        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Cached_short_conv": {
         "wandb_run_id": "fla_models/runs/nluohjzz",
+        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Cached_short_conv": {
         "wandb_run_id": "fla_models/runs/4bvpfdho",
+        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Teacher_Forcing": {
         "wandb_run_id": "fla_models/runs/alqp1bd2",
+        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Teacher_Forcing_short_conv": {
         "wandb_run_id": "fla_models/runs/fm8kzerj",
+        "eval_autocast_dtype": "bf16",
     },
     # "DeltaNet_Causal": {
     #     "wandb_run_id": "fla_models/runs/0bkajhpw",  # redo and remove
@@ -141,6 +151,8 @@ __all__ = [
     "get_models_from_names",
     "get_models_from_families",
     "get_all_models",
+    "get_autocast_models_from_registry",
+    "get_forward_models_from_registry",
 ]
 
 
@@ -175,3 +187,29 @@ def get_all_models() -> dict[str, dict[str, Any]]:
     for models in MODEL_FAMILIES.values():
         selected.update(_copy_models(models))
     return selected
+
+
+def get_autocast_models_from_registry(
+    model_configs: dict[str, dict[str, Any]],
+    *,
+    device: str | None = None,
+) -> dict[str, Any]:
+
+    resolved_device = device or get_default_device()
+    autocast_models: dict[str, Any] = {}
+    for model_name, model_config in model_configs.items():
+        dtype_spec = model_config.get("eval_autocast_dtype")
+        if dtype_spec is None:
+            continue
+        autocast_models[model_name] = resolve_autocast_dtype(resolved_device, dtype_spec)
+    return autocast_models
+
+
+def get_forward_models_from_registry(
+    model_configs: dict[str, dict[str, Any]],
+) -> list[str]:
+    return [
+        model_name
+        for model_name, model_config in model_configs.items()
+        if model_config.get("eval_mode") == "forward"
+    ]
