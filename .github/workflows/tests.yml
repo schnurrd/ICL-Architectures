@@ -20,12 +20,12 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: requirements_ci.txt
+          cache-dependency-path: requirements/requirements_ci.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements_ci.txt
+          pip install -r requirements/requirements_ci.txt
           pip install -e ./PFNs -e ./prior-repos/tabpfn-v1-prior -e ./prior-repos/tabularpriors
 
       - name: Run tests
