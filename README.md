@@ -124,6 +124,8 @@ CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 PFNs/pfns/run_training_cli.
 - `--wandb` / `--no-wandb`: Enable/disable wandb logging (wandb settings come from the config file).
 - `--config-index`: Index of the config to use. This is used to select a config from the config file.
 - `--overwrite`: Start fresh even if a checkpoint/config exists at the target path (do not load, overwrite on save).
+- `--train-mixed-precision` / `--no-train-mixed-precision`: Override mixed precision on/off after loading the config/checkpoint.
+- `--train-mixed-precision-dtype`: Override mixed precision dtype after loading the config/checkpoint (e.g. `auto`, `fp16`, `bf16`, `fp32`).
 
 ### CLI evaluation interface
 

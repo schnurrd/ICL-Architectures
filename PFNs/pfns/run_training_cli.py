@@ -110,6 +110,16 @@ def parse_args():
         default=None,
         help="Override mixed precision setting after loading a checkpoint config.",
     )
+    parser.add_argument(
+        "--train-mixed-precision-dtype",
+        type=str.lower,
+        default=None,
+        help=(
+            "Override mixed precision dtype after loading a checkpoint config. "
+            "Supported values include: auto, fp16, bf16, fp32 "
+            "(aliases: float16, bfloat16, float32)."
+        ),
+    )
 
     return parser.parse_args()
 
@@ -310,6 +320,11 @@ def main():
 
     if args.train_mixed_precision is not None:
         config = _update_config(config, train_mixed_precision=args.train_mixed_precision)
+    if args.train_mixed_precision_dtype is not None:
+        config = _update_config(
+            config,
+            train_mixed_precision_dtype=args.train_mixed_precision_dtype,
+        )
 
     # --- Initialize wandb ---
     run_manager = create_run_manager(config.wandb, full_config=config.to_dict(), run_id=config.wandb_run_id)
@@ -357,6 +372,7 @@ def main():
     print(f"  Test steps / epoch: {config.test_steps_per_epoch}")
     print(f"  Device: {args.device or 'auto-detect'}")
     print(f"  Mixed precision: {config.train_mixed_precision}")
+    print(f"  Mixed precision dtype: {config.train_mixed_precision_dtype}")
     
     try:
         result = pfns.train.train(

@@ -88,9 +88,9 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
 }
 
 GATED_DELTANET_MODELS: dict[str, dict[str, Any]] = {
-    # "Gated_DeltaNet_Cached_seq_len_10K": {
-    #     "wandb_run_id": "fla_models/runs/9elhe2fw",  # still running; requires ~22GB VRAM
-    # },
+    "Gated_DeltaNet_Cached_seq_len_10K": {
+        "wandb_run_id": "fla_models/runs/9elhe2fw",
+    },
     "Gated_DeltaNet_Cached_seq_len_2K": {
         "wandb_run_id": "fla_models/runs/uah7zywj",
     },
