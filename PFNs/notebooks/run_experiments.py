@@ -1,19 +1,11 @@
-import hashlib
-import json
 from pathlib import Path
 
 from pfns.utils import get_default_device
+from notebook_utils import single_model_hash
 
-from pfns.experiments.seq_len import (
-    MODEL_FAMILIES,
+from pfns.experiments.seq_len.evaluation import evaluate_models_over_seqlens
+from pfns.experiments.seq_len.io import (
     download_results_bundle_from_wandb,
-    evaluate_models_over_seqlens,
-    get_autocast_models_from_registry,
-    get_forward_models_from_registry,
-    get_models_from_families,
-    get_all_models,
-    get_models_from_names,
-    load_models_for_benchmark,
     load_results_bundle,
     make_bundle_path,
     make_model_artifact_name,
@@ -21,6 +13,15 @@ from pfns.experiments.seq_len import (
     sanitize_wandb_artifact_component,
     save_results_bundle,
     upload_results_bundle_to_wandb,
+)
+from pfns.experiments.seq_len.models import load_models_for_benchmark
+from pfns.experiments.seq_len.model_registry import get_all_models
+from pfns.experiments.seq_len.model_registry import (
+    MODEL_FAMILIES,
+    get_autocast_models_from_registry,
+    get_forward_models_from_registry,
+    get_models_from_families,
+    get_models_from_names,
 )
 
 EXPERIMENT = {
@@ -39,7 +40,26 @@ WANDB = {
     "enabled": True,
     "artifact_name": "base_results",
     "overwrite": False,
+    "entity": "icl_arch",
+    "project": "seq_len_exp",
 }
+
+SEQLEN_BUNDLE_FILES = {
+    "metadata": "metadata.json",
+    "oom": "oom_errors.json",
+    "metric": "metric.csv",
+    "timing": "timing.csv",
+    "memory": "memory.csv",
+    "raw": "raw_results.pt",
+}
+
+SEQLEN_REQUIRED_FILES = (
+    SEQLEN_BUNDLE_FILES["metadata"],
+    SEQLEN_BUNDLE_FILES["oom"],
+    SEQLEN_BUNDLE_FILES["metric"],
+    SEQLEN_BUNDLE_FILES["timing"],
+    SEQLEN_BUNDLE_FILES["memory"],
+)
 
 EXPECTED_RUN_METADATA_KEYS = (
     "seqlen_list",
@@ -58,7 +78,7 @@ print(f"Results are stored in: {OUTPUT_ROOT}")
 print(f"Available model families: {list(MODEL_FAMILIES)}")
 
 # Example by family:
-#models_to_compare = get_models_from_families(["transformer"])
+# models_to_compare = get_models_from_families(["transformer"])
 
 # models_to_compare = get_models_from_names([
 #     "Softmax_Transformer",
@@ -71,17 +91,6 @@ print(f"Available model families: {list(MODEL_FAMILIES)}")
 # ])
 
 models_to_compare = get_all_models()
-
-
-def _single_model_hash(model_name: str, model_config: dict) -> str:
-    payload = {
-        "experiment": EXPERIMENT,
-        "model_name": model_name,
-        "model_config": model_config,
-    }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()[:16]
 
 
 device = get_default_device()
@@ -97,8 +106,6 @@ expected_run_metadata = {
     "data_generation_seed": EXPERIMENT["data_generation_seed"],
 }
 
-
-
 results_by_model = {}
 model_bundle_paths = {}
 
@@ -106,7 +113,11 @@ if WANDB["enabled"] and WANDB["overwrite"]:
     print("WANDB overwrite=True: skipping per-model download and forcing rerun.")
 
 for model_name, model_config in models_to_compare.items():
-    model_hash = _single_model_hash(model_name, model_config)
+    model_hash = single_model_hash(
+        model_name=model_name,
+        model_config=model_config,
+        experiment_payload=EXPERIMENT,
+    )
     model_artifact_name = make_model_artifact_name(
         base_artifact_name=WANDB["artifact_name"],
         model_name=model_name,
@@ -117,10 +128,16 @@ for model_name, model_config in models_to_compare.items():
     if WANDB["enabled"] and not WANDB["overwrite"]:
         cached_bundle_path = download_results_bundle_from_wandb(
             artifact_name=model_artifact_name,
+            entity=WANDB["entity"],
+            project=WANDB["project"],
             download_root=OUTPUT_ROOT / "wandb_model_cache",
+            required_files=SEQLEN_REQUIRED_FILES,
         )
         if cached_bundle_path is not None:
-            cached_bundle = load_results_bundle(cached_bundle_path)
+            cached_bundle = load_results_bundle(
+                cached_bundle_path,
+                files=SEQLEN_BUNDLE_FILES,
+            )
             has_model = (
                 model_name in cached_bundle["metric_table"]
                 and model_name in cached_bundle["timing_table"]
@@ -187,6 +204,7 @@ for model_name, model_config in models_to_compare.items():
     save_results_bundle(
         model_results,
         model_bundle_path,
+        files=SEQLEN_BUNDLE_FILES,
         experiment=EXPERIMENT,
         include_raw_torch=True,
     )
@@ -197,6 +215,8 @@ for model_name, model_config in models_to_compare.items():
         artifact_ref = upload_results_bundle_to_wandb(
             model_bundle_path,
             artifact_name=model_artifact_name,
+            entity=WANDB["entity"],
+            project=WANDB["project"],
             run_name=(
                 f"{EXPERIMENT['name']}_{sanitize_wandb_artifact_component(model_name)}_"
                 f"{model_hash}"

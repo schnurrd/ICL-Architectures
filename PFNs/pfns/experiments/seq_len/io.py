@@ -1,27 +1,4 @@
-"""I/O helpers for sequence-length experiment result bundles.
-
-Canonical bundle layout written by :func:`save_results_bundle`:
-
-`<bundle_dir>/`
-- `metadata.json`:
-  - `schema_version` (int, from `SCHEMA_VERSION`)
-  - `created_at_utc` (UTC ISO-8601 timestamp ending in `Z`)
-  - `experiment` (JSON-serializable experiment config)
-  - `run_metadata` (JSON-serializable run metadata copied from `results["metadata"]`)
-  - `files` (filename mapping used for this bundle)
-  - `row_counts` (`metric`/`timing`/`memory` CSV row counts)
-- `metric.csv`   (long format columns: `model, metric, seqlen, rep, value`)
-- `timing.csv`   (long format columns: `model, metric, seqlen, rep, value`)
-- `memory.csv`   (long format columns: `model, metric, seqlen, rep, value`)
-- `oom_errors.json` (JSON-serializable copy of `results["oom_errors"]`)
-- `raw_results.pt` (optional; only written when `include_raw_torch=True`)
-
-Notes:
-- The three CSV files are generated from nested per-model/per-metric tables and
-  currently use `seqlen` as the x-axis column name.
-- `load_results_bundle` always requires JSON + CSV files above; `raw_results.pt`
-  is optional and loaded only when `load_raw_torch=True`.
-"""
+"""I/O helpers for experiment result bundles."""
 
 from __future__ import annotations
 
@@ -37,19 +14,6 @@ import wandb
 
 from .analysis import long_df_to_nested_metric_table, nested_metric_table_to_long_df
 from .constants import SCHEMA_VERSION
-
-BUNDLE_FILES: dict[str, str] = {
-    "metadata": "metadata.json",
-    "oom": "oom_errors.json",
-    "metric": "metric.csv",
-    "timing": "timing.csv",
-    "memory": "memory.csv",
-    "raw": "raw_results.pt",
-}
-WANDB_ENTITY = "icl_arch"
-WANDB_PROJECT = "seq_len_exp"
-WANDB_ARTIFACT_ALIAS = "latest"
-WANDB_RUN_MODE = "online"
 
 
 def make_bundle_path(root_dir: str | Path, experiment_name: str) -> Path:
@@ -163,11 +127,12 @@ def save_results_bundle(
     results: dict[str, Any],
     bundle_dir: str | Path,
     *,
+    files: dict[str, str] | None = None,
     experiment: dict[str, Any] | None = None,
     include_raw_torch: bool = True,
+    schema_version: int = SCHEMA_VERSION,
 ) -> Path:
     """Persist benchmark results using the canonical bundle layout documented above."""
-    files = BUNDLE_FILES
     bundle = Path(bundle_dir)
     bundle.mkdir(parents=True, exist_ok=True)
 
@@ -183,7 +148,7 @@ def save_results_bundle(
         json.dump(_to_jsonable(results.get("oom_errors", {})), f, indent=2, sort_keys=True)
 
     metadata = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": int(schema_version),
         "created_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "experiment": experiment or {},
         "run_metadata": results.get("metadata", {}),
@@ -203,17 +168,99 @@ def save_results_bundle(
     return bundle
 
 
+def save_dataframe_bundle(
+    *,
+    dataframes: dict[str, pd.DataFrame | None],
+    bundle_dir: str | Path,
+    experiment: dict[str, Any] | None = None,
+    run_metadata: dict[str, Any] | None = None,
+    files: dict[str, str] | None = None,
+    schema_version: int = 1,
+) -> Path:
+    """Persist arbitrary named dataframes as a simple CSV+metadata bundle."""
+    bundle = Path(bundle_dir)
+    bundle.mkdir(parents=True, exist_ok=True)
+
+    dataframe_files = files or {name: f"{name}.csv" for name in dataframes}
+    for name in dataframes:
+        if name not in dataframe_files:
+            raise KeyError(f"Missing filename mapping for dataframe key: {name}")
+
+    row_counts: dict[str, int] = {}
+    for name, file_name in dataframe_files.items():
+        df = dataframes.get(name)
+        if df is None:
+            df = pd.DataFrame()
+        df.to_csv(bundle / file_name, index=False)
+        row_counts[name] = int(len(df))
+
+    metadata = {
+        "schema_version": int(schema_version),
+        "created_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "experiment": experiment or {},
+        "run_metadata": run_metadata or {},
+        "files": {"metadata": "metadata.json", **dataframe_files},
+        "row_counts": row_counts,
+    }
+    with open(bundle / "metadata.json", "w", encoding="utf-8") as f:
+        json.dump(_to_jsonable(metadata), f, indent=2, sort_keys=True)
+
+    return bundle
+
+
+def load_dataframe_bundle(
+    bundle_dir: str | Path,
+    *,
+    expected_keys: tuple[str, ...] | list[str] | None = None,
+    empty_on_missing: bool = True,
+) -> dict[str, Any]:
+    """Load a dataframe bundle created by :func:`save_dataframe_bundle`."""
+    bundle = Path(bundle_dir)
+    with open(bundle / "metadata.json", "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    files = dict(metadata.get("files", {}))
+    files.pop("metadata", None)
+
+    keys = list(expected_keys) if expected_keys is not None else list(files.keys())
+    dataframes: dict[str, pd.DataFrame] = {}
+    for key in keys:
+        file_name = files.get(key, f"{key}.csv")
+        path = bundle / file_name
+        if not path.exists():
+            if empty_on_missing:
+                dataframes[key] = pd.DataFrame()
+                continue
+            raise FileNotFoundError(f"Missing dataframe file for key '{key}': {path}")
+        try:
+            dataframes[key] = pd.read_csv(path)
+        except pd.errors.EmptyDataError:
+            dataframes[key] = pd.DataFrame()
+
+    return {
+        "bundle_path": bundle,
+        "bundle_metadata": metadata,
+        "dataframes": dataframes,
+        "metadata": metadata.get("run_metadata", {}),
+    }
+
+
 def download_results_bundle_from_wandb(
     *,
     artifact_name: str,
+    entity: str,
+    project: str,
     download_root: str | Path = ".",
+    required_files: list[str] | tuple[str, ...] | None = None,
+    artifact_alias: str = "latest",
 ) -> Path | None:
-    """Download a bundle artifact from the default icl_arch/seq_len_exp target.
+    """Download a bundle artifact and check for required files.
 
     Returns ``None`` when the artifact is unavailable or cannot be read, so callers
     can treat this as a cache miss and recompute results.
     """
-    reference = f"{WANDB_ENTITY}/{WANDB_PROJECT}/{artifact_name}:{WANDB_ARTIFACT_ALIAS}"
+
+    reference = f"{entity}/{project}/{artifact_name}:{artifact_alias}"
     root = Path(download_root)
     root.mkdir(parents=True, exist_ok=True)
 
@@ -230,14 +277,9 @@ def download_results_bundle_from_wandb(
             return None
         raise
 
-    required_files = [
-        BUNDLE_FILES["metadata"],
-        BUNDLE_FILES["oom"],
-        BUNDLE_FILES["metric"],
-        BUNDLE_FILES["timing"],
-        BUNDLE_FILES["memory"],
+    missing_files = [
+        name for name in required_files if not (downloaded_dir / name).exists()
     ]
-    missing_files = [name for name in required_files if not (downloaded_dir / name).exists()]
     if missing_files:
         # Treat incomplete artifacts as cache misses and rerun the model.
         return None
@@ -248,35 +290,47 @@ def upload_results_bundle_to_wandb(
     bundle_dir: str | Path,
     *,
     artifact_name: str,
+    entity: str | None = None,
+    project: str | None = None,
     run_name: str | None = None,
     metadata: dict[str, Any] | None = None,
+    artifact_alias: str = "latest",
+    run_mode: str = "online",
+    job_type: str = "seq_len_bundle_upload",
+    artifact_type: str = "dataset",
 ) -> str:
-    """Upload a bundle directory to the default icl_arch/seq_len_exp target."""
+    """Upload a bundle directory to W&B and return the artifact reference."""
     bundle = Path(bundle_dir)
     if not bundle.exists():
         raise FileNotFoundError(f"Bundle directory does not exist: {bundle}")
+    resolved_entity = entity or "icl_arch"
+    resolved_project = project or "seq_len_exp"
 
     with wandb.init(
-        project=WANDB_PROJECT,
-        entity=WANDB_ENTITY,
-        mode=WANDB_RUN_MODE,
+        project=resolved_project,
+        entity=resolved_entity,
+        mode=run_mode,
         name=run_name,
-        job_type="seq_len_bundle_upload",
+        job_type=job_type,
     ) as run:
         artifact = wandb.Artifact(
             name=artifact_name,
-            type="dataset",
+            type=artifact_type,
             metadata=_to_jsonable(metadata or {}),
         )
         artifact.add_dir(str(bundle))
-        run.log_artifact(artifact, aliases=[WANDB_ARTIFACT_ALIAS])
+        run.log_artifact(artifact, aliases=[artifact_alias])
 
-    return f"{WANDB_ENTITY}/{WANDB_PROJECT}/{artifact_name}:{WANDB_ARTIFACT_ALIAS}"
+    return f"{resolved_entity}/{resolved_project}/{artifact_name}:{artifact_alias}"
 
 
-def load_results_bundle(bundle_dir: str | Path, *, load_raw_torch: bool = False) -> dict[str, Any]:
+def load_results_bundle(
+    bundle_dir: str | Path,
+    *,
+    files: dict[str, str] | None = None,
+    load_raw_torch: bool = False,
+) -> dict[str, Any]:
     """Load a canonical results bundle and return dataframe + nested-table views."""
-    files = BUNDLE_FILES
     bundle = Path(bundle_dir)
 
     with open(bundle / files["metadata"], "r", encoding="utf-8") as f:
