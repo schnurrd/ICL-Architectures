@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from pfns.experiments.seq_len.evaluation import _set_data_generation_seed
-from pfns.experiments.seq_len.sampling import ClassCoverageBatchGenerator
+from pfns.experiments.model_benchmarks.evaluation import _set_data_generation_seed
+from pfns.experiments.model_benchmarks.sampling import ClassCoverageBatchGenerator
 
 NOTEBOOK_DATA_GENERATION_SEED = 42
 

@@ -3,8 +3,8 @@ from pathlib import Path
 from pfns.utils import get_default_device
 from notebook_utils import single_model_hash
 
-from pfns.experiments.seq_len.evaluation import evaluate_models_over_seqlens
-from pfns.experiments.seq_len.io import (
+from pfns.experiments.model_benchmarks.evaluation import evaluate_models_over_seqlens
+from pfns.experiments.model_benchmarks.io import (
     download_results_bundle_from_wandb,
     load_results_bundle,
     make_bundle_path,
@@ -14,9 +14,9 @@ from pfns.experiments.seq_len.io import (
     save_results_bundle,
     upload_results_bundle_to_wandb,
 )
-from pfns.experiments.seq_len.models import load_models_for_benchmark
-from pfns.experiments.seq_len.model_registry import get_all_models
-from pfns.experiments.seq_len.model_registry import (
+from pfns.experiments.model_benchmarks.models import load_models_for_benchmark
+from pfns.experiments.model_benchmarks.model_registry import get_all_models
+from pfns.experiments.model_benchmarks.model_registry import (
     MODEL_FAMILIES,
     get_autocast_models_from_registry,
     get_forward_models_from_registry,

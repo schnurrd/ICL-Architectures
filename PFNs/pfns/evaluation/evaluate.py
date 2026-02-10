@@ -5,6 +5,7 @@ import pandas as pd
 from typing import List, Any
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, roc_auc_score, log_loss
+from tqdm.auto import tqdm
 
 from pfns.datasets.tabular_datasets import load_openml_list
 from pfns.evaluation.metrics import expected_calibration_error
@@ -17,6 +18,7 @@ def evaluate_model(
     n_splits: int = 5,
     random_state: int = 42,
     categorical_feats: list[int] | tuple[int, ...] | None = None,
+    verbose: bool = True,
 ) -> list[dict[str, Any]]:
     """Evaluate a model with cross-validation. Returns per-split metrics (no aggregation)."""
     X = np.nan_to_num(np.asarray(X, dtype=np.float32), nan=0.0)
@@ -48,7 +50,7 @@ def evaluate_model(
         n_classes = len(np.unique(y[test_idx]))
         
         y_proba = y_proba.astype(np.float32) # Renorm to float32 as with fp16 auc calculation is unstable (probs. deviate from 1.0)
-        if not np.isfinite(y_proba).all():
+        if verbose and not np.isfinite(y_proba).all():
             print(
                 f"Non-finite probabilities from {model.__class__.__name__}:"
             )
@@ -80,24 +82,28 @@ def compare_models(
     y: np.ndarray,
     n_splits: int = 5,
     categorical_feats: list[int] | tuple[int, ...] | None = None,
+    verbose: bool = True,
 ) -> pd.DataFrame:
     """Compare multiple models on a single dataset (returns per-split rows)."""
     results: list[dict[str, Any]] = []
     for model, name in zip(models, model_names):
-        print(f"Evaluating {name}...")
+        if verbose:
+            print(f"Evaluating {name}...")
         split_results = evaluate_model(
             model,
             X,
             y,
             n_splits=n_splits,
             categorical_feats=categorical_feats,
+            verbose=verbose,
         )
         for row in split_results:
             row.update({"model": name})
         results.extend(split_results)
 
         mean_acc = float(np.mean([r["accuracy"] for r in split_results])) if split_results else float("nan")
-        print(f"  Mean accuracy over splits: {mean_acc:.4f}")
+        if verbose:
+            print(f"  Mean accuracy over splits: {mean_acc:.4f}")
 
     df = pd.DataFrame(results)
     desired_cols = [
@@ -122,6 +128,7 @@ def evaluate_on_openml(
     max_features: int = 100,
     max_classes: int = 10,
     n_splits: int = 5,
+    verbose: bool = True,
 ) -> pd.DataFrame:
     """Evaluate models on OpenML datasets using tabular_datasets.py loader."""
     datasets, _ = load_openml_list(
@@ -131,20 +138,22 @@ def evaluate_on_openml(
         max_num_classes=max_classes,
         return_capped=True,
         filter_for_nan=False,
+        verbose=verbose,
     )
     
     all_results: list[dict[str, Any]] = []
-    for name, X, y, categorical_feats, _, _ in datasets:
+    for name, X, y, categorical_feats, _, _ in tqdm(datasets, desc="Overall progress over datasets"):
         header = (
             f"{'Model':<18} {'Accuracy':>10} {'ROC-AUC':>10} {'LogLoss':>10} "
             f"{'ECE':>10} {'Fit (s)':>10} {'Pred (s)':>10}"
         )
         bar_len = len(header)
-        print(f"\n{'='*bar_len}")
-        print(f"{name}: {X.shape[0]} samples, {X.shape[1]} features")
-        print(f"{'='*bar_len}")
-        print(header)
-        print("-" * bar_len)
+        if verbose:
+            print(f"\n{'='*bar_len}")
+            print(f"{name}: {X.shape[0]} samples, {X.shape[1]} features")
+            print(f"{'='*bar_len}")
+            print(header)
+            print("-" * bar_len)
         for model, model_name in zip(models, model_names):
             try:
                 split_results = evaluate_model(
@@ -153,6 +162,7 @@ def evaluate_on_openml(
                     y.numpy(),
                     n_splits=n_splits,
                     categorical_feats=categorical_feats,
+                    verbose=verbose,
                 )
                 for row in split_results:
                     row.update({"model": model_name, "dataset": name})
@@ -164,11 +174,12 @@ def evaluate_on_openml(
                 mean_ece = float(np.mean([r["ece"] for r in split_results])) if split_results else float("nan")
                 mean_fit = float(np.mean([r["fit_time"] for r in split_results])) if split_results else float("nan")
                 mean_pred = float(np.mean([r["predict_time"] for r in split_results])) if split_results else float("nan")
-                print(
-                    f"{model_name:<18} {mean_acc:>10.4f} {mean_auc:>10.4f} "
-                    f"{mean_ll:>10.4f} {mean_ece:>10.4f} {mean_fit:>10.2f} "
-                    f"{mean_pred:>10.2f}"
-                )
+                if verbose:
+                    print(
+                        f"{model_name:<18} {mean_acc:>10.4f} {mean_auc:>10.4f} "
+                        f"{mean_ll:>10.4f} {mean_ece:>10.4f} {mean_fit:>10.2f} "
+                        f"{mean_pred:>10.2f}"
+                    )
             except Exception as e:
                 print(f"{model_name:<20} {'Error':>10} - {e}")
     
