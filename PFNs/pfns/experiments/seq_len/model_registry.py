@@ -4,9 +4,12 @@ from typing import Any, Iterable
 from pfns.training_utils import resolve_autocast_dtype
 from pfns.utils import get_default_device
 
-TRANSFORMER_MODELS: dict[str, dict[str, Any]] = { # currently running softmax with feature att
+TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/90rqcrr2",  # no feature attention like fla
+    },
+    "Softmax_Transformer_with_feature_attention": {
+        "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default)
     },
     # "Non-Causal_TabPFN": {
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd",
@@ -47,6 +50,9 @@ KDA_MODELS: dict[str, dict[str, Any]] = {
 }
 
 GLA_MODELS: dict[str, dict[str, Any]] = {
+    "GLA_Causal": {
+        "wandb_run_id": "fla_models/runs/yzw9d63f",
+    },
     "GLA_Cached": {
         "wandb_run_id": "fla_models/runs/g1ul5lyc",
     },

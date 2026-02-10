@@ -38,7 +38,7 @@ EXPERIMENT = {
 WANDB = {
     "enabled": True,
     "artifact_name": "base_results",
-    "overwrite": True,
+    "overwrite": False,
 }
 
 EXPECTED_RUN_METADATA_KEYS = (
