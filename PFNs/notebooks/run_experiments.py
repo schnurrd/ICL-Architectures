@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 from pfns.utils import get_default_device
@@ -47,11 +48,36 @@ WANDB = {
     "project": "seq_len_exp",
 }
 
+
+def parse_cli_args():
+    parser = argparse.ArgumentParser(
+        description="Run sequence length benchmark experiments."
+    )
+    parser.add_argument(
+        "--num-repeats",
+        dest="num_repetitions",
+        type=int,
+        default=EXPERIMENT["num_repetitions"],
+        help=(
+            "Number of repetitions used for evaluation "
+            f"(default: {EXPERIMENT['num_repetitions']})."
+        ),
+    )
+    args, _ = parser.parse_known_args()
+    if args.num_repetitions < 1:
+        parser.error("--num-repetitions must be >= 1")
+    return args
+
+
+CLI_ARGS = parse_cli_args()
+EXPERIMENT["num_repetitions"] = CLI_ARGS.num_repetitions
+
 OUTPUT_ROOT = Path.cwd().resolve() / "exp_outputs" / "seq_len"
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 print(f"Results are stored in: {OUTPUT_ROOT}")
 print(f"Available model families: {list(MODEL_FAMILIES)}")
+print(f"Configured repetitions: {EXPERIMENT['num_repetitions']}")
 
 # Example by family:
 # models_to_compare = get_models_from_families(["transformer"])
