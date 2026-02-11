@@ -338,13 +338,11 @@ def upload_results_bundle_to_wandb(
     bundle = Path(bundle_dir)
     if not bundle.exists():
         raise FileNotFoundError(f"Bundle directory does not exist: {bundle}")
-    resolved_entity = entity or "icl_arch"
-    resolved_project = project or "seq_len_exp"
     resolved_metadata = _to_jsonable(metadata or {})
 
     with wandb.init(
-        project=resolved_project,
-        entity=resolved_entity,
+        project=project,
+        entity=entity,
         mode=run_mode,
         name=run_name,
         job_type=job_type,
@@ -386,7 +384,7 @@ def upload_results_bundle_to_wandb(
         artifact.add_dir(str(bundle))
         run.log_artifact(artifact, aliases=[artifact_alias])
 
-    return f"{resolved_entity}/{resolved_project}/{artifact_name}:{artifact_alias}"
+        return f"{run.entity}/{run.project}/{artifact_name}:{artifact_alias}"
 
 
 def load_results_bundle(
