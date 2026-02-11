@@ -3,6 +3,7 @@ from pathlib import Path
 from pfns.utils import get_default_device
 from notebook_utils import single_model_hash
 
+from pfns.experiments.model_benchmarks.analysis import nested_metric_table_to_long_df
 from pfns.experiments.model_benchmarks.evaluation import evaluate_models_over_seqlens
 from pfns.experiments.model_benchmarks.io import (
     SEQ_LEN_REQUIRED_FILES,
@@ -10,6 +11,7 @@ from pfns.experiments.model_benchmarks.io import (
     load_results_bundle,
     make_bundle_path,
     make_model_artifact_name,
+    merge_model_results,
     run_metadata_matches,
     sanitize_wandb_artifact_component,
     save_results_bundle,
@@ -39,21 +41,11 @@ EXPERIMENT = {
 
 WANDB = {
     "enabled": True,
-    "artifact_name": "base_results",
+    "artifact_name": "seq_len_comparison",
     "overwrite": False,
     "entity": "icl_arch",
     "project": "seq_len_exp",
 }
-
-EXPECTED_RUN_METADATA_KEYS = (
-    "seqlen_list",
-    "num_features",
-    "num_classes",
-    "number_of_test_samples",
-    "number_of_repetitions",
-    "device",
-    "data_generation_seed",
-)
 
 OUTPUT_ROOT = Path.cwd().resolve() / "exp_outputs" / "seq_len"
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -127,7 +119,7 @@ for model_name, model_config in models_to_compare.items():
             metadata_ok = run_metadata_matches(
                 run_metadata,
                 expected=expected_run_metadata,
-                keys=EXPECTED_RUN_METADATA_KEYS,
+                keys=tuple(expected_run_metadata.keys()),
             )
 
             if has_model and metadata_ok:

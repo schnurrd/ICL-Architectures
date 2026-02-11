@@ -8,21 +8,21 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/90rqcrr2",  # no feature attention like fla
     },
-    # "Softmax_Transformer_with_feature_attention": {
-    #     "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default)
-    # },
-    # "Non-Causal_TabPFN": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd",
-    #     "eval_mode": "forward",
-    # },
-    # "Causal_TabPFN": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz",
-    #     "eval_mode": "forward",
-    # },
-    # "Test_To_Train_Only_TabPFN": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
-    #     "eval_mode": "forward",
-    # },
+    "Softmax_Transformer_with_feature_attention": {
+        "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default)
+    },
+    "Non-Causal_TabPFN": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd",
+        "eval_mode": "forward",
+    },
+    "Causal_TabPFN": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz",
+        "eval_mode": "forward",
+    },
+    "Test_To_Train_Only_TabPFN": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
+        "eval_mode": "forward",
+    },
 }
 
 KDA_MODELS: dict[str, dict[str, Any]] = {
@@ -37,6 +37,9 @@ KDA_MODELS: dict[str, dict[str, Any]] = {
     },
     "KDA_cached_interleaved": {
         "wandb_run_id": "fla_models/runs/63y7kc9k",
+    },
+    "KDA_cached_interleaved_short_conv": {
+        "wandb_run_id": "fla_models/runs/q8l1av2n", # new
     },
     "KDA_teacher_forcing": {
         "wandb_run_id": "fla_models/runs/a925p05n",
@@ -65,6 +68,7 @@ GLA_MODELS: dict[str, dict[str, Any]] = {
     "GLA_Teacher_Forcing": {
         "wandb_run_id": "fla_models/runs/4f224z23",
     },
+    
 }
 
 DELTANET_MODELS: dict[str, dict[str, Any]] = {
@@ -88,6 +92,10 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/fm8kzerj",
         "eval_autocast_dtype": "bf16",
     },
+    "DeltaNet_Cached_Interleaved_short_conv": {
+        "wandb_run_id": "fla_models/runs/9v4hbvug",
+        "eval_autocast_dtype": "bf16",
+    }
     # "DeltaNet_Causal": {
     #     "wandb_run_id": "fla_models/runs/0bkajhpw",  # redo and remove
     # },
