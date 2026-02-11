@@ -39,6 +39,8 @@ def run_tabpfn_evaluation(
     verbose: bool = True,
 ):
     """Run TabPFN (and optionally baselines) on the requested benchmark."""
+    TabPFNClassifier.models_in_memory.clear()
+
     if device is None:
         device = get_default_device()
 
@@ -73,6 +75,8 @@ def run_tabpfn_evaluation(
         n_splits=n_splits,
         verbose=verbose,
     )
+    TabPFNClassifier.models_in_memory.clear()
+
     return results
 
 

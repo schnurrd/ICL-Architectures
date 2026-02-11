@@ -15,6 +15,34 @@ import wandb
 from .analysis import long_df_to_nested_metric_table, nested_metric_table_to_long_df
 from .constants import SCHEMA_VERSION
 
+SEQ_LEN_METADATA_FILE = "metadata.json"
+SEQ_LEN_OOM_FILE = "oom_errors.json"
+SEQ_LEN_METRIC_FILE = "metric.csv"
+SEQ_LEN_TIMING_FILE = "timing.csv"
+SEQ_LEN_MEMORY_FILE = "memory.csv"
+SEQ_LEN_RAW_FILE = "raw_results.pt"
+
+SEQ_LEN_REQUIRED_FILES = (
+    SEQ_LEN_METADATA_FILE,
+    SEQ_LEN_OOM_FILE,
+    SEQ_LEN_METRIC_FILE,
+    SEQ_LEN_TIMING_FILE,
+    SEQ_LEN_MEMORY_FILE,
+)
+
+REAL_WORLD_METADATA_FILE = "metadata.json"
+REAL_WORLD_RESULTS_FILE = "results.csv"
+REAL_WORLD_SUMMARY_FILE = "summary.csv"
+REAL_WORLD_PER_DATASET_FILE = "per_dataset.csv"
+
+REAL_WORLD_BUNDLE_KEYS = ("results", "summary", "per_dataset")
+REAL_WORLD_REQUIRED_FILES = (
+    REAL_WORLD_METADATA_FILE,
+    REAL_WORLD_RESULTS_FILE,
+    REAL_WORLD_SUMMARY_FILE,
+    REAL_WORLD_PER_DATASET_FILE,
+)
+
 
 def make_bundle_path(root_dir: str | Path, experiment_name: str) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -127,7 +155,6 @@ def save_results_bundle(
     results: dict[str, Any],
     bundle_dir: str | Path,
     *,
-    files: dict[str, str] | None = None,
     experiment: dict[str, Any] | None = None,
     include_raw_torch: bool = True,
     schema_version: int = SCHEMA_VERSION,
@@ -140,11 +167,11 @@ def save_results_bundle(
     timing_df = nested_metric_table_to_long_df(results.get("timing_table", {}))
     memory_df = nested_metric_table_to_long_df(results.get("memory_table", {}))
 
-    metric_df.to_csv(bundle / files["metric"], index=False)
-    timing_df.to_csv(bundle / files["timing"], index=False)
-    memory_df.to_csv(bundle / files["memory"], index=False)
+    metric_df.to_csv(bundle / SEQ_LEN_METRIC_FILE, index=False)
+    timing_df.to_csv(bundle / SEQ_LEN_TIMING_FILE, index=False)
+    memory_df.to_csv(bundle / SEQ_LEN_MEMORY_FILE, index=False)
 
-    with open(bundle / files["oom"], "w", encoding="utf-8") as f:
+    with open(bundle / SEQ_LEN_OOM_FILE, "w", encoding="utf-8") as f:
         json.dump(_to_jsonable(results.get("oom_errors", {})), f, indent=2, sort_keys=True)
 
     metadata = {
@@ -152,18 +179,25 @@ def save_results_bundle(
         "created_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "experiment": experiment or {},
         "run_metadata": results.get("metadata", {}),
-        "files": files,
+        "files": {
+            "metadata": SEQ_LEN_METADATA_FILE,
+            "oom": SEQ_LEN_OOM_FILE,
+            "metric": SEQ_LEN_METRIC_FILE,
+            "timing": SEQ_LEN_TIMING_FILE,
+            "memory": SEQ_LEN_MEMORY_FILE,
+            "raw": SEQ_LEN_RAW_FILE,
+        },
         "row_counts": {
             "metric": int(len(metric_df)),
             "timing": int(len(timing_df)),
             "memory": int(len(memory_df)),
         },
     }
-    with open(bundle / files["metadata"], "w", encoding="utf-8") as f:
+    with open(bundle / SEQ_LEN_METADATA_FILE, "w", encoding="utf-8") as f:
         json.dump(_to_jsonable(metadata), f, indent=2, sort_keys=True)
 
     if include_raw_torch:
-        torch.save(results, bundle / files["raw"])
+        torch.save(results, bundle / SEQ_LEN_RAW_FILE)
 
     return bundle
 
@@ -250,8 +284,8 @@ def download_results_bundle_from_wandb(
     artifact_name: str,
     entity: str,
     project: str,
+    required_files: list[str] | tuple[str, ...],
     download_root: str | Path = ".",
-    required_files: list[str] | tuple[str, ...] | None = None,
     artifact_alias: str = "latest",
 ) -> Path | None:
     """Download a bundle artifact and check for required files.
@@ -298,6 +332,7 @@ def upload_results_bundle_to_wandb(
     run_mode: str = "online",
     job_type: str = "seq_len_bundle_upload",
     artifact_type: str = "dataset",
+    log_metadata_to_run: bool = True,
 ) -> str:
     """Upload a bundle directory to W&B and return the artifact reference."""
     bundle = Path(bundle_dir)
@@ -305,6 +340,7 @@ def upload_results_bundle_to_wandb(
         raise FileNotFoundError(f"Bundle directory does not exist: {bundle}")
     resolved_entity = entity or "icl_arch"
     resolved_project = project or "seq_len_exp"
+    resolved_metadata = _to_jsonable(metadata or {})
 
     with wandb.init(
         project=resolved_project,
@@ -313,10 +349,32 @@ def upload_results_bundle_to_wandb(
         name=run_name,
         job_type=job_type,
     ) as run:
+        if log_metadata_to_run and isinstance(resolved_metadata, dict):
+            run_level_metadata: dict[str, Any] = {}
+            for key in ("experiment", "run_metadata", "model_name", "model_hash", "model_config"):
+                if key in resolved_metadata:
+                    run_level_metadata[key] = resolved_metadata[key]
+            if not run_level_metadata:
+                run_level_metadata = resolved_metadata
+
+            if run_level_metadata:
+                run.config.update({"evaluation_metadata": run_level_metadata}, allow_val_change=True)
+
+                experiment = run_level_metadata.get("experiment")
+                if isinstance(experiment, dict):
+                    experiment_name = experiment.get("name")
+                    if experiment_name is not None:
+                        run.summary["evaluation_experiment_name"] = experiment_name
+
+                run_metadata = run_level_metadata.get("run_metadata")
+                if isinstance(run_metadata, dict):
+                    for key, value in run_metadata.items():
+                        run.summary[f"evaluation/{key}"] = value
+
         artifact = wandb.Artifact(
             name=artifact_name,
             type=artifact_type,
-            metadata=_to_jsonable(metadata or {}),
+            metadata=resolved_metadata,
         )
         artifact.add_dir(str(bundle))
         run.log_artifact(artifact, aliases=[artifact_alias])
@@ -327,20 +385,19 @@ def upload_results_bundle_to_wandb(
 def load_results_bundle(
     bundle_dir: str | Path,
     *,
-    files: dict[str, str] | None = None,
     load_raw_torch: bool = False,
 ) -> dict[str, Any]:
     """Load a canonical results bundle and return dataframe + nested-table views."""
     bundle = Path(bundle_dir)
 
-    with open(bundle / files["metadata"], "r", encoding="utf-8") as f:
+    with open(bundle / SEQ_LEN_METADATA_FILE, "r", encoding="utf-8") as f:
         metadata = json.load(f)
-    with open(bundle / files["oom"], "r", encoding="utf-8") as f:
+    with open(bundle / SEQ_LEN_OOM_FILE, "r", encoding="utf-8") as f:
         oom_errors = json.load(f)
 
-    metric_df = pd.read_csv(bundle / files["metric"])
-    timing_df = pd.read_csv(bundle / files["timing"])
-    memory_df = pd.read_csv(bundle / files["memory"])
+    metric_df = pd.read_csv(bundle / SEQ_LEN_METRIC_FILE)
+    timing_df = pd.read_csv(bundle / SEQ_LEN_TIMING_FILE)
+    memory_df = pd.read_csv(bundle / SEQ_LEN_MEMORY_FILE)
 
     out = {
         "bundle_path": bundle,
@@ -355,7 +412,7 @@ def load_results_bundle(
         "metadata": metadata.get("run_metadata", {}),
     }
 
-    raw = bundle / files["raw"]
+    raw = bundle / SEQ_LEN_RAW_FILE
     if load_raw_torch and raw.exists():
         out["raw_results"] = torch.load(raw, map_location="cpu")
 

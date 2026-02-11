@@ -5,6 +5,7 @@ from notebook_utils import single_model_hash
 
 from pfns.experiments.model_benchmarks.evaluation import evaluate_models_over_seqlens
 from pfns.experiments.model_benchmarks.io import (
+    RESULTS_REQUIRED_FILES,
     download_results_bundle_from_wandb,
     load_results_bundle,
     make_bundle_path,
@@ -43,23 +44,6 @@ WANDB = {
     "entity": "icl_arch",
     "project": "seq_len_exp",
 }
-
-SEQLEN_BUNDLE_FILES = {
-    "metadata": "metadata.json",
-    "oom": "oom_errors.json",
-    "metric": "metric.csv",
-    "timing": "timing.csv",
-    "memory": "memory.csv",
-    "raw": "raw_results.pt",
-}
-
-SEQLEN_REQUIRED_FILES = (
-    SEQLEN_BUNDLE_FILES["metadata"],
-    SEQLEN_BUNDLE_FILES["oom"],
-    SEQLEN_BUNDLE_FILES["metric"],
-    SEQLEN_BUNDLE_FILES["timing"],
-    SEQLEN_BUNDLE_FILES["memory"],
-)
 
 EXPECTED_RUN_METADATA_KEYS = (
     "seqlen_list",
@@ -131,13 +115,10 @@ for model_name, model_config in models_to_compare.items():
             entity=WANDB["entity"],
             project=WANDB["project"],
             download_root=OUTPUT_ROOT / "wandb_model_cache",
-            required_files=SEQLEN_REQUIRED_FILES,
+            required_files=RESULTS_REQUIRED_FILES,
         )
         if cached_bundle_path is not None:
-            cached_bundle = load_results_bundle(
-                cached_bundle_path,
-                files=SEQLEN_BUNDLE_FILES,
-            )
+            cached_bundle = load_results_bundle(cached_bundle_path)
             has_model = (
                 model_name in cached_bundle["metric_table"]
                 and model_name in cached_bundle["timing_table"]
@@ -204,7 +185,6 @@ for model_name, model_config in models_to_compare.items():
     save_results_bundle(
         model_results,
         model_bundle_path,
-        files=SEQLEN_BUNDLE_FILES,
         experiment=EXPERIMENT,
         include_raw_torch=True,
     )

@@ -4,9 +4,6 @@ import hashlib
 import json
 from typing import Any
 
-from pfns.run_logger import WandbConfig, create_run_manager
-
-
 def single_model_hash(
     *,
     model_name: str,

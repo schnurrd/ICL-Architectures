@@ -11,6 +11,39 @@ from pfns.datasets.tabular_datasets import load_openml_list
 from pfns.evaluation.metrics import expected_calibration_error
 
 
+def _build_stratified_splits(
+    X: np.ndarray,
+    y: np.ndarray,
+    *,
+    n_splits: int,
+    random_state: int,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    return [(train_idx, test_idx) for train_idx, test_idx in cv.split(X, y)]
+
+
+def _normalize_probabilities(y_proba: np.ndarray, *, n_classes: int) -> np.ndarray:
+    probs = np.asarray(y_proba, dtype=np.float32)
+    if probs.ndim != 2 or probs.shape[1] != n_classes:
+        raise ValueError(
+            f"Expected y_proba shape (n_samples, {n_classes}), got {probs.shape}."
+        )
+
+    if not np.isfinite(probs).all():
+        raise ValueError("Model returned non-finite probabilities.")
+
+    if (probs < 0).any():
+        raise ValueError("Model returned negative probabilities.")
+
+    row_sums = probs.sum(axis=1, keepdims=True)
+    valid_rows = np.isfinite(row_sums) & (row_sums > 0)
+    if not np.all(valid_rows):
+        raise ValueError("Model returned probabilities with non-positive row sums.")
+
+    probs /= row_sums
+    return probs
+
+
 def evaluate_model(
     model,
     X: np.ndarray,
@@ -19,18 +52,27 @@ def evaluate_model(
     random_state: int = 42,
     categorical_feats: list[int] | tuple[int, ...] | None = None,
     verbose: bool = True,
+    splits: list[tuple[np.ndarray, np.ndarray]] | None = None,
 ) -> list[dict[str, Any]]:
     """Evaluate a model with cross-validation. Returns per-split metrics (no aggregation)."""
     X = np.nan_to_num(np.asarray(X, dtype=np.float32), nan=0.0)
     y = np.asarray(y, dtype=np.int64)
+    total_classes = int(np.unique(y).size)
 
     if categorical_feats is not None and hasattr(model, "categorical_feats"):
         model.categorical_feats = tuple(categorical_feats)
     
-    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    if splits is None:
+        splits = _build_stratified_splits(
+            X,
+            y,
+            n_splits=n_splits,
+            random_state=random_state,
+        )
+
     results: list[dict[str, Any]] = []
     
-    for train_idx, test_idx in cv.split(X, y):
+    for train_idx, test_idx in splits:
         start = time.time()
         fit_kwargs = {}
         if categorical_feats is not None:
@@ -54,7 +96,7 @@ def evaluate_model(
             print(
                 f"Non-finite probabilities from {model.__class__.__name__}:"
             )
-        y_proba /= y_proba.sum(axis=1, keepdims=True)
+        y_proba = _normalize_probabilities(y_proba, n_classes=total_classes)
         
         auc = roc_auc_score(y[test_idx], y_proba[:, 1]) if n_classes == 2 else \
               roc_auc_score(y[test_idx], y_proba, multi_class="ovr", average="weighted")
@@ -85,17 +127,30 @@ def compare_models(
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Compare multiple models on a single dataset (returns per-split rows)."""
+    if len(models) != len(model_names):
+        raise ValueError("models and model_names must have the same length.")
+
+    X_np = np.nan_to_num(np.asarray(X, dtype=np.float32), nan=0.0)
+    y_np = np.asarray(y, dtype=np.int64)
+    shared_splits = _build_stratified_splits(
+        X_np,
+        y_np,
+        n_splits=n_splits,
+        random_state=42,
+    )
+
     results: list[dict[str, Any]] = []
     for model, name in zip(models, model_names):
         if verbose:
             print(f"Evaluating {name}...")
         split_results = evaluate_model(
             model,
-            X,
-            y,
+            X_np,
+            y_np,
             n_splits=n_splits,
             categorical_feats=categorical_feats,
             verbose=verbose,
+            splits=shared_splits,
         )
         for row in split_results:
             row.update({"model": name})
@@ -131,6 +186,9 @@ def evaluate_on_openml(
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Evaluate models on OpenML datasets using tabular_datasets.py loader."""
+    if len(models) != len(model_names):
+        raise ValueError("models and model_names must have the same length.")
+
     datasets, _ = load_openml_list(
         dataset_ids, 
         max_samples=max_samples,
@@ -143,6 +201,19 @@ def evaluate_on_openml(
     
     all_results: list[dict[str, Any]] = []
     for name, X, y, categorical_feats, _, _ in tqdm(datasets, desc="Overall progress over datasets"):
+        X_np = X.numpy()
+        y_np = y.numpy()
+        try:
+            shared_splits = _build_stratified_splits(
+                X_np,
+                y_np,
+                n_splits=n_splits,
+                random_state=42,
+            )
+        except Exception as e:
+            print(f"Skipping dataset {name!r}: could not build CV splits ({e}).")
+            continue
+
         header = (
             f"{'Model':<18} {'Accuracy':>10} {'ROC-AUC':>10} {'LogLoss':>10} "
             f"{'ECE':>10} {'Fit (s)':>10} {'Pred (s)':>10}"
@@ -154,19 +225,22 @@ def evaluate_on_openml(
             print(f"{'='*bar_len}")
             print(header)
             print("-" * bar_len)
+        dataset_results: list[dict[str, Any]] = []
+        dataset_failed_models: list[str] = []
         for model, model_name in zip(models, model_names):
             try:
                 split_results = evaluate_model(
                     model,
-                    X.numpy(),
-                    y.numpy(),
+                    X_np,
+                    y_np,
                     n_splits=n_splits,
                     categorical_feats=categorical_feats,
                     verbose=verbose,
+                    splits=shared_splits,
                 )
                 for row in split_results:
                     row.update({"model": model_name, "dataset": name})
-                all_results.extend(split_results)
+                dataset_results.extend(split_results)
 
                 mean_acc = float(np.mean([r["accuracy"] for r in split_results])) if split_results else float("nan")
                 mean_auc = float(np.mean([r["roc_auc"] for r in split_results])) if split_results else float("nan")
@@ -181,7 +255,18 @@ def evaluate_on_openml(
                         f"{mean_pred:>10.2f}"
                     )
             except Exception as e:
+                dataset_failed_models.append(model_name)
                 print(f"{model_name:<20} {'Error':>10} - {e}")
+
+        if dataset_failed_models:
+            failed_str = ", ".join(dataset_failed_models)
+            print(
+                f"Skipping dataset {name!r}: at least one model failed "
+                f"({failed_str})."
+            )
+            continue
+
+        all_results.extend(dataset_results)
     
     if not all_results:
         return pd.DataFrame()
