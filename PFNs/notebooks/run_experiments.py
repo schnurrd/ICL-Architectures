@@ -5,7 +5,7 @@ from notebook_utils import single_model_hash
 
 from pfns.experiments.model_benchmarks.evaluation import evaluate_models_over_seqlens
 from pfns.experiments.model_benchmarks.io import (
-    RESULTS_REQUIRED_FILES,
+    SEQ_LEN_REQUIRED_FILES,
     download_results_bundle_from_wandb,
     load_results_bundle,
     make_bundle_path,
@@ -115,7 +115,7 @@ for model_name, model_config in models_to_compare.items():
             entity=WANDB["entity"],
             project=WANDB["project"],
             download_root=OUTPUT_ROOT / "wandb_model_cache",
-            required_files=RESULTS_REQUIRED_FILES,
+            required_files=SEQ_LEN_REQUIRED_FILES,
         )
         if cached_bundle_path is not None:
             cached_bundle = load_results_bundle(cached_bundle_path)
