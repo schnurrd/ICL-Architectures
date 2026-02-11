@@ -8,9 +8,9 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/90rqcrr2",  # no feature attention like fla
     },
-    "Softmax_Transformer_with_feature_attention": {
-        "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default)
-    },
+    # "Softmax_Transformer_with_feature_attention": {
+    #     "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default)
+    # },
     # "Non-Causal_TabPFN": {
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd",
     #     "eval_mode": "forward",
