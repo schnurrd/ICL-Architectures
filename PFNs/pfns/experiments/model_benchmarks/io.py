@@ -350,10 +350,17 @@ def upload_results_bundle_to_wandb(
         job_type=job_type,
     ) as run:
         if log_metadata_to_run and isinstance(resolved_metadata, dict):
-            run_level_metadata: dict[str, Any] = {}
-            for key in ("experiment", "run_metadata", "model_name", "model_hash", "model_config"):
-                if key in resolved_metadata:
-                    run_level_metadata[key] = resolved_metadata[key]
+            run_level_metadata: dict[str, Any] = {
+                key: resolved_metadata[key]
+                for key in (
+                    "experiment",
+                    "run_metadata",
+                    "model_name",
+                    "model_hash",
+                    "model_config",
+                )
+                if key in resolved_metadata
+            }
             if not run_level_metadata:
                 run_level_metadata = resolved_metadata
 
