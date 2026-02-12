@@ -101,16 +101,19 @@ def load_openml_list(
     max_samples=400,
     max_num_classes=10,
     return_capped=True,
+    verbose: bool = True,
 ):
     datasets = []
     openml_list = load_openml_list_cached(dids)
-    print(f"Number of datasets: {len(openml_list)}")
+    if verbose:
+        print(f"Number of datasets: {len(openml_list)}")
 
     if filter_for_nan:
         openml_list = openml_list[openml_list["NumberOfInstancesWithMissingValues"] == 0]
-        print(
-            f"Number of datasets after Nan and feature number filtering: {len(openml_list)}"
-        )
+        if verbose:
+            print(
+                f"Number of datasets after Nan and feature number filtering: {len(openml_list)}"
+            )
 
     for ds in openml_list.index:
         modifications = {
@@ -120,13 +123,14 @@ def load_openml_list(
         }
         entry = openml_list.loc[ds]
 
-        print("Loading", entry["name"], entry.did, "..")
+        if verbose:
+            print("Loading", entry["name"], entry.did, "..")
 
         if entry["NumberOfClasses"] == 0.0:
             raise Exception("Regression not supported")
         else:
             X, y, categorical_feats, attribute_names = get_openml_classification(
-                int(entry.did)
+                int(entry.did),
             )
         if X is None:
             print("Warning: Could not load dataset, skipping.")

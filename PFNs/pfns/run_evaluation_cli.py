@@ -36,8 +36,11 @@ def run_tabpfn_evaluation(
     preprocess_transforms: list[str] | tuple[str, ...] = ("none", "power", "robust"),
     sample_order_permutation: bool = False,
     fla_cache_chunk_size: int | None = None,
+    verbose: bool = True,
 ):
     """Run TabPFN (and optionally baselines) on the requested benchmark."""
+    TabPFNClassifier.models_in_memory.clear()
+
     if device is None:
         device = get_default_device()
 
@@ -70,7 +73,10 @@ def run_tabpfn_evaluation(
         max_features=max_features,
         max_classes=max_classes,
         n_splits=n_splits,
+        verbose=verbose,
     )
+    TabPFNClassifier.models_in_memory.clear()
+
     return results
 
 

@@ -1,7 +1,8 @@
 import pytest
 import torch
 
-from pfns.experiments.seq_len import evaluation, sampling
+from pfns.experiments.model_benchmarks.evaluation import _set_data_generation_seed
+from pfns.experiments.model_benchmarks.sampling import ClassCoverageBatchGenerator
 
 NOTEBOOK_DATA_GENERATION_SEED = 42
 
@@ -13,8 +14,8 @@ def _resolve_test_device(device: str) -> str:
 
 
 def _sample_one_batch(*, data_generation_seed: int, device: str):
-    evaluation._set_data_generation_seed(data_generation_seed)
-    get_batch = sampling.ClassCoverageBatchGenerator.create_prior_get_batch(
+    _set_data_generation_seed(data_generation_seed)
+    get_batch = ClassCoverageBatchGenerator.create_prior_get_batch(
         num_classes=3,
         num_features=4,
         prior_type="mlp",
