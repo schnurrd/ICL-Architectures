@@ -4,6 +4,7 @@ import hashlib
 import json
 from typing import Any
 
+
 def single_model_hash(
     *,
     model_name: str,
@@ -11,6 +12,7 @@ def single_model_hash(
     experiment_payload: dict[str, Any],
     hash_length: int = 16,
 ) -> str:
+    """Build a deterministic short hash for one model + experiment payload."""
     payload = {
         "experiment": experiment_payload,
         "model_name": model_name,

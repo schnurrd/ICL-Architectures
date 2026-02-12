@@ -2,18 +2,15 @@ import argparse
 from pathlib import Path
 
 from pfns.utils import get_default_device
-from notebook_utils import single_model_hash
 
-from pfns.experiments.model_benchmarks.analysis import nested_metric_table_to_long_df
 from pfns.experiments.model_benchmarks.evaluation import evaluate_models_over_seqlens
+from pfns.experiments.model_benchmarks.hashing import single_model_hash
 from pfns.experiments.model_benchmarks.io import (
     SEQ_LEN_REQUIRED_FILES,
     download_results_bundle_from_wandb,
     load_results_bundle,
     make_bundle_path,
     make_model_artifact_name,
-    merge_model_results,
-    run_metadata_matches,
     sanitize_wandb_artifact_component,
     save_results_bundle,
     upload_results_bundle_to_wandb,
@@ -26,6 +23,12 @@ from pfns.experiments.model_benchmarks.model_registry import (
     get_forward_models_from_registry,
     get_models_from_families,
     get_models_from_names,
+)
+from pfns.experiments.model_benchmarks.workflows import (
+    build_seq_len_run_metadata,
+    merge_seq_len_model_results,
+    seq_len_bundle_is_compatible,
+    single_model_seq_len_result_from_bundle,
 )
 
 EXPERIMENT = {
@@ -98,15 +101,7 @@ models_to_compare = get_all_models()
 device = get_default_device()
 print(f"Using device: {device}")
 
-expected_run_metadata = {
-    "seqlen_list": list(EXPERIMENT["seqlen_list"]),
-    "num_features": EXPERIMENT["num_features"],
-    "num_classes": EXPERIMENT["num_classes"],
-    "number_of_test_samples": EXPERIMENT["num_test_samples"],
-    "number_of_repetitions": EXPERIMENT["num_repetitions"],
-    "device": device,
-    "data_generation_seed": EXPERIMENT["data_generation_seed"],
-}
+expected_run_metadata = build_seq_len_run_metadata(experiment=EXPERIMENT, device=device)
 
 results_by_model = {}
 model_bundle_paths = {}
@@ -137,37 +132,22 @@ for model_name, model_config in models_to_compare.items():
         )
         if cached_bundle_path is not None:
             cached_bundle = load_results_bundle(cached_bundle_path)
-            has_model = (
-                model_name in cached_bundle["metric_table"]
-                and model_name in cached_bundle["timing_table"]
-            )
-            run_metadata = cached_bundle.get("metadata", {})
-            metadata_ok = run_metadata_matches(
-                run_metadata,
-                expected=expected_run_metadata,
-                keys=tuple(expected_run_metadata.keys()),
-            )
-
-            if has_model and metadata_ok:
-                results_by_model[model_name] = {
-                    "schema_version": cached_bundle["bundle_metadata"].get("schema_version"),
-                    "metric_table": {model_name: cached_bundle["metric_table"][model_name]},
-                    "timing_table": {model_name: cached_bundle["timing_table"][model_name]},
-                    "memory_table": {
-                        model_name: cached_bundle["memory_table"].get(model_name, {})
-                    },
-                    "oom_errors": {
-                        model_name: cached_bundle["oom_errors"].get(model_name, [])
-                    },
-                    "metadata": run_metadata,
-                }
+            if seq_len_bundle_is_compatible(
+                cached_bundle,
+                model_name=model_name,
+                expected_metadata=expected_run_metadata,
+            ):
+                results_by_model[model_name] = single_model_seq_len_result_from_bundle(
+                    cached_bundle,
+                    model_name=model_name,
+                )
                 model_bundle_paths[model_name] = cached_bundle_path
                 reused_cached_result = True
                 print(f"Reused cached W&B result for {model_name}: {cached_bundle_path}")
             else:
                 print(
-                    f"Cached artifact for {model_name} is incompatible "
-                    f"(has_model={has_model}, metadata_ok={metadata_ok}). Rerunning model."
+                    f"Cached artifact for {model_name} is incompatible with "
+                    "this run metadata. Rerunning model."
                 )
 
     if reused_cached_result:
