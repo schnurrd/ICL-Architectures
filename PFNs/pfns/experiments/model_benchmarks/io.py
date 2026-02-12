@@ -175,7 +175,7 @@ def save_results_bundle(
         json.dump(_to_jsonable(results.get("oom_errors", {})), f, indent=2, sort_keys=True)
 
     metadata = {
-        "schema_version": int(schema_version),
+        "schema_version": int(float(schema_version)),
         "created_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "experiment": experiment or {},
         "run_metadata": results.get("metadata", {}),
@@ -209,7 +209,7 @@ def save_dataframe_bundle(
     experiment: dict[str, Any] | None = None,
     run_metadata: dict[str, Any] | None = None,
     files: dict[str, str] | None = None,
-    schema_version: int = 1,
+    schema_version: int = SCHEMA_VERSION,
 ) -> Path:
     """Persist arbitrary named dataframes as a simple CSV+metadata bundle."""
     bundle = Path(bundle_dir)
@@ -229,7 +229,7 @@ def save_dataframe_bundle(
         row_counts[name] = int(len(df))
 
     metadata = {
-        "schema_version": int(schema_version),
+        "schema_version": int(float(schema_version)),
         "created_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "experiment": experiment or {},
         "run_metadata": run_metadata or {},
@@ -277,6 +277,82 @@ def load_dataframe_bundle(
         "dataframes": dataframes,
         "metadata": metadata.get("run_metadata", {}),
     }
+
+
+def load_compatible_real_world_bundle(
+    bundle_dir: str | Path,
+    *,
+    model_name: str,
+    expected_metadata: dict[str, Any],
+    required_keys: tuple[str, ...] = REAL_WORLD_BUNDLE_KEYS,
+) -> dict[str, Any] | None:
+    """Load a real-world dataframe bundle only when model + metadata are compatible."""
+    try:
+        bundle = load_dataframe_bundle(bundle_dir, expected_keys=required_keys)
+
+        results_df = bundle["dataframes"]["results"]
+        if results_df.empty or "model" not in results_df.columns:
+            return None
+
+        has_model = model_name in set(results_df["model"].astype(str))
+        metadata_ok = run_metadata_matches(
+            bundle["metadata"],
+            expected=expected_metadata,
+            keys=tuple(expected_metadata.keys()),
+        )
+        if not has_model or not metadata_ok:
+            return None
+
+        return bundle
+    except (FileNotFoundError, json.JSONDecodeError, pd.errors.EmptyDataError, KeyError):
+        return None
+
+
+def find_latest_real_world_bundle_for_model(
+    model_name: str,
+    *,
+    output_root: str | Path,
+    expected_metadata: dict[str, Any],
+    required_files: tuple[str, ...] = REAL_WORLD_REQUIRED_FILES,
+    required_keys: tuple[str, ...] = REAL_WORLD_BUNDLE_KEYS,
+) -> tuple[Path | None, dict[str, Any] | None]:
+    """Find the newest compatible real-world bundle for a model under known cache roots."""
+    root = Path(output_root)
+    token = sanitize_wandb_artifact_component(model_name)
+    search_roots = [
+        root / "real_world",
+        root / "wandb_model_cache" / "real_world",
+    ]
+
+    candidates: list[Path] = []
+    for search_root in search_roots:
+        if not search_root.exists():
+            continue
+
+        for metadata_path in search_root.rglob("metadata.json"):
+            bundle_dir = metadata_path.parent
+            if token not in bundle_dir.name:
+                continue
+            if all((bundle_dir / f).exists() for f in required_files):
+                candidates.append(bundle_dir)
+
+    ordered = sorted(
+        set(candidates),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    for bundle_dir in ordered:
+        bundle = load_compatible_real_world_bundle(
+            bundle_dir,
+            model_name=model_name,
+            expected_metadata=expected_metadata,
+            required_keys=required_keys,
+        )
+        if bundle is not None:
+            return bundle_dir, bundle
+
+    return None, None
 
 
 def download_results_bundle_from_wandb(
