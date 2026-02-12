@@ -35,7 +35,11 @@ TRAINING_PROFILES = {
 
 MODEL_SETTINGS = {
     # KDA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/kda/configuration_kda.py#L10
-    # Model size: 12.59 M
+    # Model size: 12.09 M
+    # Training speed on different gpus (uncompiled, single target): 
+    #    - RTX 5070 (bf16):   16it/s, 3.4GiB (single target); 19it/s, 2.2GiB (multi target); 10it/s, 3.7GiB (multi target, interleaved)
+    #    - RTX 2080Ti:        4it/s, 6.2GB (non-compiled), 
+    #    - A5000:             6it/s (non-compiled), 
     "kda": {
         "emsize": 320,
         "config_kwargs": { # per default runs in chunked mode, has a max_position_embeddings set to 2048, supports attn dict
@@ -45,7 +49,7 @@ MODEL_SETTINGS = {
             # "head_dim": 80, # currently 128
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
-            "num_hidden_layers": 10, # default 24
+            "num_hidden_layers": 8, # default 24
             "norm_eps": 1e-6, # default 1e-6
             "use_cache": True,
             "vocab_size": 1, # dummy value, not used default 32000
@@ -53,7 +57,11 @@ MODEL_SETTINGS = {
         },
     },
     # GLA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gla/configuration_gla.py#L12
-    # Model size: 15.06 M
+    # Model size: 12.59 M
+    # Training speed on different gpus (uncompiled, single target): 
+    #    - RTX 5070:   22it/s, 1.8GiB (single target); 28it/s, 1.6GiB (multi target); 16it/s, 2.6GiB (multi target, interleaved)
+    #    - RTX 2080Ti:  it/s
+    #    - A5000:       it/s 
     "gla": {
         "emsize": 320,
         "config_kwargs": { # also has max_position_embeddings set to 2048, supports attn dict
@@ -69,12 +77,16 @@ MODEL_SETTINGS = {
         },
     },
     # Mamba2 Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/mamba2/configuration_mamba2.py#L21
-    # Model size was: 20.99 M now 11.46 M
+    # Model size: 12.86 M
+    # Training speed on different gpus (uncompiled): 
+    #    - RTX 5070 (bf16):   7it/s, 4.3GB (single target); 5it/s (single target, interleaved); 15it/s, 2GB (multi target); 8it/s, 2.9GiB (multi target, interleaved)
+    #    - RTX 2080Ti:  it/s
+    #    - A5000:        it/s 
     "mamba2": { # cached currently not patched
         "emsize": 320,
         "config_kwargs": {
             "hidden_size": 320, # default 2048
-            "num_hidden_layers": 16, # default 48
+            "num_hidden_layers": 18, # default 48
             "state_size": 128, # default 128
             "conv_kernel": 4, # default 4
             "expand": 2, # default 2, --> num_heads self.expand * hidden_size // head_dim
@@ -85,12 +97,16 @@ MODEL_SETTINGS = {
         },
     },
     # DeltaNet Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/delta_net/configuration_delta_net.py#L7
-    # Model size: 10.46 M
+    # Model size: 10.46 M -> increased layers to 12 -> 12.52 M
+    # Training speed on different gpus (uncompiled): 
+    #    - RTX 5070 (bf16):   22it/s, 2.2GB (single target); 29it/s, 1.7GB (multi target); 16it/s, 2.8GiB (multi target, interleaved)
+    #    - RTX 2080Ti:  it/s
+    #    - A5000:        it/s 
     "deltanet": {
         "emsize": 320,
         "config_kwargs": {
             "hidden_size": 320,
-            "num_hidden_layers": 10, # default 24
+            "num_hidden_layers": 12, # default 24
             "num_heads": 4, # default 16
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
@@ -101,16 +117,20 @@ MODEL_SETTINGS = {
         },
     },
     # Gated DeltaNet Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gated_deltanet/configuration_gated_deltanet.py#L7
-    # Model size: 12.79 M
+    # Model size: 12.93 M
+    # Training speed on different gpus (uncompiled): 
+    #    - RTX 5070 (bf16):   14it/s, 2.9GB (single target); 24it/s, 1.9GB (multi target); 15it/s, 3.5GiB (multi target, interleaved)
+    #    - RTX 2080Ti:  it/s
+    #    - A5000:        it/s 
     "gated_deltanet": {
-        "emsize": 256,
+        "emsize": 320,
         "config_kwargs": {
             "attn_mode": "chunk",
-            "hidden_size": 256,
-            "num_hidden_layers": 16, # default 21
+            "hidden_size": 320,
+            "num_hidden_layers": 10, # default 21
             "num_heads": 4, # default 6
-            "head_dim": 48, # default 256
-            "intermediate_size": 256 * 2, # default None -> 4*hidden_size
+            "head_dim": 64, # default 256
+            "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
             "norm_eps": 1e-6, # default 1e-6
             "use_cache": True,
@@ -285,11 +305,14 @@ def get_config(
         f"fpe_{feature_positional_embedding}",
     ]
     extras_str = "_".join(e for e in extras if e)
-    wandb_name = f"{model_type}_{sequence_mode}_{training_setup}_{extras_str}_config_{config_index}"
+    wandb_name = (
+        f"{model_type}_{sequence_mode}_{training_setup}_{extras_str}_config_{config_index}_matched"
+    )
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
         name=wandb_name,
+        tags=["matched_high_config"],
         mode="online",
         log_every_n_steps=10,
     )

@@ -27,6 +27,12 @@ GLOBAL_TRAIN_MIXED_PRECISION = (
 )
 GLOBAL_TRAIN_MIXED_PRECISION_DTYPE = "bf16" if GLOBAL_TRAIN_MIXED_PRECISION else "fp32"
 
+# Training speed on different gpus:
+# -> In this model compiled is faster than non compiled 
+#    - RTX 5070 (bf16):   2.25it/s, 4.7GB
+#    - RTX 2080Ti (fp32): 
+#    - A5000:     (bf16):
+
 TRAINING_PROFILES = {
     "low": {
         "lr": 3.0e-5,
@@ -114,10 +120,11 @@ def get_config(
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=512,
+        # Model size 12.79M
+        emsize=320,
         backbone=RebasedBackboneConfig(
-            nlayers=12,
-            mlp_hidden_dim=512 * 2,
+            nlayers=18,
+            mlp_hidden_dim=320 * 2,
             num_heads=4,
             activation="silu",
             dropout=0.0,
@@ -156,12 +163,13 @@ def get_config(
     wandb_name = (
         f"rebased_{training_setup}"
         f"{wandb_suffix}"
-        f"_config_{config_index}"
+        f"_config_{config_index}_matched"
     )
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
         name=wandb_name,
+        tags=["matched_high_config"],
         mode="online",
         log_every_n_steps=10,
     )

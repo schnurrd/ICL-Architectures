@@ -42,6 +42,12 @@ TRAINING_PROFILES = {
     },
 }
 
+# Model size 12.54 M
+# Training speed on different gpus:
+# -> In this model compiled is faster than non compiled 
+#    - RTX 5070   (bf16): 20it/s, 2.3GB (uncompiled), 22it/s, 2.3GB (compiled)
+#    - RTX 2080Ti (fp32): 
+#    - A5000:     (bf16):
 
 def get_config(
     config_index: int = 0,
@@ -114,11 +120,11 @@ def get_config(
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=512,
+        emsize=320,
         backbone=LinearAttentionBackboneConfig(
-            nlayers=12,
+            nlayers=15,
             nhead=4,
-            mlp_hidden_dim=512 * 2,
+            mlp_hidden_dim=320 * 2,
             dropout=0.0,
             activation="relu",
             layer_kwargs={
@@ -154,12 +160,13 @@ def get_config(
     wandb_name = (
         f"linear_attention_{training_setup}"
         f"{wandb_suffix}"
-        f"_config_{config_index}"
+        f"_config_{config_index}_matched"
     )
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="linear_attention",
         name=wandb_name,
+        tags=["matched_high_config"],
         mode="online",
         log_every_n_steps=10,
     )

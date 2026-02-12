@@ -19,6 +19,13 @@ from pfns.train import (
     ModelConfig,
 )
 
+GLOBAL_TRAIN_MIXED_PRECISION = (
+    torch.cuda.is_available()
+    and torch.cuda.is_bf16_supported()
+    and torch.cuda.get_device_capability()[0] >= 8
+)
+GLOBAL_TRAIN_MIXED_PRECISION_DTYPE = "bf16" if GLOBAL_TRAIN_MIXED_PRECISION else "fp32"
+
 MAX_NUM_CLASSES = 10
 MAX_NUM_FEATURES = 20
 
@@ -57,8 +64,9 @@ TRAINING_PROFILES = {
     },
     "high": {
         **BASE_PROFILE,
+        "nlayers": 15,
         "emsize": 320,
-        "nhid": 320 * 4,
+        "nhid": 320 * 2,
         "lr": 3.0e-5,
         "steps_per_epoch": 4000,
         "epochs": 200,
@@ -70,6 +78,7 @@ TRAINING_PROFILES = {
     },
     "high_feature_att": {
         **BASE_PROFILE,
+        "nlayers": 10,
         "emsize": 320,
         "nhid": 320 * 4,
         "lr": 3.0e-5,
@@ -170,7 +179,7 @@ def get_config(
         weight_decay=0.01,
     )
 
-    wandb_name = f"transformer_1_gpu_v4{profile['wandb_suffix']}_{config_index}"
+    wandb_name = f"transformer_1_gpu_v4{profile['wandb_suffix']}_{config_index}_matched"
     if interleave_x_y_pairs:
         wandb_name += "_interleaved"
     if max_seq_len is not None:
@@ -180,6 +189,7 @@ def get_config(
         entity="icl_arch",
         project="tabpfn_transformer",
         name=wandb_name,
+        tags=["matched_high_config"],
         mode="online",
         log_every_n_steps=10,
     )
@@ -193,8 +203,8 @@ def get_config(
         warmup_epochs=profile["warmup_epochs"],
         steps_per_epoch=profile["steps_per_epoch"],
         n_targets_per_input=1,
-        train_mixed_precision=True,
-        train_mixed_precision_dtype="fp16",
+        train_mixed_precision=GLOBAL_TRAIN_MIXED_PRECISION,
+        train_mixed_precision_dtype=GLOBAL_TRAIN_MIXED_PRECISION_DTYPE,
         scheduler="cosine_decay",
         progress_bar=True,
         wandb=wandb_config,

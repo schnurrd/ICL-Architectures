@@ -29,6 +29,9 @@ KDA_MODELS: dict[str, dict[str, Any]] = {
     "KDA_causal": {
         "wandb_run_id": "fla_models/runs/ksmv5v4z",
     },
+    "KDA_causal_interleaved": {
+        "wandb_run_id": "fla_models/runs/cneseyi0",
+    },
     "KDA_cached": {
         "wandb_run_id": "fla_models/runs/qkruutrt",
     },
@@ -47,24 +50,27 @@ KDA_MODELS: dict[str, dict[str, Any]] = {
     "KDA_teacher_forcing_short_conv": {
         "wandb_run_id": "fla_models/runs/ab6fuy9c",
     },
-    "KDA_causal_interleaved": {
-        "wandb_run_id": "fla_models/runs/cneseyi0",
-    },
 }
 
 GLA_MODELS: dict[str, dict[str, Any]] = {
     "GLA_Causal": {
         "wandb_run_id": "fla_models/runs/yzw9d63f",
     },
-    "GLA_Cached": {
-        "wandb_run_id": "fla_models/runs/g1ul5lyc",
-    },
-    "GLA_Cached_interleaved": {
-        "wandb_run_id": "fla_models/runs/9k1i2f9z",
-    },
     "GLA_Causal_interleaved": {
         "wandb_run_id": "fla_models/runs/ztdpate1",
     },
+    "GLA_Cached": {
+        "wandb_run_id": "fla_models/runs/g1ul5lyc",
+    },
+    # "GLA_Cached_short_conv": {
+    #     "wandb_run_id": "fla_models/runs/47u2og3a", # still running obsession 0
+    # },
+    "GLA_Cached_interleaved": {
+        "wandb_run_id": "fla_models/runs/9k1i2f9z",
+    },
+    # "GLA_Cached_interleaved_short_conv": {
+    #     "wandb_run_id": "fla_models/runs/do2tv5da", #strill running obsession 0
+    # },
     "GLA_Teacher_Forcing": {
         "wandb_run_id": "fla_models/runs/4f224z23",
     },
@@ -72,16 +78,27 @@ GLA_MODELS: dict[str, dict[str, Any]] = {
 }
 
 DELTANET_MODELS: dict[str, dict[str, Any]] = {
+    "DeltaNet_Causal": {
+        "wandb_run_id": "fla_models/runs/iwaesmvk",
+    },
+    "DeltaNet_Causal_short_conv": {
+         "wandb_run_id": "fla_models/runs/j735qiit",
+        "eval_autocast_dtype": "bf16",
+    },
     "DeltaNet_Cached": {
         "wandb_run_id": "fla_models/runs/q67a0x92", 
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Cached_short_conv": {
-        "wandb_run_id": "fla_models/runs/nluohjzz",
+        "wandb_run_id": "fla_models/runs/nluohjzz", # second model nluohjzz
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached_short_conv": {
-        "wandb_run_id": "fla_models/runs/4bvpfdho",
+    "DeltaNet_Cached_Interleaved": {
+        "wandb_run_id": "fla_models/runs/0r7dz00x",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Cached_Interleaved_short_conv": {
+        "wandb_run_id": "fla_models/runs/9v4hbvug",
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Teacher_Forcing": {
@@ -92,36 +109,41 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/fm8kzerj",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached_Interleaved_short_conv": {
-        "wandb_run_id": "fla_models/runs/9v4hbvug",
-        "eval_autocast_dtype": "bf16",
-    }
-    # "DeltaNet_Causal": {
-    #     "wandb_run_id": "fla_models/runs/0bkajhpw",  # redo and remove
-    # },
 }
 
 GATED_DELTANET_MODELS: dict[str, dict[str, Any]] = {
-    "Gated_DeltaNet_Cached_seq_len_10K": {
-        "wandb_run_id": "fla_models/runs/9elhe2fw",
-    },
-    "Gated_DeltaNet_Cached_seq_len_2K": {
-        "wandb_run_id": "fla_models/runs/uah7zywj",
+    "Gated_DeltaNet_Causal": {
+        "wandb_run_id": "fla_models/runs/h5xhs15j",
     },
     "Gated_DeltaNet_Cached": {
         "wandb_run_id": "fla_models/runs/abi7ojxu",
     },
-    # "Gated_DeltaNet_Teacher_Forcing": {
-    #     "wandb_run_id": "fla_models/runs/16n9ti07",  # redo and remove
+    "Gated_DeltaNet_Cached_seq_len_2K": {
+        "wandb_run_id": "fla_models/runs/uah7zywj",
+    },
+    "Gated_DeltaNet_Cached_seq_len_10K": {
+        "wandb_run_id": "fla_models/runs/9elhe2fw",
+    },
+    # "Gated_DeltaNet_Cached_Interleaved": {
+    #     "wandb_run_id": "fla_models/runs/6temwkyx",  # still running donald 7
     # },
+    "Gated_DeltaNet_Teacher_Forcing": {
+        "wandb_run_id": "fla_models/runs/sjkv0db4",
+    },
 }
 
 MAMBA2_MODELS: dict[str, dict[str, Any]] = {
-    "Mamba2_Teacher_Forcing": {
-        "wandb_run_id": "fla_models/runs/gn5r8yj6",
-    },
+    # "Mamba2_Causal": {
+    #     "wandb_run_id": "fla_models/runs/wccjh2ye",  # still running donald 0
+    # },
     "Mamba2_Cached": {
         "wandb_run_id": "fla_models/runs/sac363pc",
+    },
+    # "Mamba2_Cached_Interleaved": {
+    #     "wandb_run_id": "fla_models/runs/kfgmmqu5", # still running donald 6
+    # },
+    "Mamba2_Teacher_Forcing": {
+        "wandb_run_id": "fla_models/runs/gn5r8yj6",
     },
 }
 

@@ -24,7 +24,7 @@ class LinearAttention(nn.Module):
         attention_between_features: bool = False,
         feature_attention_softmax: bool = False,
         feature_dim: int | None = None,
-        eps: float = 1e-5,
+        eps: float = 1e-6,
     ):
         super().__init__()
         
