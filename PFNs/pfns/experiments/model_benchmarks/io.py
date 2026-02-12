@@ -65,7 +65,8 @@ def _to_jsonable(value: Any) -> Any:
     if hasattr(value, "item") and callable(value.item):
         try:
             return value.item()
-        except Exception:
+        except (TypeError, ValueError, RuntimeError):
+            # Fall back to the module-based handling below.
             pass
     if hasattr(value, "__module__") and value.__module__.startswith(("torch", "numpy")):
         return str(value)
