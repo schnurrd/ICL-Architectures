@@ -80,9 +80,10 @@ GLA_MODELS: dict[str, dict[str, Any]] = {
 DELTANET_MODELS: dict[str, dict[str, Any]] = {
     "DeltaNet_Causal": {
         "wandb_run_id": "fla_models/runs/iwaesmvk",
+        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Causal_short_conv": {
-         "wandb_run_id": "fla_models/runs/j735qiit",
+        "wandb_run_id": "fla_models/runs/j735qiit",
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Cached": {
