@@ -143,6 +143,40 @@ def test_attention_caching():
     assert torch.isclose(grads_with_cache, grads_without_cache).all()
 
 
+def test_attention_caching_with_rope_position_offsets():
+    att_test = MultiHeadAttention(
+        input_size=embed_dim,
+        output_size=embed_dim,
+        d_k=embed_dim // nhead,
+        d_v=embed_dim // nhead,
+        nhead=nhead,
+        device=device,
+        dtype=dtype,
+        use_rope=True,
+    )
+    train_len = 211
+    test_len = 73
+    train_x = x_kv[:, :train_len]
+    test_x = x_q[:, :test_len]
+
+    baseline = att_test(
+        test_x,
+        train_x,
+        q_position_offset=train_len,
+        k_position_offset=0,
+    )
+    _ = att_test(
+        train_x,
+        train_x,
+        cache_kv=True,
+        q_position_offset=0,
+        k_position_offset=0,
+    )
+    cached = att_test(test_x, use_cached_kv=True)
+
+    torch.testing.assert_close(cached, baseline, rtol=1e-4, atol=1e-4)
+
+
 if __name__ == "__main__":
     test_attention()
     test_attention_caching()

@@ -51,6 +51,8 @@ class PerFeatureLayer(Module):
         d_v: int | None = None,
         precomputed_kv: None | torch.Tensor | tuple[torch.Tensor, torch.Tensor] = None,
         item_attention_mask_mode: str | None = None,
+        item_attention_use_rope: bool = False,
+        item_attention_rope_base: float = 100_000.0,
     ) -> None:
         """
         Args:
@@ -84,6 +86,11 @@ class PerFeatureLayer(Module):
             item_attention_mask_mode:
                 Optional mask mode applied to attention between items.
                 Supported: "test_to_train_only", "causal_train_only".
+            item_attention_use_rope:
+                Whether to apply rotary positional embedding (RoPE) to item attention.
+                This affects only attention between items, not between features.
+            item_attention_rope_base:
+                Base frequency used for item-attention RoPE.
         """
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
@@ -136,6 +143,8 @@ class PerFeatureLayer(Module):
             precomputed_v=precomputed_v,
             precomputed_kv=precomputed_kv,
             init_gain=attention_init_gain,
+            use_rope=item_attention_use_rope,
+            rope_base=item_attention_rope_base,
         )
 
         if dim_feedforward is None:
@@ -368,6 +377,8 @@ class PerFeatureLayer(Module):
                         use_cached_kv=not single_eval_pos,
                         reuse_first_head_kv=True,
                         attn_mask=test_attention_mask,
+                        q_position_offset=single_eval_pos if single_eval_pos else None,
+                        k_position_offset=0,
                     ).transpose(1, 2)
                 else:
                     new_x_test = None
@@ -389,6 +400,8 @@ class PerFeatureLayer(Module):
                         allow_inplace=True,
                         use_cached_kv=False,
                         attn_mask=train_attention_mask,
+                        q_position_offset=0,
+                        k_position_offset=0,
                     ).transpose(1, 2)
                 else:
                     new_x_train = None
@@ -423,6 +436,8 @@ class PerFeatureLayer(Module):
                 allow_inplace=True,
                 use_cached_kv=cache_trainset_representation and not single_eval_pos,
                 attn_mask=attention_mask,
+                q_position_offset=0 if single_eval_pos else None,
+                k_position_offset=0,
             ).transpose(1, 2)
 
         # the mlp tends to require 8 times more memory at its peak, that is why we use 8 here
