@@ -160,6 +160,7 @@ def get_config(
     config_index: int = 0,
     # Architecture
     model_type: str = "kda",
+    hidden_size: int | None = None,
     sequence_mode: str = "cached",
     # Training
     training_setup: str = "high",
@@ -257,6 +258,23 @@ def get_config(
                 "config_kwargs_override must be a dict of config kwargs to override."
             )
         resolved_config_kwargs.update(config_kwargs_override)
+    if hidden_size is not None:
+        resolved_hidden_size = int(hidden_size)
+        resolved_config_kwargs["hidden_size"] = resolved_hidden_size
+        # Preserve FFN ratio unless explicitly overridden by config_kwargs_override.
+        if (
+            "intermediate_size" in resolved_config_kwargs
+            and not (
+                isinstance(config_kwargs_override, dict)
+                and "intermediate_size" in config_kwargs_override
+            )
+        ):
+            resolved_config_kwargs["intermediate_size"] = resolved_hidden_size * 2
+
+    # FLA backbone requires ninp == hidden_size.
+    resolved_emsize = int(
+        resolved_config_kwargs.get("hidden_size", MODEL_SETTINGS[model_type]["emsize"])
+    )
 
     backbone_kwargs = {
         "model_type": model_type,
@@ -278,7 +296,7 @@ def get_config(
             constant_normalization_mean=0.0,
             constant_normalization_std=1.0,
         ),
-        emsize=MODEL_SETTINGS[model_type]["emsize"],
+        emsize=resolved_emsize,
         backbone=FLABackboneConfig(**backbone_kwargs),
         features_per_group=20,
         attention_between_features=False,
@@ -293,7 +311,15 @@ def get_config(
     )
 
     # Build descriptive wandb run name
+    effective_hidden_size = resolved_config_kwargs.get("hidden_size")
+    effective_num_layers = resolved_config_kwargs.get("num_hidden_layers")
+    effective_num_heads = resolved_config_kwargs.get("num_heads")
+
     extras = [
+        f"emb{resolved_emsize}",
+        f"hid{effective_hidden_size}" if effective_hidden_size is not None else None,
+        f"layers{effective_num_layers}" if effective_num_layers is not None else None,
+        f"heads{effective_num_heads}" if effective_num_heads is not None else None,
         f"bs{resolved_batch_size}" if batch_size else None,
         f"seq{resolved_max_seq_len}" if max_seq_len else None,
         f"cache{cache_chunk_size}" if cache_chunk_size else None,
@@ -312,7 +338,12 @@ def get_config(
         entity="icl_arch",
         project="fla_models",
         name=wandb_name,
-        tags=["matched_high_config"],
+        tags=[
+            "matched_high_config",
+            f"model_{model_type}",
+            f"emb_{resolved_emsize}",
+            f"hidden_{effective_hidden_size}" if effective_hidden_size is not None else "hidden_na",
+        ],
         mode="online",
         log_every_n_steps=10,
     )

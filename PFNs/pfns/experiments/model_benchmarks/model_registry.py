@@ -89,6 +89,10 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/q67a0x92", 
         "eval_autocast_dtype": "bf16",
     },
+    "DeltaNet_Cached_Hidden_Size_640": {
+        "wandb_run_id": "fla_models/runs/niytteb0", # Twice the normal hidden size 
+        "eval_autocast_dtype": "bf16",
+    },
     "DeltaNet_Cached_short_conv": {
         "wandb_run_id": "fla_models/runs/nluohjzz", # second model nluohjzz
         "eval_autocast_dtype": "bf16",
@@ -124,24 +128,24 @@ GATED_DELTANET_MODELS: dict[str, dict[str, Any]] = {
     "Gated_DeltaNet_Cached_seq_len_10K": {
         "wandb_run_id": "fla_models/runs/9elhe2fw",
     },
-    # "Gated_DeltaNet_Cached_Interleaved": {
-    #     "wandb_run_id": "fla_models/runs/6temwkyx",  # still running donald 7
-    # },
+    "Gated_DeltaNet_Cached_Interleaved": {
+        "wandb_run_id": "fla_models/runs/6temwkyx",
+    },
     "Gated_DeltaNet_Teacher_Forcing": {
         "wandb_run_id": "fla_models/runs/sjkv0db4",
     },
 }
 
 MAMBA2_MODELS: dict[str, dict[str, Any]] = {
-    # "Mamba2_Causal": {
-    #     "wandb_run_id": "fla_models/runs/wccjh2ye",  # still running donald 0
-    # },
+    "Mamba2_Causal": {
+        "wandb_run_id": "fla_models/runs/wccjh2ye",
+    },
     "Mamba2_Cached": {
         "wandb_run_id": "fla_models/runs/sac363pc",
     },
-    # "Mamba2_Cached_Interleaved": {
-    #     "wandb_run_id": "fla_models/runs/kfgmmqu5", # still running donald 6
-    # },
+    "Mamba2_Cached_Interleaved": {
+        "wandb_run_id": "fla_models/runs/kfgmmqu5",
+    },
     "Mamba2_Teacher_Forcing": {
         "wandb_run_id": "fla_models/runs/gn5r8yj6",
     },
@@ -159,6 +163,33 @@ REBASED_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
+    # "GLA_Combined_Embbedding_Single_Target": {
+    #     "wandb_run_id": "fla_models/runs/4vsqz1ee", #ep 194
+    # },
+    # "Mamba2_Combined_Embbedding_Single_Target": {
+    #     "wandb_run_id": "fla_models/runs/o9e00w17", #ep93
+    # },
+    # "DeltaNet_Combined_Embbedding_Single_Target": {
+    #     "wandb_run_id": "fla_models/runs/ob2m9rth", #ep 197
+    # },
+    # "Gated_DeltaNet_Combined_Embbedding_Single_Target": {
+    #     "wandb_run_id": "fla_models/runs/g7rh5nv9", #ep 191
+    # },
+    # "KDA_Combined_Embbedding_Single_Target": {
+    #     "wandb_run_id": "fla_models/runs/qaskm2mq", #ep 149
+    # },
+    # "Rebased_Combined_Embbedding_Single_Target": {
+    #     "wandb_run_id": "fla_models/runs/ntkpkzf3", #ep 72
+    # },
+    # "Transformer_Combined_Embbedding_Single_Target": {
+    #     "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b", #ep 100
+    # },
+    # "Linear_Attention_Combined_Embbedding_Single_Target": {
+    #     "wandb_run_id": "linear_attention/runs/ygawhsm9", #ep 148   
+    # },
+}
+
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
 
 MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
@@ -170,6 +201,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "mamba2": MAMBA2_MODELS,
     "linear_attention": LINEAR_ATTENTION_MODELS,
     "rebased": REBASED_MODELS,
+    "equal_params": EQUAL_PARAMS_MODELS,
     "other": OTHER_MODELS,
 }
 
@@ -182,6 +214,7 @@ __all__ = [
     "MAMBA2_MODELS",
     "LINEAR_ATTENTION_MODELS",
     "REBASED_MODELS",
+    "EQUAL_PARAMS_MODELS",
     "OTHER_MODELS",
     "MODEL_FAMILIES",
     "get_models_from_names",
