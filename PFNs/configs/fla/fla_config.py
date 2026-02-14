@@ -216,13 +216,12 @@ def get_config(
     train_mixed_precision = GLOBAL_TRAIN_MIXED_PRECISION
     train_mixed_precision_dtype = GLOBAL_TRAIN_MIXED_PRECISION_DTYPE
     if model_type in {"deltanet"} and train_mixed_precision_dtype == "fp32":
+        train_mixed_precision = True
+        train_mixed_precision_dtype = "bf16" if torch.cuda.is_bf16_supported() else "fp16"
         # ChunkDeltaRuleFunction does not support fp32.
         print(
-            f"Enabling mixed precision with fp16 training for model_type {model_type!r}"
+            f"Enabling mixed precision with {train_mixed_precision_dtype} training for model_type {model_type!r}"
         )
-        train_mixed_precision = True
-        train_mixed_precision_dtype = "fp16"
-        
     resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences 
 
     prior = TabPFNPriorConfig(
