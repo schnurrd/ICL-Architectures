@@ -20,6 +20,20 @@
             ]
         },
         {
+            "name": "Python Debugger: Pre-training Masked Transformer",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/pfns/run_training_cli.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
+            "args": [
+                "PFNs/configs/transformer_experiments/tabpfn_transformer_masking.py", 
+                "--checkpoint-save-load-prefix", "PFNs/models_diff",
+                "--config-arg", "masking='causal_all'",
+                "--overwrite", "--no-wandb",
+            ]
+        },
+        {
             "name": "Python Debugger: Pre-training FLA Config",
             "type": "debugpy",
             "request": "launch",
