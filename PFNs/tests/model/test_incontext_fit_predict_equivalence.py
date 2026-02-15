@@ -93,6 +93,18 @@ def _assert_incontext_fit_predict_matches_forward(
             id="transformer",
         ),
         pytest.param(
+            "transformer_rope",
+            TransformerBackboneConfig(
+                nhead=2,
+                nhid=64,
+                nlayers=2,
+                layer_kwargs={"item_attention_use_rope": True},
+            ),
+            True,
+            32,
+            id="transformer_rope",
+        ),
+        pytest.param(
             "linear_attention",
             LinearAttentionBackboneConfig(
                 nlayers=2,

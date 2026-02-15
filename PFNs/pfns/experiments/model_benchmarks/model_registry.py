@@ -91,23 +91,23 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
         "eval_autocast_dtype": "bf16",
     },
     # "DeltaNet_Cached_Layers_24": {
-    #     "wandb_run_id": "fla_models/runs/iof9k93c", # Twice the number of layers, currently running
+    #     "wandb_run_id": "fla_models/runs/zbcsdb9h", # Twice the number of layers, currently running
     #     "eval_autocast_dtype": "bf16",
     # },
     # "DeltaNet_Cached_Hidden_Size_480": {
-    #     "wandb_run_id": "fla_models/runs/yig3h7nu", # 1.5x hidden size, currently running
+    #     "wandb_run_id": "fla_models/runs/tr0jxu69", # 1.5x hidden size, currently running
     #     "eval_autocast_dtype": "bf16",
     # },
     # "DeltaNet_Cached_Hidden_Size_480_Heads_6": {
-    #     "wandb_run_id": "fla_models/runs/6hcad2k0", # 1.5x hidden size, 1.5x heads, currently running
+    #     "wandb_run_id": "fla_models/runs/gzag08i9", # 1.5x hidden size, 1.5x heads, currently running
+    #     "eval_autocast_dtype": "bf16",
+    # },
+    # "DeltaNet_Cached_Hidden_Size_640_Heads_8": {
+    #     "wandb_run_id": "fla_models/runs/j8k7t7nb", # 2x hidden size, 2x heads, currently running
     #     "eval_autocast_dtype": "bf16",
     # },
     "DeltaNet_Cached_Hidden_Size_640": {
-        "wandb_run_id": "fla_models/runs/niytteb0", # Twice the normal hidden size 
-        "eval_autocast_dtype": "bf16",
-    },
-    "DeltaNet_Cached_Hidden_Size_640_Heads_8": {
-        "wandb_run_id": "fla_models/runs/gyy61vb3", # Twice the normal hidden size 
+        "wandb_run_id": "fla_models/runs/niytteb0", # 2x hidden size,
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Cached_short_conv": {
@@ -185,32 +185,32 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/4vsqz1ee",
     },
     # "Mamba2_Combined_Embbedding_Single_Target": {
-    #     "wandb_run_id": "fla_models/runs/o9e00w17", #ep93
+    #     "wandb_run_id": "fla_models/runs/o9e00w17", #ep151
     # },
     "DeltaNet_Combined_Embbedding_Single_Target": {
         "wandb_run_id": "fla_models/runs/ob2m9rth",
     },
     # "DeltaNet_Interleaved_Embbedding_Multi_Target": {
-    #     "wandb_run_id": "fla_models/runs/v18qqmbk",   # just started on obsession 0 
+    #     "wandb_run_id": "fla_models/runs/v18qqmbk",   # obsession 0, ep 110
     # },
     "Gated_DeltaNet_Combined_Embbedding_Single_Target": {
         "wandb_run_id": "fla_models/runs/g7rh5nv9", 
     },
     # "Gated_DeltaNet_Interleaved_Embbedding_Multi_Target": {
-    #     "wandb_run_id": "fla_models/runs/cpcq82tx",  # just started on obsession 0
+    #     "wandb_run_id": "fla_models/runs/cpcq82tx",  # obsession 0, ep 110
     # },
-    # "KDA_Combined_Embbedding_Single_Target": {
-    #     "wandb_run_id": "fla_models/runs/qaskm2mq", #ep 149
-    # },
+    "KDA_Combined_Embbedding_Single_Target": {
+        "wandb_run_id": "fla_models/runs/qaskm2mq",
+    },
     # "Rebased_Combined_Embbedding_Single_Target": {
-    #     "wandb_run_id": "fla_models/runs/ntkpkzf3", #ep 72
+    #     "wandb_run_id": "fla_models/runs/ntkpkzf3", #ep 121
     # },
     # "Transformer_Combined_Embbedding_Single_Target": {
-    #     "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b", #ep 100
+    #     "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b", #ep 166
     # },
-    # "Linear_Attention_Combined_Embbedding_Single_Target": {
-    #     "wandb_run_id": "linear_attention/runs/ygawhsm9", #ep 148   
-    # },
+    "Linear_Attention_Combined_Embbedding_Single_Target": {
+        "wandb_run_id": "linear_attention/runs/ygawhsm9",
+    },
 }
 
 OTHER_MODELS: dict[str, dict[str, Any]] = {}

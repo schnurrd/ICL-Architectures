@@ -143,6 +143,94 @@ def test_attention_caching():
     assert torch.isclose(grads_with_cache, grads_without_cache).all()
 
 
+def test_attention_caching_with_rope_position_offsets():
+    att_test = MultiHeadAttention(
+        input_size=embed_dim,
+        output_size=embed_dim,
+        d_k=embed_dim // nhead,
+        d_v=embed_dim // nhead,
+        nhead=nhead,
+        device=device,
+        dtype=dtype,
+        use_rope=True,
+    )
+    train_len = 211
+    test_len = 73
+    train_x = x_kv[:, :train_len]
+    test_x = x_q[:, :test_len]
+
+    baseline = att_test(
+        test_x,
+        train_x,
+        q_position_offset=train_len,
+        k_position_offset=0,
+    )
+    _ = att_test(
+        train_x,
+        train_x,
+        cache_kv=True,
+        q_position_offset=0,
+        k_position_offset=0,
+    )
+    cached = att_test(test_x, use_cached_kv=True)
+
+    torch.testing.assert_close(cached, baseline, rtol=1e-4, atol=1e-4)
+
+
+def test_rope_inv_freq_buffer_matches_reference():
+    rope_base = 17_777.0
+    d_k = embed_dim // nhead
+    att_test = MultiHeadAttention(
+        input_size=embed_dim,
+        output_size=embed_dim,
+        d_k=d_k,
+        d_v=d_k,
+        nhead=nhead,
+        device=device,
+        dtype=torch.float32,
+        use_rope=True,
+        rope_base=rope_base,
+    )
+
+    # inv_freq is cached as a non-persistent buffer (not saved in state_dict).
+    assert "inv_freq" in dict(att_test.named_buffers())
+    assert "inv_freq" not in att_test.state_dict()
+
+    x = torch.randn(3, 11, nhead, d_k, device=device, dtype=torch.float32)
+    position_offset = 5
+    y = att_test._apply_rope(x, position_offset=position_offset)
+
+    seq_len = x.shape[-3]
+    half_dim = x.shape[-1] // 2
+    t = torch.arange(
+        position_offset,
+        position_offset + seq_len,
+        device=x.device,
+        dtype=torch.float32,
+    )
+    inv_freq_ref = 1.0 / (
+        rope_base
+        ** (
+            torch.arange(0, x.shape[-1], 2, device=x.device, dtype=torch.float32)
+            / x.shape[-1]
+        )
+    )
+    freqs = torch.outer(t, inv_freq_ref)
+    cos = freqs.cos().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
+    sin = freqs.sin().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
+    x_even = x[..., ::2]
+    x_odd = x[..., 1::2]
+    y_ref = torch.stack(
+        (
+            x_even * cos - x_odd * sin,
+            x_even * sin + x_odd * cos,
+        ),
+        dim=-1,
+    ).flatten(-2)
+
+    torch.testing.assert_close(y, y_ref, rtol=1e-6, atol=1e-6)
+
+
 if __name__ == "__main__":
     test_attention()
     test_attention_caching()

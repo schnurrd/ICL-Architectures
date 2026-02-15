@@ -67,6 +67,9 @@ class MultiHeadAttention(torch.nn.Module):
     _w_kv: torch.nn.Parameter | None
     _w_qkv: torch.nn.Parameter | None
     _w_out: torch.nn.Parameter
+    _use_rope: bool
+    _rope_base: float
+    inv_freq: torch.Tensor
 
     @property
     def w_q(self) -> torch.nn.Parameter | None:
@@ -204,6 +207,8 @@ class MultiHeadAttention(torch.nn.Module):
         precomputed_kv: torch.Tensor | None = None,
         recompute: bool = False,
         init_gain: float = 1.0,
+        use_rope: bool = False,
+        rope_base: float = 128_000.0,
     ):
         super().__init__()
         assert nhead % share_kv_across_n_heads == 0
@@ -219,6 +224,27 @@ class MultiHeadAttention(torch.nn.Module):
         self.softmax_scale = softmax_scale
         self.recompute = recompute
         self.init_gain = init_gain
+        self._use_rope = use_rope
+        self._rope_base = rope_base
+        if self._use_rope:
+            if self._d_k % 2 != 0:
+                raise ValueError(
+                    f"RoPE requires even d_k, got d_k={self._d_k}."
+                )
+            inv_freq = 1.0 / (
+                self._rope_base
+                ** (
+                    torch.arange(
+                        0,
+                        self._d_k,
+                        2,
+                        device=device,
+                        dtype=torch.float32,
+                    )
+                    / self._d_k
+                )
+            )
+            self.register_buffer("inv_freq", inv_freq, persistent=False)
 
         w_out = torch.nn.Parameter(
             torch.empty(nhead, d_v, output_size, device=device, dtype=dtype),
@@ -306,6 +332,8 @@ class MultiHeadAttention(torch.nn.Module):
         only_cache_first_head_kv: bool = False,
         use_cached_kv: bool = False,
         attn_mask: torch.Tensor | None = None,
+        q_position_offset: int | None = None,
+        k_position_offset: int = 0,
     ):
         """X is the current hidden and has a shape of [batch, ..., seq_len, input_size].
         If keys and values are present in the cache and 'freeze_kv' is not set, they
@@ -378,6 +406,8 @@ class MultiHeadAttention(torch.nn.Module):
             save_peak_mem_factor=save_peak_mem_factor,
             reuse_first_head_kv=reuse_first_head_kv,
             attn_mask=attn_mask,
+            q_position_offset=q_position_offset,
+            k_position_offset=k_position_offset,
         )
         return output.reshape(x_shape_after_transpose[:-1] + output.shape[-1:])
 
@@ -492,6 +522,8 @@ class MultiHeadAttention(torch.nn.Module):
         use_cached_kv: bool,
         reuse_first_head_kv: bool,
         attn_mask: torch.Tensor | None,
+        q_position_offset: int | None,
+        k_position_offset: int,
     ) -> torch.Tensor:
         """Attention computation.
         Called by 'forward', potentially on shards, once shapes have been normalized.
@@ -506,6 +538,27 @@ class MultiHeadAttention(torch.nn.Module):
             use_cached_kv=use_cached_kv,
             reuse_first_head_kv=reuse_first_head_kv,
         )
+        if self._use_rope:
+            if q_position_offset is None:
+                q_position_offset = (
+                    MultiHeadAttention._cached_kv_len(k_cache, v_cache, kv_cache)
+                    if use_cached_kv
+                    else 0
+                )
+            if qkv is not None:
+                q, k, v = qkv.unbind(dim=-3)
+                q = self._apply_rope(q, position_offset=q_position_offset)
+                k = self._apply_rope(k, position_offset=k_position_offset)
+                qkv = None
+            else:
+                assert q is not None
+                q = self._apply_rope(q, position_offset=q_position_offset)
+                if kv is not None:
+                    k_unbound, v_unbound = kv.unbind(dim=-3)
+                    k_unbound = self._apply_rope(k_unbound, position_offset=k_position_offset)
+                    kv = torch.stack((k_unbound, v_unbound), dim=-3)
+                elif k is not None:
+                    k = self._apply_rope(k, position_offset=k_position_offset)
         attention_head_outputs = MultiHeadAttention.compute_attention_heads(
             q,
             k,
@@ -536,6 +589,47 @@ class MultiHeadAttention(torch.nn.Module):
         if x_kv is not None:
             x_kv = x_kv.reshape(-1, *x_kv.shape[-2:])
         return x, x_kv, x_shape_after_transpose
+
+    @staticmethod
+    def _cached_kv_len(
+        k_cache: torch.Tensor | None,
+        v_cache: torch.Tensor | None,
+        kv_cache: torch.Tensor | None,
+    ) -> int:
+        if kv_cache is not None:
+            return int(kv_cache.shape[1])
+        if k_cache is not None:
+            return int(k_cache.shape[1])
+        if v_cache is not None:
+            return int(v_cache.shape[1])
+        return 0
+
+    def _apply_rope(self, x: torch.Tensor, *, position_offset: int = 0) -> torch.Tensor:
+        if x.shape[-1] % 2 != 0:
+            raise ValueError(
+                f"RoPE requires even hidden dimension, got {x.shape[-1]}."
+            )
+        seq_len = x.shape[-3]
+        half_dim = x.shape[-1] // 2
+        t = torch.arange(
+            position_offset,
+            position_offset + seq_len,
+            device=x.device,
+            dtype=self.inv_freq.dtype,
+        )
+        freqs = torch.outer(t, self.inv_freq)
+        cos = freqs.cos().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
+        sin = freqs.sin().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
+
+        x_even = x[..., ::2]
+        x_odd = x[..., 1::2]
+        return torch.stack(
+            (
+                x_even * cos - x_odd * sin,
+                x_even * sin + x_odd * cos,
+            ),
+            dim=-1,
+        ).flatten(-2)
 
     @staticmethod
     def broadcast_kv_across_heads(

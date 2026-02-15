@@ -110,6 +110,8 @@ def get_config(
     training_setup: str = "low",
     max_seq_len: int | None = None,
     interleave_x_y_pairs: bool = False,
+    item_attention_use_rope: bool = False,
+    item_attention_rope_base: float = 128_000.0,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -123,6 +125,11 @@ def get_config(
             f"Available: {sorted(TRAINING_PROFILES)}"
         )
     profile = TRAINING_PROFILES[training_setup]
+    resolved_layer_kwargs = dict(profile["layer_kwargs"] or {})
+    if item_attention_use_rope:
+        resolved_layer_kwargs["item_attention_use_rope"] = True
+        resolved_layer_kwargs["item_attention_rope_base"] = float(item_attention_rope_base)
+    resolved_layer_kwargs = resolved_layer_kwargs or None
 
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
 
@@ -165,7 +172,7 @@ def get_config(
             nhid=profile["nhid"],
             nlayers=profile["nlayers"],
             nhead=profile["nhead"],
-            layer_kwargs=profile["layer_kwargs"],
+            layer_kwargs=resolved_layer_kwargs,
         ),
         features_per_group=profile["features_per_group"],
         attention_between_features=profile["attention_between_features"], # was True before
@@ -184,6 +191,8 @@ def get_config(
         wandb_name += "_interleaved"
     if max_seq_len is not None:
         wandb_name += f"_seq{resolved_max_seq_len}"
+    if item_attention_use_rope:
+        wandb_name += "_item_rope"
 
     wandb_config = WandbConfig(
         entity="icl_arch",
