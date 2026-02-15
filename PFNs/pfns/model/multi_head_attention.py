@@ -69,6 +69,7 @@ class MultiHeadAttention(torch.nn.Module):
     _w_out: torch.nn.Parameter
     _use_rope: bool
     _rope_base: float
+    inv_freq: torch.Tensor
 
     @property
     def w_q(self) -> torch.nn.Parameter | None:
@@ -225,10 +226,25 @@ class MultiHeadAttention(torch.nn.Module):
         self.init_gain = init_gain
         self._use_rope = use_rope
         self._rope_base = rope_base
-        if self._use_rope and self._d_k % 2 != 0:
-            raise ValueError(
-                f"RoPE requires even d_k, got d_k={self._d_k}."
+        if self._use_rope:
+            if self._d_k % 2 != 0:
+                raise ValueError(
+                    f"RoPE requires even d_k, got d_k={self._d_k}."
+                )
+            inv_freq = 1.0 / (
+                self._rope_base
+                ** (
+                    torch.arange(
+                        0,
+                        self._d_k,
+                        2,
+                        device=device,
+                        dtype=torch.float32,
+                    )
+                    / self._d_k
+                )
             )
+            self.register_buffer("inv_freq", inv_freq, persistent=False)
 
         w_out = torch.nn.Parameter(
             torch.empty(nhead, d_v, output_size, device=device, dtype=dtype),
@@ -595,28 +611,13 @@ class MultiHeadAttention(torch.nn.Module):
             )
         seq_len = x.shape[-3]
         half_dim = x.shape[-1] // 2
-        freqs = torch.outer(
-            torch.arange(
-                position_offset,
-                position_offset + seq_len,
-                device=x.device,
-                dtype=torch.float32,
-            ),
-            1.0
-            / (
-                self._rope_base
-                ** (
-                    torch.arange(
-                        0,
-                        x.shape[-1],
-                        2,
-                        device=x.device,
-                        dtype=torch.float32,
-                    )
-                    / x.shape[-1]
-                )
-            ),
+        t = torch.arange(
+            position_offset,
+            position_offset + seq_len,
+            device=x.device,
+            dtype=self.inv_freq.dtype,
         )
+        freqs = torch.outer(t, self.inv_freq)
         cos = freqs.cos().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
         sin = freqs.sin().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
 
