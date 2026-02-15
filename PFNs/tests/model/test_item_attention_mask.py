@@ -54,3 +54,23 @@ def test_item_attention_mask_causal_train_only():
     expected[train_len:, :train_len] = 0.0
 
     torch.testing.assert_close(mask, expected)
+
+
+def test_item_attention_mask_causal_all():
+    layer = _build_layer()
+    seq_len = 5
+    train_len = 3
+
+    mask = layer._build_item_attention_mask(
+        mode="causal_all",
+        seq_len_q=seq_len,
+        seq_len_kv=seq_len,
+        train_len=train_len,
+        device=torch.device("cpu"),
+        dtype=torch.float32,
+    )
+
+    expected = torch.full((seq_len, seq_len), float("-inf"))
+    expected[torch.tril(torch.ones((seq_len, seq_len), dtype=torch.bool))] = 0.0
+
+    torch.testing.assert_close(mask, expected)

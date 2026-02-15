@@ -52,7 +52,7 @@ class PerFeatureLayer(Module):
         precomputed_kv: None | torch.Tensor | tuple[torch.Tensor, torch.Tensor] = None,
         item_attention_mask_mode: str | None = None,
         item_attention_use_rope: bool = False,
-        item_attention_rope_base: float = 100_000.0,
+        item_attention_rope_base: float = 128_000.0,
     ) -> None:
         """
         Args:
@@ -85,7 +85,8 @@ class PerFeatureLayer(Module):
             precomputed_kv: Precomputed key-value pairs for attention.
             item_attention_mask_mode:
                 Optional mask mode applied to attention between items.
-                Supported: "test_to_train_only", "causal_train_only".
+                Supported: "test_to_train_only", "causal_train_only",
+                "causal_all".
             item_attention_use_rope:
                 Whether to apply rotary positional embedding (RoPE) to item attention.
                 This affects only attention between items, not between features.
@@ -99,6 +100,14 @@ class PerFeatureLayer(Module):
             raise ValueError(
                 "Cannot use both multiquery_item_attention_for_test_set"
                 "and multiquery_item_attention",
+            )
+        if (
+            item_attention_mask_mode == "causal_all"
+            and multiquery_item_attention_for_test_set
+        ):
+            raise ValueError(
+                "item_attention_mask_mode='causal_all' is not supported with "
+                "multiquery_item_attention_for_test_set=True."
             )
 
         if d_k is None:
@@ -208,10 +217,10 @@ class PerFeatureLayer(Module):
     ) -> torch.Tensor:
         if seq_len_q == 0 or seq_len_kv == 0:
             raise ValueError("Sequence length must be non-zero for attention masking.")
-        assert train_len > 0, "train_len must be > 0 for item attention masking."
         q_pos = torch.arange(q_offset, q_offset + seq_len_q, device=device)
         k_pos = torch.arange(k_offset, k_offset + seq_len_kv, device=device)
         if mode == "test_to_train_only":
+            assert train_len > 0, "train_len must be > 0 for item attention masking."
             mask = torch.full(
                 (seq_len_q, seq_len_kv),
                 float("-inf"),
@@ -232,6 +241,7 @@ class PerFeatureLayer(Module):
                     mask[~train_q],
                 )
         elif mode == "causal_train_only":
+            assert train_len > 0, "train_len must be > 0 for item attention masking."
             mask = torch.full(
                 (seq_len_q, seq_len_kv),
                 float("-inf"),
@@ -253,6 +263,12 @@ class PerFeatureLayer(Module):
                     torch.zeros(1, device=device, dtype=dtype),
                     mask[~train_q],
                 )
+        elif mode == "causal_all":
+            mask = torch.where(
+                k_pos.unsqueeze(0) <= q_pos.unsqueeze(1),
+                torch.zeros(1, device=device, dtype=dtype),
+                torch.full((1,), float("-inf"), device=device, dtype=dtype),
+            )
         else:
             raise ValueError(f"Unknown item_attention_mask_mode: {mode}")
 
@@ -299,6 +315,12 @@ class PerFeatureLayer(Module):
         ), "src must be of shape (batch_size, num_items, num feature blocks, d_model)"
         if single_eval_pos is None:
             single_eval_pos = 0
+        if self.item_attention_mask_mode == "causal_all" and cache_trainset_representation:
+            raise ValueError(
+                "item_attention_mask_mode='causal_all' is not supported with "
+                "cache_trainset_representation=True. Use a single forward pass "
+                "over train+test for full causal masking."
+            )
 
         save_peak_mem_factor = self.save_peak_mem_factor
         if cache_trainset_representation and not single_eval_pos:
@@ -414,7 +436,7 @@ class PerFeatureLayer(Module):
             attention_src_x = None
             if att_src is not None:
                 attention_src_x = att_src.transpose(1, 2)
-            elif single_eval_pos:
+            elif single_eval_pos and self.item_attention_mask_mode != "causal_all":
                 attention_src_x = x[:, :single_eval_pos].transpose(1, 2)
 
             seq_len_q = x.shape[1]

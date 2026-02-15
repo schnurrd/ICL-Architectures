@@ -208,7 +208,7 @@ class MultiHeadAttention(torch.nn.Module):
         recompute: bool = False,
         init_gain: float = 1.0,
         use_rope: bool = False,
-        rope_base: float = 100_000.0,
+        rope_base: float = 128_000.0,
     ):
         super().__init__()
         assert nhead % share_kv_across_n_heads == 0

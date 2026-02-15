@@ -111,7 +111,7 @@ def get_config(
     max_seq_len: int | None = None,
     interleave_x_y_pairs: bool = False,
     item_attention_use_rope: bool = False,
-    item_attention_rope_base: float = 100_000.0,
+    item_attention_rope_base: float = 128_000.0,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic

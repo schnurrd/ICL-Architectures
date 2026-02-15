@@ -40,6 +40,7 @@ def get_config(
     assert masking in [
         "test_to_train_only",
         "causal_train_only",
+        "causal_all",
         None,
     ], f"Invalid masking mode: {masking}"
     
