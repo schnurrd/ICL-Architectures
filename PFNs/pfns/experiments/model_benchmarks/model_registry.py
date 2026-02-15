@@ -103,15 +103,11 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
     #     "eval_autocast_dtype": "bf16",
     # },
     # "DeltaNet_Cached_Hidden_Size_640_Heads_8": {
-    #     "wandb_run_id": "fla_models/runs/j8k7t7nb", # 1.5x hidden size, 1.5x heads, currently running
+    #     "wandb_run_id": "fla_models/runs/j8k7t7nb", # 2x hidden size, 2x heads, currently running
     #     "eval_autocast_dtype": "bf16",
     # },
     "DeltaNet_Cached_Hidden_Size_640": {
-        "wandb_run_id": "fla_models/runs/niytteb0", # Twice the normal hidden size 
-        "eval_autocast_dtype": "bf16",
-    },
-    "DeltaNet_Cached_Hidden_Size_640_Heads_8": {
-        "wandb_run_id": "fla_models/runs/gyy61vb3", # Twice the normal hidden size 
+        "wandb_run_id": "fla_models/runs/niytteb0", # 2x hidden size,
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Cached_short_conv": {
