@@ -53,6 +53,7 @@ class PerFeatureLayer(Module):
         item_attention_mask_mode: str | None = None,
         item_attention_use_rope: bool = False,
         item_attention_rope_base: float = 128_000.0,
+        item_attention_rope_pairwise_positions: bool = False,
     ) -> None:
         """
         Args:
@@ -92,6 +93,10 @@ class PerFeatureLayer(Module):
                 This affects only attention between items, not between features.
             item_attention_rope_base:
                 Base frequency used for item-attention RoPE.
+            item_attention_rope_pairwise_positions:
+                Whether to assign pairwise RoPE positions for interleaved item
+                sequences so that each `(x_i, y_i)` train pair shares one
+                position index.
         """
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
@@ -202,6 +207,9 @@ class PerFeatureLayer(Module):
             multiquery_item_attention_for_test_set
         )
         self.item_attention_mask_mode = item_attention_mask_mode
+        self.item_attention_rope_pairwise_positions = (
+            item_attention_rope_pairwise_positions
+        )
 
     def _build_item_attention_mask(
         self,
@@ -285,6 +293,7 @@ class PerFeatureLayer(Module):
         *,
         cache_trainset_representation: bool = False,
         att_src: Tensor | None = None,
+        rope_pairwise_positions: bool = False,
     ) -> Tensor:
         """Pass the input through the encoder layer.
 
@@ -306,6 +315,9 @@ class PerFeatureLayer(Module):
                 (batch_size, num_train_items, num_feature_blocks, d_model).
                 This does not work with multiquery_item_attention_for_test_set and
                 cache_trainset_representation at this point.
+            rope_pairwise_positions:
+                Whether to use pairwise RoPE position mapping (`pos // 2`) for
+                interleaved `(x_i, y_i)` item tokens.
 
         Returns:
             The transformer state passed through the encoder layer.
@@ -315,7 +327,13 @@ class PerFeatureLayer(Module):
         ), "src must be of shape (batch_size, num_items, num feature blocks, d_model)"
         if single_eval_pos is None:
             single_eval_pos = 0
-        if self.item_attention_mask_mode == "causal_all" and cache_trainset_representation:
+        effective_mask_mode = self.item_attention_mask_mode
+        if not self.training and effective_mask_mode == "causal_all":
+            # In inference, avoid test-to-test leakage by falling back to the
+            # standard train-only causal masking behavior.
+            effective_mask_mode = "causal_train_only"
+
+        if effective_mask_mode == "causal_all" and cache_trainset_representation:
             raise ValueError(
                 "item_attention_mask_mode='causal_all' is not supported with "
                 "cache_trainset_representation=True. Use a single forward pass "
@@ -362,10 +380,13 @@ class PerFeatureLayer(Module):
                 q_offset: int = 0,
                 k_offset: int = 0,
             ) -> torch.Tensor | None:
-                if self.item_attention_mask_mode is None:
+                if (
+                    effective_mask_mode is None
+                    or (cache_trainset_representation and not single_eval_pos)
+                ):
                     return None
                 return self._build_item_attention_mask(
-                    mode=self.item_attention_mask_mode,
+                    mode=effective_mask_mode,
                     seq_len_q=seq_len_q,
                     seq_len_kv=seq_len_kv,
                     train_len=single_eval_pos,
@@ -374,6 +395,12 @@ class PerFeatureLayer(Module):
                     q_offset=q_offset,
                     k_offset=k_offset,
                 )
+
+            pairwise_rope_enabled = (
+                rope_pairwise_positions
+                and self.item_attention_rope_pairwise_positions
+                and self.self_attn_between_items._use_rope
+            )
 
             if self.multiquery_item_attention_for_test_set:
                 if single_eval_pos < x.shape[1]:
@@ -401,6 +428,7 @@ class PerFeatureLayer(Module):
                         attn_mask=test_attention_mask,
                         q_position_offset=single_eval_pos if single_eval_pos else None,
                         k_position_offset=0,
+                        rope_pairwise_positions=pairwise_rope_enabled,
                     ).transpose(1, 2)
                 else:
                     new_x_test = None
@@ -424,6 +452,7 @@ class PerFeatureLayer(Module):
                         attn_mask=train_attention_mask,
                         q_position_offset=0,
                         k_position_offset=0,
+                        rope_pairwise_positions=pairwise_rope_enabled,
                     ).transpose(1, 2)
                 else:
                     new_x_train = None
@@ -436,7 +465,7 @@ class PerFeatureLayer(Module):
             attention_src_x = None
             if att_src is not None:
                 attention_src_x = att_src.transpose(1, 2)
-            elif single_eval_pos and self.item_attention_mask_mode != "causal_all":
+            elif single_eval_pos and effective_mask_mode != "causal_all":
                 attention_src_x = x[:, :single_eval_pos].transpose(1, 2)
 
             seq_len_q = x.shape[1]
@@ -460,6 +489,7 @@ class PerFeatureLayer(Module):
                 attn_mask=attention_mask,
                 q_position_offset=0 if single_eval_pos else None,
                 k_position_offset=0,
+                rope_pairwise_positions=pairwise_rope_enabled,
             ).transpose(1, 2)
 
         # the mlp tends to require 8 times more memory at its peak, that is why we use 8 here

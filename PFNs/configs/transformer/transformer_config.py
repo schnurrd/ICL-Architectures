@@ -112,6 +112,7 @@ def get_config(
     interleave_x_y_pairs: bool = False,
     item_attention_use_rope: bool = False,
     item_attention_rope_base: float = 128_000.0,
+    item_attention_rope_pairwise_positions: bool = False,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -129,6 +130,8 @@ def get_config(
     if item_attention_use_rope:
         resolved_layer_kwargs["item_attention_use_rope"] = True
         resolved_layer_kwargs["item_attention_rope_base"] = float(item_attention_rope_base)
+    if item_attention_rope_pairwise_positions:
+        resolved_layer_kwargs["item_attention_rope_pairwise_positions"] = True
     resolved_layer_kwargs = resolved_layer_kwargs or None
 
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
@@ -193,6 +196,8 @@ def get_config(
         wandb_name += f"_seq{resolved_max_seq_len}"
     if item_attention_use_rope:
         wandb_name += "_item_rope"
+        if item_attention_rope_pairwise_positions:
+            wandb_name += "_pairwise"
 
     wandb_config = WandbConfig(
         entity="icl_arch",

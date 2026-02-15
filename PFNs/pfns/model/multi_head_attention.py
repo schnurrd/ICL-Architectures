@@ -334,6 +334,7 @@ class MultiHeadAttention(torch.nn.Module):
         attn_mask: torch.Tensor | None = None,
         q_position_offset: int | None = None,
         k_position_offset: int = 0,
+        rope_pairwise_positions: bool = False,
     ):
         """X is the current hidden and has a shape of [batch, ..., seq_len, input_size].
         If keys and values are present in the cache and 'freeze_kv' is not set, they
@@ -408,6 +409,7 @@ class MultiHeadAttention(torch.nn.Module):
             attn_mask=attn_mask,
             q_position_offset=q_position_offset,
             k_position_offset=k_position_offset,
+            rope_pairwise_positions=rope_pairwise_positions,
         )
         return output.reshape(x_shape_after_transpose[:-1] + output.shape[-1:])
 
@@ -524,6 +526,7 @@ class MultiHeadAttention(torch.nn.Module):
         attn_mask: torch.Tensor | None,
         q_position_offset: int | None,
         k_position_offset: int,
+        rope_pairwise_positions: bool,
     ) -> torch.Tensor:
         """Attention computation.
         Called by 'forward', potentially on shards, once shapes have been normalized.
@@ -547,18 +550,38 @@ class MultiHeadAttention(torch.nn.Module):
                 )
             if qkv is not None:
                 q, k, v = qkv.unbind(dim=-3)
-                q = self._apply_rope(q, position_offset=q_position_offset)
-                k = self._apply_rope(k, position_offset=k_position_offset)
+                q = self._apply_rope(
+                    q,
+                    position_offset=q_position_offset,
+                    rope_pairwise_positions=rope_pairwise_positions,
+                )
+                k = self._apply_rope(
+                    k,
+                    position_offset=k_position_offset,
+                    rope_pairwise_positions=rope_pairwise_positions,
+                )
                 qkv = None
             else:
                 assert q is not None
-                q = self._apply_rope(q, position_offset=q_position_offset)
+                q = self._apply_rope(
+                    q,
+                    position_offset=q_position_offset,
+                    rope_pairwise_positions=rope_pairwise_positions,
+                )
                 if kv is not None:
                     k_unbound, v_unbound = kv.unbind(dim=-3)
-                    k_unbound = self._apply_rope(k_unbound, position_offset=k_position_offset)
+                    k_unbound = self._apply_rope(
+                        k_unbound,
+                        position_offset=k_position_offset,
+                        rope_pairwise_positions=rope_pairwise_positions,
+                    )
                     kv = torch.stack((k_unbound, v_unbound), dim=-3)
                 elif k is not None:
-                    k = self._apply_rope(k, position_offset=k_position_offset)
+                    k = self._apply_rope(
+                        k,
+                        position_offset=k_position_offset,
+                        rope_pairwise_positions=rope_pairwise_positions,
+                    )
         attention_head_outputs = MultiHeadAttention.compute_attention_heads(
             q,
             k,
@@ -604,7 +627,13 @@ class MultiHeadAttention(torch.nn.Module):
             return int(v_cache.shape[1])
         return 0
 
-    def _apply_rope(self, x: torch.Tensor, *, position_offset: int = 0) -> torch.Tensor:
+    def _apply_rope(
+        self,
+        x: torch.Tensor,
+        *,
+        position_offset: int = 0,
+        rope_pairwise_positions: bool = False,
+    ) -> torch.Tensor:
         if x.shape[-1] % 2 != 0:
             raise ValueError(
                 f"RoPE requires even hidden dimension, got {x.shape[-1]}."
@@ -615,8 +644,11 @@ class MultiHeadAttention(torch.nn.Module):
             position_offset,
             position_offset + seq_len,
             device=x.device,
-            dtype=self.inv_freq.dtype,
+            dtype=torch.long,
         )
+        if rope_pairwise_positions:
+            t = torch.div(t, 2, rounding_mode="floor")
+        t = t.to(dtype=self.inv_freq.dtype)
         freqs = torch.outer(t, self.inv_freq)
         cos = freqs.cos().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
         sin = freqs.sin().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)

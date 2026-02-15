@@ -139,8 +139,8 @@ class TabularModel(nn.Module):
                 as (batch, seq, feature). Default is True. If False,
                 (seq, batch, feature).
             interleave_x_y_pairs: If True, then the training set part of the sequence is interleaved
-                token-wise as (x1, y1, x2, y2, ...). The test set part (after single_eval_pos)
-                is kept as (x_test1, x_test2, ...).
+                token-wise as (x1, y1, x2, y2, ...). The test set part is also
+                interleaved; missing test targets are encoded from NaN placeholders.
         """
         if decoder_dict is None:
             decoder_dict = {"standard": (None, 1)}
@@ -262,6 +262,21 @@ class TabularModel(nn.Module):
         # Now x_bf, y_bf, test_x_bf are batch-first (or None)
         return x_bf, y_bf, test_x_bf
 
+    def _is_transformer(self) -> bool:
+        """Returns whether the backbone is the PerFeature transformer stack."""
+        layers = None
+        if isinstance(self.transformer_layers, LayerStack):
+            layers = self.transformer_layers.layers
+        else:
+            layer_stack = getattr(self.transformer_layers, "layer_stack", None)
+            if layer_stack is not None:
+                layers = getattr(layer_stack, "layers", None)
+            if layers is None:
+                layers = getattr(self.transformer_layers, "layers", None)
+        if isinstance(layers, (nn.ModuleList, list, tuple)) and len(layers) > 0:
+            return all(isinstance(layer, PerFeatureLayer) for layer in layers)
+        return False
+
     def incontext_fit(
         self,
         x: torch.Tensor,
@@ -280,7 +295,7 @@ class TabularModel(nn.Module):
         assert x_bf is not None and y_bf is not None
         single_eval_pos = y_bf.shape[1]
 
-        embedded_input, current_context_len, _, _ = self._build_embedded_input(
+        embedded_input, _, should_interleave, _ = self._build_embedded_input(
             x_bf,
             y_bf,
             single_eval_pos=single_eval_pos,
@@ -294,6 +309,7 @@ class TabularModel(nn.Module):
 
         _, backbone_state = self.transformer_layers.incontext_fit(
             embedded_input,
+            rope_pairwise_positions=should_interleave,
         )
         return InContextState(backbone_state=backbone_state)
 
@@ -331,6 +347,7 @@ class TabularModel(nn.Module):
         encoder_out = self.transformer_layers.incontext_predict(
             embedded_input,
             state.backbone_state,
+            rope_pairwise_positions=should_interleave,
         )
 
         output_decoded = self._decode_from_encoder_out(
@@ -665,7 +682,7 @@ class TabularModel(nn.Module):
             ), f"Only 1 feature per group supported for attention_between_features=False, got {embedded_x.shape=}."
 
             if should_interleave:
-                if use_teacher_forcing_mode and self.transformer_layers.training:
+                if self._is_transformer() or (use_teacher_forcing_mode and self.transformer_layers.training):
                     embedded_y_tokens = embedded_y.unsqueeze(2)
                     embedded_input = torch.stack(
                         (embedded_x, embedded_y_tokens), dim=2
@@ -753,7 +770,9 @@ class TabularModel(nn.Module):
         use_teacher_forcing_mode: bool,
     ) -> dict[str, torch.Tensor]:
         if should_interleave:
-            if use_teacher_forcing_mode and self.transformer_layers.training:
+            if self._is_transformer() or (
+                use_teacher_forcing_mode and self.transformer_layers.training
+            ):
                 encoder_out = encoder_out[:, ::2]  # remove interleaved y tokens
             else:
                 encoder_out = torch.cat(
@@ -832,6 +851,7 @@ class TabularModel(nn.Module):
             single_eval_pos=current_context_len,
             half_layers=half_layers,
             cache_trainset_representation=self.cache_trainset_representation,
+            rope_pairwise_positions=should_interleave,
         )  # b s (num_groups+1_for_y) e -> b s (num_groups+1_for_y) e
 
         del embedded_input

@@ -177,6 +177,90 @@ def test_attention_caching_with_rope_position_offsets():
     torch.testing.assert_close(cached, baseline, rtol=1e-4, atol=1e-4)
 
 
+def test_attention_caching_with_rope_pairwise_positions():
+    att_test = MultiHeadAttention(
+        input_size=embed_dim,
+        output_size=embed_dim,
+        d_k=embed_dim // nhead,
+        d_v=embed_dim // nhead,
+        nhead=nhead,
+        device=device,
+        dtype=dtype,
+        use_rope=True,
+    )
+    train_len = 210
+    test_len = 73
+    train_x = x_kv[:, :train_len]
+    test_x = x_q[:, :test_len]
+
+    baseline = att_test(
+        test_x,
+        train_x,
+        q_position_offset=train_len,
+        k_position_offset=0,
+        rope_pairwise_positions=True,
+    )
+    _ = att_test(
+        train_x,
+        train_x,
+        cache_kv=True,
+        q_position_offset=0,
+        k_position_offset=0,
+        rope_pairwise_positions=True,
+    )
+    cached = att_test(
+        test_x,
+        use_cached_kv=True,
+        rope_pairwise_positions=True,
+    )
+
+    torch.testing.assert_close(cached, baseline, rtol=1e-4, atol=1e-4)
+
+
+def test_rope_pairwise_positions_match_reference():
+    att_test = MultiHeadAttention(
+        input_size=embed_dim,
+        output_size=embed_dim,
+        d_k=embed_dim // nhead,
+        d_v=embed_dim // nhead,
+        nhead=nhead,
+        device=device,
+        dtype=torch.float32,
+        use_rope=True,
+    )
+    x = torch.randn(2, 17, nhead, embed_dim // nhead, device=device, dtype=torch.float32)
+    position_offset = 11
+    y = att_test._apply_rope(
+        x,
+        position_offset=position_offset,
+        rope_pairwise_positions=True,
+    )
+
+    seq_len = x.shape[-3]
+    half_dim = x.shape[-1] // 2
+    t = torch.arange(
+        position_offset,
+        position_offset + x.shape[1],
+        device=device,
+        dtype=torch.long,
+    )
+    t = torch.div(t, 2, rounding_mode="floor")
+    freqs = torch.outer(t.to(dtype=torch.float32), att_test.inv_freq)
+    cos = freqs.cos().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
+    sin = freqs.sin().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
+    x_even = x[..., ::2]
+    x_odd = x[..., 1::2]
+    y_ref = torch.stack(
+        (
+            x_even * cos - x_odd * sin,
+            x_even * sin + x_odd * cos,
+        ),
+        dim=-1,
+    ).flatten(-2)
+
+    torch.testing.assert_close(y, y_ref, rtol=1e-6, atol=1e-6)
+
+
 def test_rope_inv_freq_buffer_matches_reference():
     rope_base = 17_777.0
     d_k = embed_dim // nhead

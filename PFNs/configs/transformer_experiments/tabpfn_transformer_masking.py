@@ -25,6 +25,9 @@ def get_config(
     config_index: int = 0,
     masking: str | None = None,
     max_seq_len: int | None = None,
+    item_attention_use_rope: bool = False,
+    item_attention_rope_base: float = 128_000.0,
+    item_attention_rope_pairwise_positions: bool = False,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -70,6 +73,15 @@ def get_config(
         fixed_num_test_instances=None,
     )
 
+    layer_kwargs = {
+        "item_attention_mask_mode": masking,
+    }
+    if item_attention_use_rope:
+        layer_kwargs["item_attention_use_rope"] = True
+        layer_kwargs["item_attention_rope_base"] = float(item_attention_rope_base)
+    if item_attention_rope_pairwise_positions:
+        layer_kwargs["item_attention_rope_pairwise_positions"] = True
+
     model = ModelConfig(
         criterion=CrossEntropyConfig(num_classes=max_num_classes),
         encoder=EncoderConfig(
@@ -87,9 +99,7 @@ def get_config(
             nhid=320 * 4,
             nlayers=12,
             nhead=8,
-            layer_kwargs={
-                "item_attention_mask_mode": masking,
-            },
+            layer_kwargs=layer_kwargs,
         ),
         features_per_group=20,
         attention_between_features=False,
@@ -105,6 +115,10 @@ def get_config(
     wandb_name = f"transformer_modified_masking_{masking}"
     if max_seq_len is not None:
         wandb_name += f"_seq{resolved_max_seq_len}"
+    if item_attention_use_rope:
+        wandb_name += "_item_rope"
+        if item_attention_rope_pairwise_positions:
+            wandb_name += "_pairwise"
 
     wandb_config = WandbConfig(
         entity="icl_arch",
