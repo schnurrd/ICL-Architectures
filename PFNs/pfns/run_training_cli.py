@@ -53,14 +53,14 @@ def parse_args():
     parser.add_argument(
         "--checkpoint-save-load-prefix",
         type=str,
-        default=None,
+        default="PFNs/models_diff",
         help="Path to save/load checkpoint (and default wandb dir).",
     )
 
     parser.add_argument(
         "--checkpoint-save-load-suffix",
         type=str,
-        default="PFNs/models_diff",
+        default="",
         help="Suffix to add to the checkpoint save/load path. This can e.g. be the seed.",
     )
 
