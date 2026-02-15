@@ -25,6 +25,7 @@ def get_config(
     config_index: int = 0,
     masking: str | None = None,
     max_seq_len: int | None = None,
+    interleave_x_y_pairs: bool = False,
     item_attention_use_rope: bool = False,
     item_attention_rope_base: float = 128_000.0,
     item_attention_rope_pairwise_positions: bool = False,
@@ -104,6 +105,7 @@ def get_config(
         features_per_group=20,
         attention_between_features=False,
         feature_positional_embedding="subspace",
+        interleave_x_y_pairs=interleave_x_y_pairs,
     )
 
     optimizer = OptimizerConfig(
@@ -113,6 +115,8 @@ def get_config(
     )
     
     wandb_name = f"transformer_modified_masking_{masking}"
+    if interleave_x_y_pairs:
+        wandb_name += "_interleaved"
     if max_seq_len is not None:
         wandb_name += f"_seq{resolved_max_seq_len}"
     if item_attention_use_rope:
