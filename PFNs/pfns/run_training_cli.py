@@ -60,7 +60,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint-save-load-suffix",
         type=str,
-        default="",
+        default="PFNs/models_diff",
         help="Suffix to add to the checkpoint save/load path. This can e.g. be the seed.",
     )
 
