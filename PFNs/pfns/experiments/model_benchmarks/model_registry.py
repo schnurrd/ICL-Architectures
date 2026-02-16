@@ -177,9 +177,11 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     },
     "DeltaNet_Combined_Embbedding_Single_Target": {
         "wandb_run_id": "fla_models/runs/ob2m9rth",
+        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Interleaved_Embbedding_Multi_Target": {
         "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
+        "eval_autocast_dtype": "bf16",
     },
     "Gated_DeltaNet_Combined_Embbedding_Single_Target": {
         "wandb_run_id": "fla_models/runs/g7rh5nv9",  
@@ -203,7 +205,7 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
 
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     "Non-Causal_TabPFN": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd",
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl
         "eval_mode": "forward",
     },
     # "Non-Causal_TabPFN_with_RoPE": {
