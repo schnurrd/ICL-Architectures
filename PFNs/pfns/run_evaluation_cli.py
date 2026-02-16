@@ -51,8 +51,8 @@ def run_evaluation(
 
     resolved_runner = runner or model_config.get("runner")
     if resolved_runner is None:
-        resolved_runner = "evaluation_cli_baseline" if "baseline_name" in model_config else "tabpfn"
-    if resolved_runner == "evaluation_cli_baseline":
+        resolved_runner = "baseline" if "baseline_name" in model_config else "tabpfn"
+    if resolved_runner == "baseline":
         available_baselines = {
             model.name: model
             for model in get_baselines(n_jobs=n_jobs, random_state=random_state)
@@ -82,15 +82,15 @@ def run_evaluation(
     if resolved_runner != "tabpfn":
         raise ValueError(
             "Unknown runner "
-            f"{resolved_runner!r}. Expected 'tabpfn' or 'evaluation_cli_baseline'."
+            f"{resolved_runner!r}. Expected 'tabpfn' or 'baseline'."
         )
 
     TabPFNClassifier.models_in_memory.clear()
     try:
         tabpfn = TabPFNClassifier(
-            base_path=str(model_config.get("base_path", ".")),
+            base_path=str(model_config.get("base_path") or "."),
             device=device,
-            model_string=str(model_config.get("checkpoint_name", "checkpoint.pt")),
+            model_string=str(model_config.get("checkpoint_name") or "checkpoint.pt"),
             wandb_run_id=model_config.get("wandb_run_id"),
             N_ensemble_configurations=n_ensemble_configurations,
             preprocess_transforms=list(preprocess_transforms),
@@ -98,9 +98,10 @@ def run_evaluation(
             sample_order_permutation=sample_order_permutation,
             fla_cache_chunk_size=fla_cache_chunk_size,
         )
+        model_name = str(model_config.get("name") or tabpfn.name)
         return evaluate_on_openml(
             models=[tabpfn],
-            model_names=[tabpfn.name],
+            model_names=[model_name],
             dataset_ids=dataset_ids,
             max_samples=max_samples,
             max_features=max_features,
@@ -134,7 +135,7 @@ def build_available_baseline_model_configs(
     selected: dict[str, dict[str, Any]] = {}
     skipped: list[str] = []
     for model_name, model_config in candidates.items():
-        baseline_name = str(model_config.get("baseline_name", model_name))
+        baseline_name = str(model_config.get("baseline_name") or model_name)
         if baseline_name not in available_baseline_names:
             skipped.append(model_name)
             continue
