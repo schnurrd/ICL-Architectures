@@ -52,6 +52,7 @@ def run_evaluation(
     resolved_runner = runner or model_config.get("runner")
     if resolved_runner is None:
         resolved_runner = "baseline" if "baseline_name" in model_config else "tabpfn"
+        print(f"No runner specified, inferred runner='{resolved_runner}' from model_config keys / defaulting.")
     if resolved_runner == "baseline":
         available_baselines = {
             model.name: model
@@ -76,6 +77,7 @@ def run_evaluation(
             max_features=max_features,
             max_classes=max_classes,
             n_splits=n_splits,
+            random_state=random_state,
             verbose=verbose,
         )
 
@@ -97,6 +99,7 @@ def run_evaluation(
             batch_size_inference=batch_size_inference,
             sample_order_permutation=sample_order_permutation,
             fla_cache_chunk_size=fla_cache_chunk_size,
+            seed=random_state,
         )
         model_name = str(model_config.get("name") or tabpfn.name)
         return evaluate_on_openml(
@@ -107,6 +110,7 @@ def run_evaluation(
             max_features=max_features,
             max_classes=max_classes,
             n_splits=n_splits,
+            random_state=random_state,
             verbose=verbose,
         )
     finally:
@@ -155,7 +159,7 @@ def run_real_world_model_from_config(
     experiment: dict[str, Any],
     device: str | None = None,
     baseline_n_jobs: int = 4,
-    baseline_random_state: int = 42,
+    random_state: int = 42,
     verbose: bool = True,
 ):
     """Run one real-world model entry from the notebook model-config structure."""
@@ -178,7 +182,7 @@ def run_real_world_model_from_config(
         model_config=model_config,
         device=device,
         n_jobs=int(model_config.get("n_jobs", baseline_n_jobs)),
-        random_state=int(model_config.get("random_state", baseline_random_state)),
+        random_state=int(model_config.get("random_state", random_state)),
         verbose=verbose,
         **exp,
     )

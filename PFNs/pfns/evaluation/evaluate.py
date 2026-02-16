@@ -180,6 +180,7 @@ def evaluate_on_openml(
     max_classes: int = 10,
     n_splits: int = 5,
     verbose: bool = True,
+    random_state: int = 42,
 ) -> pd.DataFrame:
     """Evaluate models on OpenML datasets using tabular_datasets.py loader."""
     if len(models) != len(model_names):
@@ -204,7 +205,7 @@ def evaluate_on_openml(
                 X_np,
                 y_np,
                 n_splits=n_splits,
-                random_state=42,
+                random_state=random_state,
             )
         except Exception as e:
             print(f"Skipping dataset {name!r}: could not build CV splits ({e}).")
