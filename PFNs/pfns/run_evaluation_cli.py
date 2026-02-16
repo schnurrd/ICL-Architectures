@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+from typing import Any
 
 from pfns.scripts.tabpfn_interface import TabPFNClassifier
 from pfns.evaluation import (
@@ -18,66 +19,168 @@ from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENC
 from pfns.utils import get_default_device
 
 
-def run_tabpfn_evaluation(
+def run_evaluation(
     *,
-    base_path: str,
-    checkpoint_name: str = "checkpoint.pt",
-    wandb_run_id: str | None = None,
+    runner: str | None = None,
+    model_config: dict[str, Any],
     device: str | None = None,
     benchmark: str = "opencc",
     max_samples: int = 1000,
     max_features: int = 20,
     max_classes: int = 10,
     n_splits: int = 5,
-    only_tabpfn: bool = False,
     n_jobs: int = 4,
+    random_state: int = 42,
     batch_size_inference: int = 32,
     n_ensemble_configurations: int = 32,
     preprocess_transforms: list[str] | tuple[str, ...] = ("none", "power", "robust"),
     sample_order_permutation: bool = False,
     fla_cache_chunk_size: int | None = None,
     verbose: bool = True,
-):
-    """Run TabPFN (and optionally baselines) on the requested benchmark."""
-    TabPFNClassifier.models_in_memory.clear()
-
+) -> Any:
+    """Run one OpenML evaluation entry point for TabPFN or baseline models."""
     if device is None:
         device = get_default_device()
 
-    assert benchmark in ["opencc", "test"], "Benchmark must be 'opencc' or 'test'"
-    dataset_ids = OPENCC_BENCHMARK if benchmark == "opencc" else TEST_BENCHMARK
+    if benchmark == "opencc":
+        dataset_ids = OPENCC_BENCHMARK
+    elif benchmark == "test":
+        dataset_ids = TEST_BENCHMARK
+    else:
+        raise ValueError("Benchmark must be 'opencc' or 'test'")
 
-    tabpfn = TabPFNClassifier(
-        base_path=base_path,
-        device=device,
-        model_string=checkpoint_name,
-        wandb_run_id=wandb_run_id,
-        N_ensemble_configurations=n_ensemble_configurations,
-        preprocess_transforms=list(preprocess_transforms),
-        batch_size_inference=batch_size_inference,
-        sample_order_permutation=sample_order_permutation,
-        fla_cache_chunk_size=fla_cache_chunk_size,
-    )
+    resolved_runner = runner or model_config.get("runner")
+    if resolved_runner is None:
+        resolved_runner = "evaluation_cli_baseline" if "baseline_name" in model_config else "tabpfn"
+    if resolved_runner == "evaluation_cli_baseline":
+        available_baselines = {
+            model.name: model
+            for model in get_baselines(n_jobs=n_jobs, random_state=random_state)
+        }
+        available = ", ".join(sorted(available_baselines))
+        baseline_name = model_config.get("baseline_name")
+        if baseline_name is None:
+            raise KeyError(
+                "Missing required key 'baseline_name' for baseline runner. "
+                f"Available baselines: {available}"
+            )
+        if baseline_name not in available_baselines:
+            raise KeyError(
+                f"Unknown baseline '{baseline_name}'. Available baselines: {available}"
+            )
+        return evaluate_on_openml(
+            models=[available_baselines[baseline_name]],
+            model_names=[baseline_name],
+            dataset_ids=dataset_ids,
+            max_samples=max_samples,
+            max_features=max_features,
+            max_classes=max_classes,
+            n_splits=n_splits,
+            verbose=verbose,
+        )
 
-    models = [tabpfn] if only_tabpfn else [
-        tabpfn,
-        *get_baselines(n_jobs=n_jobs)
-    ]
-    model_names = [model.name for model in models]
+    if resolved_runner != "tabpfn":
+        raise ValueError(
+            "Unknown runner "
+            f"{resolved_runner!r}. Expected 'tabpfn' or 'evaluation_cli_baseline'."
+        )
 
-    results = evaluate_on_openml(
-        models=models,
-        model_names=model_names,
-        dataset_ids=dataset_ids,
-        max_samples=max_samples,
-        max_features=max_features,
-        max_classes=max_classes,
-        n_splits=n_splits,
-        verbose=verbose,
-    )
     TabPFNClassifier.models_in_memory.clear()
+    try:
+        tabpfn = TabPFNClassifier(
+            base_path=str(model_config.get("base_path", ".")),
+            device=device,
+            model_string=str(model_config.get("checkpoint_name", "checkpoint.pt")),
+            wandb_run_id=model_config.get("wandb_run_id"),
+            N_ensemble_configurations=n_ensemble_configurations,
+            preprocess_transforms=list(preprocess_transforms),
+            batch_size_inference=batch_size_inference,
+            sample_order_permutation=sample_order_permutation,
+            fla_cache_chunk_size=fla_cache_chunk_size,
+        )
+        return evaluate_on_openml(
+            models=[tabpfn],
+            model_names=[tabpfn.name],
+            dataset_ids=dataset_ids,
+            max_samples=max_samples,
+            max_features=max_features,
+            max_classes=max_classes,
+            n_splits=n_splits,
+            verbose=verbose,
+        )
+    finally:
+        TabPFNClassifier.models_in_memory.clear()
 
-    return results
+
+def get_available_baseline_names(
+    *,
+    n_jobs: int = 4,
+    random_state: int = 42,
+) -> list[str]:
+    return [model.name for model in get_baselines(n_jobs=n_jobs, random_state=random_state)]
+
+
+def build_available_baseline_model_configs(
+    *,
+    candidates: dict[str, dict[str, Any]],
+    n_jobs: int = 4,
+    random_state: int = 42,
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Filter candidate baseline configs to those available in the current env."""
+    available_baseline_names = set(
+        get_available_baseline_names(n_jobs=n_jobs, random_state=random_state)
+    )
+
+    selected: dict[str, dict[str, Any]] = {}
+    skipped: list[str] = []
+    for model_name, model_config in candidates.items():
+        baseline_name = str(model_config.get("baseline_name", model_name))
+        if baseline_name not in available_baseline_names:
+            skipped.append(model_name)
+            continue
+
+        cfg = model_config.copy()
+        cfg["baseline_name"] = baseline_name
+        cfg["n_jobs"] = int(n_jobs)
+        cfg["random_state"] = int(random_state)
+        selected[model_name] = cfg
+
+    return selected, sorted(skipped)
+
+
+def run_real_world_model_from_config(
+    *,
+    model_config: dict[str, Any],
+    experiment: dict[str, Any],
+    device: str | None = None,
+    baseline_n_jobs: int = 4,
+    baseline_random_state: int = 42,
+    verbose: bool = True,
+):
+    """Run one real-world model entry from the notebook model-config structure."""
+    exp = {
+        key: experiment[key]
+        for key in (
+            "benchmark",
+            "max_samples",
+            "max_features",
+            "max_classes",
+            "n_splits",
+            "batch_size_inference",
+            "n_ensemble_configurations",
+            "preprocess_transforms",
+            "sample_order_permutation",
+            "fla_cache_chunk_size",
+        )
+    }
+    return run_evaluation(
+        model_config=model_config,
+        device=device,
+        n_jobs=int(model_config.get("n_jobs", baseline_n_jobs)),
+        random_state=int(model_config.get("random_state", baseline_random_state)),
+        verbose=verbose,
+        **exp,
+    )
 
 
 def print_results_summary(results, title: str = "Aggregated Results Across All Datasets"):
@@ -185,7 +288,6 @@ def main():
     parser.add_argument("--max_classes", type=int, default=10)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--output", type=str, default=None)
-    parser.add_argument("--only_tabpfn", action="store_true", help="Evaluate only TabPFN")
     parser.add_argument("--n_jobs", type=int, default=4, help="Number of CPU cores for baseline models (RF, XGBoost)")
     parser.add_argument("--batch_size_inference", type=int, default=32, help="Batch size for TabPFN inference. Lower values reduce memory usage without affecting accuracy")
     parser.add_argument("--n_ensemble_configurations", type=int, default=32, help="Number of ensemble configurations for TabPFN")
@@ -197,17 +299,19 @@ def main():
     if args.model_path is None and args.wandb_run_id is None:
         raise ValueError("Provide --model_path or --wandb_run_id.")
 
-    results = run_tabpfn_evaluation(
-        base_path=args.model_path,
-        checkpoint_name=args.checkpoint_name,
-        wandb_run_id=args.wandb_run_id,
+    results = run_evaluation(
+        runner="tabpfn",
+        model_config={
+            "base_path": args.model_path if args.model_path is not None else ".",
+            "checkpoint_name": args.checkpoint_name,
+            "wandb_run_id": args.wandb_run_id,
+        },
         device=args.device,
         benchmark=args.benchmark,
         max_samples=args.max_samples,
         max_features=args.max_features,
         max_classes=args.max_classes,
         n_splits=args.n_splits,
-        only_tabpfn=args.only_tabpfn,
         n_jobs=args.n_jobs,
         batch_size_inference=args.batch_size_inference,
         n_ensemble_configurations=args.n_ensemble_configurations,
