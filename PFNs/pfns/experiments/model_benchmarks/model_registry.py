@@ -11,18 +11,6 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer_with_feature_attention": {
         "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default)
     },
-    "Non-Causal_TabPFN": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd",
-        "eval_mode": "forward",
-    },
-    "Causal_TabPFN": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz",
-        "eval_mode": "forward",
-    },
-    "Test_To_Train_Only_TabPFN": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
-        "eval_mode": "forward",
-    },
 }
 
 KDA_MODELS: dict[str, dict[str, Any]] = {
@@ -184,33 +172,64 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     "GLA_Combined_Embbedding_Single_Target": {
         "wandb_run_id": "fla_models/runs/4vsqz1ee",
     },
-    # "Mamba2_Combined_Embbedding_Single_Target": {
-    #     "wandb_run_id": "fla_models/runs/o9e00w17", #ep151
-    # },
+    "Mamba2_Combined_Embbedding_Single_Target": {
+        "wandb_run_id": "fla_models/runs/o9e00w17",
+    },
     "DeltaNet_Combined_Embbedding_Single_Target": {
         "wandb_run_id": "fla_models/runs/ob2m9rth",
     },
-    # "DeltaNet_Interleaved_Embbedding_Multi_Target": {
-    #     "wandb_run_id": "fla_models/runs/v18qqmbk",   # obsession 0, ep 110
-    # },
-    "Gated_DeltaNet_Combined_Embbedding_Single_Target": {
-        "wandb_run_id": "fla_models/runs/g7rh5nv9", 
+    "DeltaNet_Interleaved_Embbedding_Multi_Target": {
+        "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
     },
-    # "Gated_DeltaNet_Interleaved_Embbedding_Multi_Target": {
-    #     "wandb_run_id": "fla_models/runs/cpcq82tx",  # obsession 0, ep 110
-    # },
+    "Gated_DeltaNet_Combined_Embbedding_Single_Target": {
+        "wandb_run_id": "fla_models/runs/g7rh5nv9",  
+    },
+    "Gated_DeltaNet_Interleaved_Embbedding_Multi_Target": {
+        "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
+    },
     "KDA_Combined_Embbedding_Single_Target": {
         "wandb_run_id": "fla_models/runs/qaskm2mq",
     },
     # "Rebased_Combined_Embbedding_Single_Target": {
     #     "wandb_run_id": "fla_models/runs/ntkpkzf3", #ep 121
     # },
-    # "Transformer_Combined_Embbedding_Single_Target": {
-    #     "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b", #ep 166
-    # },
+    "Transformer_Combined_Embbedding_Single_Target": {
+        "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b", #ep 166
+    },
     "Linear_Attention_Combined_Embbedding_Single_Target": {
         "wandb_run_id": "linear_attention/runs/ygawhsm9",
     },
+}
+
+TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
+    "Non-Causal_TabPFN": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd",
+        "eval_mode": "forward",
+    },
+    # "Non-Causal_TabPFN_with_RoPE": {
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/ifvo080r", # second run with fp32 as comparison: 0xi6dcvc
+    #     "eval_mode": "forward",
+    # },
+    # "Non-Causal_TabPFN_interleaved_with_RoPE": {
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/jzs97xfg",
+    #     "eval_mode": "forward",
+    # },
+    "Causal_TabPFN": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz",
+        "eval_mode": "forward",
+    },
+    "Test_To_Train_Only_TabPFN": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
+        "eval_mode": "forward",
+    },
+    # "Causal_All_TabPFN": {
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
+    #     "eval_mode": "forward",
+    # },
+    # "Causal_All_TabPFN_interleaved_with_RoPE": {
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/m74u7psh",
+    #     "eval_mode": "forward",
+    # },
 }
 
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
@@ -225,6 +244,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "linear_attention": LINEAR_ATTENTION_MODELS,
     "rebased": REBASED_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
+    "transformer_masked": TRANSFORMER_MASKED_MODELS,
     "other": OTHER_MODELS,
 }
 
@@ -238,6 +258,7 @@ __all__ = [
     "LINEAR_ATTENTION_MODELS",
     "REBASED_MODELS",
     "EQUAL_PARAMS_MODELS",
+    "TRANSFORMER_MASKED_MODELS",
     "OTHER_MODELS",
     "MODEL_FAMILIES",
     "get_models_from_names",
