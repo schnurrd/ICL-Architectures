@@ -90,10 +90,10 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
     #     "wandb_run_id": "fla_models/runs/gzag08i9", # 1.5x hidden size, 1.5x heads, currently running
     #     "eval_autocast_dtype": "bf16",
     # },
-    # "DeltaNet_Cached_Hidden_Size_640_Heads_8": {
-    #     "wandb_run_id": "fla_models/runs/j8k7t7nb", # 2x hidden size, 2x heads, currently running
-    #     "eval_autocast_dtype": "bf16",
-    # },
+    "DeltaNet_Cached_Hidden_Size_640_Heads_8": {
+        "wandb_run_id": "fla_models/runs/j8k7t7nb", # 2x hidden size, 2x heads, currently running
+        "eval_autocast_dtype": "bf16",
+    },
     "DeltaNet_Cached_Hidden_Size_640": {
         "wandb_run_id": "fla_models/runs/niytteb0", # 2x hidden size,
         "eval_autocast_dtype": "bf16",
@@ -236,6 +236,15 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
 
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
 
+BASELINE_MODEL_NAMES: tuple[str, ...] = (
+    "RandomForest",
+    "XGBoost",
+    "CatBoost",
+    "TabICL",
+    "TabPFNv2.5",
+    "TabFlex",
+)
+
 MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "transformer": TRANSFORMER_MODELS,
     "kda": KDA_MODELS,
@@ -250,29 +259,12 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "other": OTHER_MODELS,
 }
 
-__all__ = [
-    "TRANSFORMER_MODELS",
-    "KDA_MODELS",
-    "GLA_MODELS",
-    "DELTANET_MODELS",
-    "GATED_DELTANET_MODELS",
-    "MAMBA2_MODELS",
-    "LINEAR_ATTENTION_MODELS",
-    "REBASED_MODELS",
-    "EQUAL_PARAMS_MODELS",
-    "TRANSFORMER_MASKED_MODELS",
-    "OTHER_MODELS",
-    "MODEL_FAMILIES",
-    "get_models_from_names",
-    "get_models_from_families",
-    "get_all_models",
-    "get_autocast_models_from_registry",
-    "get_forward_models_from_registry",
-]
-
-
 def _copy_models(models: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {name: config.copy() for name, config in models.items()}
+
+
+def get_baseline_models() -> dict[str, dict[str, Any]]:
+    return {name: {} for name in BASELINE_MODEL_NAMES}
 
 
 def get_models_from_names(model_names: Iterable[str]) -> dict[str, dict[str, Any]]:

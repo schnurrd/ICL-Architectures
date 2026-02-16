@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pfns.train
 from pfns.run_evaluation_cli import (
-    run_tabpfn_evaluation,
+    run_evaluation,
     print_results_summary,
     summarize_results,
     compute_per_dataset_stats,
@@ -412,17 +412,20 @@ def main():
     )
 
     try:
-        results = run_tabpfn_evaluation(
-            base_path=base_path,
-            checkpoint_name=checkpoint_name,
+        results = run_evaluation(
+            runner="tabpfn",
+            model_config={
+                "base_path": base_path,
+                "checkpoint_name": checkpoint_name,
+            },
             device=eval_device,
             benchmark="opencc",
             max_samples=1000,
             max_features=20,
             max_classes=10,
             n_splits=5,
-            only_tabpfn=True,
             n_jobs=4,
+            random_state=42,
             batch_size_inference=16,
             n_ensemble_configurations=32,
             preprocess_transforms=["none", "power", "robust"],
