@@ -65,18 +65,4 @@ Exception: `causal_all` keeps full-sequence keys and applies a full autoregressi
   4  | . . .   |     . .
 ```
 
-## 4. `causal_all`
-**Train:** Autoregressive. **Test:** Also autoregressive over both Train and prior Test.
-```text
-       Keys (Train)  (Test)
-       0 1 2   |     3 4
-     +---------+-----------
-  0  | . x x   |     x x
-  1  | . . x   |     x x
-  2  | . . .   |     x x
-     +---------+-----------
-  3  | . . .   |     . x
-  4  | . . .   |     . .
-```
-
 > **Feature Attention:** Orthogonal to Item Masking. Features attend fully to each other within the visible items defined above.

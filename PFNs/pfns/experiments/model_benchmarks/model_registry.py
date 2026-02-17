@@ -82,10 +82,10 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
     #     "wandb_run_id": "fla_models/runs/zbcsdb9h", # Twice the number of layers, currently running
     #     "eval_autocast_dtype": "bf16",
     # },
-    # "DeltaNet_Cached_Hidden_Size_480": {
-    #     "wandb_run_id": "fla_models/runs/tr0jxu69", # 1.5x hidden size, currently running
-    #     "eval_autocast_dtype": "bf16",
-    # },
+    "DeltaNet_Cached_Hidden_Size_480": {
+        "wandb_run_id": "fla_models/runs/tr0jxu69", # 1.5x hidden size, currently running
+        "eval_autocast_dtype": "bf16",
+    },
     # "DeltaNet_Cached_Hidden_Size_480_Heads_6": {
     #     "wandb_run_id": "fla_models/runs/gzag08i9", # 1.5x hidden size, 1.5x heads, currently running
     #     "eval_autocast_dtype": "bf16",
@@ -192,11 +192,11 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     "KDA_Combined_Embbedding_Single_Target": {
         "wandb_run_id": "fla_models/runs/qaskm2mq",
     },
-    # "Rebased_Combined_Embbedding_Single_Target": {
-    #     "wandb_run_id": "fla_models/runs/ntkpkzf3", #ep 121
-    # },
+    "Rebased_Combined_Embbedding_Single_Target": {
+        "wandb_run_id": "fla_models/runs/ntkpkzf3", 
+    },
     "Transformer_Combined_Embbedding_Single_Target": {
-        "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b", #ep 166
+        "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
     },
     "Linear_Attention_Combined_Embbedding_Single_Target": {
         "wandb_run_id": "linear_attention/runs/ygawhsm9",
@@ -204,22 +204,30 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
 }
 
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
-    "Non-Causal_TabPFN": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl
+    "Non-Causal_TabPFN_fp16": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/d4mttnjl", # fp16 version d4mttnjl, fp 32 version pmcn4brd
+        "eval_mode": "forward",
+    },
+    "Non-Causal_TabPFN_fp32": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
         "eval_mode": "forward",
     },
     # "Non-Causal_TabPFN_with_RoPE": {
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/ifvo080r", # second run with fp32 as comparison: 0xi6dcvc
     #     "eval_mode": "forward",
     # },
-    # "Non-Causal_TabPFN_interleaved_with_RoPE": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/jzs97xfg",
-    #     "eval_mode": "forward",
-    # },
-    "Causal_TabPFN": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz",
+    "Non-Causal_TabPFN_interleaved_with_RoPE": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/jzs97xfg",
         "eval_mode": "forward",
     },
+    "Causal_Train_Only_TabPFN": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
+        "eval_mode": "forward",
+    },
+    # "Causal_Train_Only_TabPFN_interleaved_with_RoPE": {
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/7yzlf15p", 
+    #     "eval_mode": "forward",
+    # },
     "Test_To_Train_Only_TabPFN": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
         "eval_mode": "forward",
