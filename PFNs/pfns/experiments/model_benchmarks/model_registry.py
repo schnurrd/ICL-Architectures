@@ -272,7 +272,13 @@ def _copy_models(models: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]
 
 
 def get_baseline_models() -> dict[str, dict[str, Any]]:
-    return {name: {} for name in BASELINE_MODEL_NAMES}
+    return {
+        name: {
+            "runner": "baseline",
+            "baseline_name": name,
+        }
+        for name in BASELINE_MODEL_NAMES
+    }
 
 
 def get_models_from_names(model_names: Iterable[str]) -> dict[str, dict[str, Any]]:

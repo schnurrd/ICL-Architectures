@@ -32,7 +32,6 @@ def _cat_list(categorical_feats) -> list[int]:
         return []
     return list(sorted({int(i) for i in categorical_feats}))
 
-
 def _encode_labels(y):
     classes, y_mapped = np.unique(y, return_inverse=True)
     return classes, y_mapped.astype(np.int64)
@@ -47,7 +46,6 @@ def to_dataframe(X: np.ndarray, categorical_features: list[int]) -> pd.DataFrame
 
     for j in cat:
         col = df.iloc[:, j]
-
         if pd.api.types.is_float_dtype(col):
             s = col.where(col.isna(), col.round().astype("Int64"))
             df[df.columns[j]] = s.astype("category")
@@ -307,29 +305,27 @@ class TabFlexBaseline:
         self.random_state = random_state
         self.model = None
         self.classes_: np.ndarray | None = None
-        self.cat_: list[int] | None = None
-    
+
     def fit(self, X: np.ndarray, y: np.ndarray, categorical_feats=None):
         self.classes_, y_mapped = _encode_labels(y)
-        self.cat_ = _cat_list(categorical_feats)
-        X_df = to_dataframe(X, self.cat_)
+        X_df = pd.DataFrame(np.asarray(X, dtype=np.float32))
         self.model = TabFlex()
         with _ignore_tabflex_warnings(), _ignore_sklearn_futurewarnings(), _suppress_output():
             self.model.fit(X_df, y_mapped)
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        if self.model is None or self.classes_ is None or self.cat_ is None:
+        if self.model is None or self.classes_ is None:
             raise RuntimeError("Call fit() first.")
-        X_df = to_dataframe(X, self.cat_)
+        X_df = pd.DataFrame(np.asarray(X, dtype=np.float32))
         with _ignore_tabflex_warnings(), _ignore_sklearn_futurewarnings(), _suppress_output():
             y_pred = np.asarray(self.model.predict(X_df)).astype(np.int64)
         return self.classes_[y_pred]
-    
+
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        if self.model is None or self.cat_ is None:
+        if self.model is None:
             raise RuntimeError("Call fit() first.")
-        X_df = to_dataframe(X, self.cat_)
+        X_df = pd.DataFrame(np.asarray(X, dtype=np.float32))
         with _ignore_tabflex_warnings(), _ignore_sklearn_futurewarnings(), _suppress_output():
             return np.asarray(self.model.model.predict_proba(X_df))
 

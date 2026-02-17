@@ -145,6 +145,7 @@ def build_available_baseline_model_configs(
             continue
 
         cfg = model_config.copy()
+        cfg["runner"] = "baseline"
         cfg["baseline_name"] = baseline_name
         cfg["n_jobs"] = int(n_jobs)
         cfg["random_state"] = int(random_state)

@@ -428,7 +428,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self,
         device: str = "cpu",
         base_path: Path | None = None,
-        model_string: str = "",
+        model_string: str = "checkpoint.pt",
         wandb_run_id: str | None = None,
         N_ensemble_configurations: int = 3,
         no_preprocess_mode: bool = False,
@@ -481,9 +481,14 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         :param fla_cache_chunk_size: If set and the model uses an FLA backbone, chunk size for cache-backed inference.
         """
         if wandb_run_id is not None:
+            destination_path = (
+                os.path.join(str(base_path), model_string)
+                if base_path is not None
+                else None
+            )
             model_path = download_model_from_wandb(
                 wandb_run_id,
-                destination_path=str(base_path) if base_path is not None else None,
+                destination_path=destination_path,
             )
             base_path = os.path.dirname(model_path)
             model_string = os.path.basename(model_path)
