@@ -66,9 +66,27 @@ def parse_cli_args():
             f"(default: {EXPERIMENT['num_repetitions']})."
         ),
     )
+    parser.add_argument(
+        "--num-runs",
+        "--num-nodes",
+        dest="num_runs",
+        type=int,
+        default=1,
+        help="Total number of parallel runs/shards.",
+    )
+    parser.add_argument(
+        "--run-index",
+        type=int,
+        default=0,
+        help="This run's shard index in [0, num_runs-1].",
+    )
     args, _ = parser.parse_known_args()
     if args.num_repetitions < 1:
         parser.error("--num-repetitions must be >= 1")
+    if args.num_runs < 1:
+        parser.error("--num-runs must be >= 1")
+    if args.run_index < 0 or args.run_index >= args.num_runs:
+        parser.error("--run-index must be in [0, num-runs-1]")
     return args
 
 
@@ -81,6 +99,9 @@ OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 print(f"Results are stored in: {OUTPUT_ROOT}")
 print(f"Available model families: {list(MODEL_FAMILIES)}")
 print(f"Configured repetitions: {EXPERIMENT['num_repetitions']}")
+print(
+    f"Sharding config: num_runs={CLI_ARGS.num_runs}, run_index={CLI_ARGS.run_index}"
+)
 
 # Example by family:
 # models_to_compare = get_models_from_families(["transformer"])
@@ -95,11 +116,19 @@ print(f"Configured repetitions: {EXPERIMENT['num_repetitions']}")
 #     "Linear_Attention",
 # ])
 
-models_to_compare = get_all_models()
+all_models_to_compare = get_all_models()
+all_model_items = list(all_models_to_compare.items())
+models_to_compare = dict(all_model_items[CLI_ARGS.run_index::CLI_ARGS.num_runs])
+if not models_to_compare:
+    print(
+        f"No models assigned to run_index={CLI_ARGS.run_index} "
+        f"with num_runs={CLI_ARGS.num_runs} (total models={len(all_model_items)})."
+    )
+    raise SystemExit(0)
 
-
-device = get_default_device()
+device = str(get_default_device())
 print(f"Using device: {device}")
+print(f"Models assigned to this run: {len(models_to_compare)} / {len(all_model_items)}")
 
 expected_run_metadata = build_seq_len_run_metadata(experiment=EXPERIMENT, device=device)
 
@@ -108,6 +137,7 @@ model_bundle_paths = {}
 
 if WANDB["enabled"] and WANDB["overwrite"]:
     print("WANDB overwrite=True: skipping per-model download and forcing rerun.")
+
 
 for model_name, model_config in models_to_compare.items():
     model_hash = single_model_hash(

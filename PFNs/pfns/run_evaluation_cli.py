@@ -200,19 +200,28 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
 
     summary = summarize_results(results)
 
-    print("\nLaTeX table rows:")
+    print("\nLaTeX table:")
+    print("\\begin{table}[ht]")
+    print("\\centering")
+    print("\\begin{tabular}{lccccc}")
+    print("\\hline")
+    print("Model & Accuracy & ROC-AUC & LogLoss & ECE & Fit+Pred (s) \\\\")
+    print("\\hline")
     for model in summary.index:
         row = summary.loc[model]
-        acc_str = f"{row['accuracy_mean']:.4f} ± {row['accuracy_std']:.4f}"
-        auc_str = f"{row['roc_auc_mean']:.4f} ± {row['roc_auc_std']:.4f}"
-        ll_str = f"{row['log_loss_mean']:.4f} ± {row['log_loss_std']:.4f}"
-        ece_str = f"{row['ece_mean']:.4f} ± {row['ece_std']:.4f}"
-        fit_str = f"{row['fit_time_mean']:.2f}"
-        pred_str = f"{row['predict_time_mean']:.2f}"
+        model_latex = model.replace("_", "\\_")
+        acc_str = f"{row['accuracy_mean']:.4f} $\\pm$ {row['accuracy_std']:.4f}"
+        auc_str = f"{row['roc_auc_mean']:.4f} $\\pm$ {row['roc_auc_std']:.4f}"
+        ll_str = f"{row['log_loss_mean']:.4f} $\\pm$ {row['log_loss_std']:.4f}"
+        ece_str = f"{row['ece_mean']:.4f} $\\pm$ {row['ece_std']:.4f}"
+        fit_pred_str = f"{(row['fit_time_mean'] + row['predict_time_mean']):.2f}"
         print(
-            f"{model} & {acc_str} & {auc_str} & {ll_str} & {ece_str} "
-            f"& {fit_str} & {pred_str} \\\\"
+            f"{model_latex} & {acc_str} & {auc_str} & {ll_str} & {ece_str} "
+            f"& {fit_pred_str} \\\\"
         )
+    print("\\hline")
+    print("\\end{tabular}")
+    print("\\end{table}")
 
     print("\nFormatted Table:")
     header = (

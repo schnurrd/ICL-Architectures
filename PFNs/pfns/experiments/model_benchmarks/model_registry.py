@@ -78,18 +78,18 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/q67a0x92", 
         "eval_autocast_dtype": "bf16",
     },
-    # "DeltaNet_Cached_Layers_24": {
-    #     "wandb_run_id": "fla_models/runs/zbcsdb9h", # Twice the number of layers, currently running
-    #     "eval_autocast_dtype": "bf16",
-    # },
+    "DeltaNet_Cached_Layers_24": {
+        "wandb_run_id": "fla_models/runs/zbcsdb9h", # Twice the number of layers, currently running
+        "eval_autocast_dtype": "bf16",
+    },
     "DeltaNet_Cached_Hidden_Size_480": {
         "wandb_run_id": "fla_models/runs/tr0jxu69", # 1.5x hidden size, currently running
         "eval_autocast_dtype": "bf16",
     },
-    # "DeltaNet_Cached_Hidden_Size_480_Heads_6": {
-    #     "wandb_run_id": "fla_models/runs/gzag08i9", # 1.5x hidden size, 1.5x heads, currently running
-    #     "eval_autocast_dtype": "bf16",
-    # },
+    "DeltaNet_Cached_Hidden_Size_480_Heads_6": {
+        "wandb_run_id": "fla_models/runs/gzag08i9", # 1.5x hidden size, 1.5x heads, currently running
+        "eval_autocast_dtype": "bf16",
+    },
     "DeltaNet_Cached_Hidden_Size_640_Heads_8": {
         "wandb_run_id": "fla_models/runs/j8k7t7nb", # 2x hidden size, 2x heads, currently running
         "eval_autocast_dtype": "bf16",
@@ -169,36 +169,36 @@ REBASED_MODELS: dict[str, dict[str, Any]] = {
 }
 
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
-    "GLA_Combined_Embbedding_Single_Target": {
+    "GLA_Comb_ST": {
         "wandb_run_id": "fla_models/runs/4vsqz1ee",
     },
-    "Mamba2_Combined_Embbedding_Single_Target": {
+    "Mamba2_Comb_ST": {
         "wandb_run_id": "fla_models/runs/o9e00w17",
     },
-    "DeltaNet_Combined_Embbedding_Single_Target": {
+    "DeltaNet_Comb_ST": {
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Interleaved_Embbedding_Multi_Target": {
+    "DeltaNet_Int_MT": {
         "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
         "eval_autocast_dtype": "bf16",
     },
-    "Gated_DeltaNet_Combined_Embbedding_Single_Target": {
+    "Gated_DeltaNet_Comb_ST": {
         "wandb_run_id": "fla_models/runs/g7rh5nv9",  
     },
-    "Gated_DeltaNet_Interleaved_Embbedding_Multi_Target": {
+    "Gated_DeltaNet_Int_MT": {
         "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
     },
-    "KDA_Combined_Embbedding_Single_Target": {
+    "KDA_Comb_ST": {
         "wandb_run_id": "fla_models/runs/qaskm2mq",
     },
-    "Rebased_Combined_Embbedding_Single_Target": {
+    "Rebased_Comb_ST": {
         "wandb_run_id": "fla_models/runs/ntkpkzf3", 
     },
-    "Transformer_Combined_Embbedding_Single_Target": {
+    "Transformer_Comb_ST": {
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
     },
-    "Linear_Attention_Combined_Embbedding_Single_Target": {
+    "Linear_Attention_Comb_ST": {
         "wandb_run_id": "linear_attention/runs/ygawhsm9",
     },
 }
@@ -212,10 +212,10 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
         "eval_mode": "forward",
     },
-    # "Non-Causal_TabPFN_with_RoPE": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/ifvo080r", # second run with fp32 as comparison: 0xi6dcvc
-    #     "eval_mode": "forward",
-    # },
+    "Non-Causal_TabPFN_with_RoPE": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/ifvo080r", # second run with fp32 as comparison: 0xi6dcvc
+        "eval_mode": "forward",
+    },
     "Non-Causal_TabPFN_interleaved_with_RoPE": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/jzs97xfg",
         "eval_mode": "forward",
@@ -224,22 +224,22 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
         "eval_mode": "forward",
     },
-    # "Causal_Train_Only_TabPFN_interleaved_with_RoPE": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/7yzlf15p", 
-    #     "eval_mode": "forward",
-    # },
+    "Causal_Train_Only_TabPFN_interleaved_with_RoPE": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/7yzlf15p", 
+        "eval_mode": "forward",
+    },
     "Test_To_Train_Only_TabPFN": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
         "eval_mode": "forward",
     },
-    # "Causal_All_TabPFN": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
-    #     "eval_mode": "forward",
-    # },
-    # "Causal_All_TabPFN_interleaved_with_RoPE": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/m74u7psh",
-    #     "eval_mode": "forward",
-    # },
+    "Causal_All_TabPFN": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
+        "eval_mode": "forward",
+    },
+    "Causal_All_TabPFN_interleaved_with_RoPE": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/m74u7psh",
+        "eval_mode": "forward",
+    },
 }
 
 OTHER_MODELS: dict[str, dict[str, Any]] = {}

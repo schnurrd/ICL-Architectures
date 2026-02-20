@@ -88,7 +88,6 @@ def make_model_artifact_name(
     """Build deterministic per-model artifact names."""
     return (
         f"{sanitize_wandb_artifact_component(base_artifact_name)}_"
-        f"{sanitize_wandb_artifact_component(model_name)}_"
         f"{sanitize_wandb_artifact_component(model_hash)}"
     )
 
