@@ -25,6 +25,7 @@ from pfns.experiments.model_benchmarks.model_registry import (
     get_models_from_names,
 )
 from pfns.experiments.model_benchmarks.workflows import (
+    alias_single_model_seq_len_bundle,
     build_seq_len_run_metadata,
     merge_seq_len_model_results,
     seq_len_bundle_is_compatible,
@@ -162,18 +163,28 @@ for model_name, model_config in models_to_compare.items():
         )
         if cached_bundle_path is not None:
             cached_bundle = load_results_bundle(cached_bundle_path)
-            if seq_len_bundle_is_compatible(
+            cached_bundle_for_model, aliased_from = alias_single_model_seq_len_bundle(
                 cached_bundle,
+                target_model_name=model_name,
+            )
+            if seq_len_bundle_is_compatible(
+                cached_bundle_for_model,
                 model_name=model_name,
                 expected_metadata=expected_run_metadata,
             ):
                 results_by_model[model_name] = single_model_seq_len_result_from_bundle(
-                    cached_bundle,
+                    cached_bundle_for_model,
                     model_name=model_name,
                 )
                 model_bundle_paths[model_name] = cached_bundle_path
                 reused_cached_result = True
-                print(f"Reused cached W&B result for {model_name}: {cached_bundle_path}")
+                if aliased_from is not None and aliased_from != model_name:
+                    print(
+                        f"Reused cached W&B result for {model_name} from stored label "
+                        f"{aliased_from}: {cached_bundle_path}"
+                    )
+                else:
+                    print(f"Reused cached W&B result for {model_name}: {cached_bundle_path}")
             else:
                 print(
                     f"Cached artifact for {model_name} is incompatible with "

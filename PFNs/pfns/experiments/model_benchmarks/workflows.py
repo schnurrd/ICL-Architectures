@@ -86,6 +86,65 @@ def real_world_bundle_is_compatible(
     return bool(has_model and metadata_ok)
 
 
+def alias_single_model_seq_len_bundle(
+    bundle: dict[str, Any],
+    *,
+    target_model_name: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Remap one-model seq-len bundle keys to `target_model_name` when possible."""
+    metric_table = bundle.get("metric_table", {})
+    timing_table = bundle.get("timing_table", {})
+    if target_model_name in metric_table and target_model_name in timing_table:
+        return bundle, None
+
+    source_candidates = sorted(set(metric_table) & set(timing_table))
+    if len(source_candidates) != 1:
+        return bundle, None
+
+    source_name = source_candidates[0]
+    aliased_bundle = dict(bundle)
+    aliased_bundle["metric_table"] = {
+        target_model_name: metric_table[source_name],
+    }
+    aliased_bundle["timing_table"] = {
+        target_model_name: timing_table[source_name],
+    }
+    aliased_bundle["memory_table"] = {
+        target_model_name: bundle.get("memory_table", {}).get(source_name, {}),
+    }
+    aliased_bundle["oom_errors"] = {
+        target_model_name: bundle.get("oom_errors", {}).get(source_name, []),
+    }
+    return aliased_bundle, source_name
+
+
+def alias_real_world_dataframe_bundle(
+    bundle: dict[str, Any],
+    *,
+    target_model_name: str,
+) -> tuple[dict[str, Any], set[str]]:
+    """Copy dataframe bundle and rewrite any `model` columns to `target_model_name`."""
+    dataframes = bundle.get("dataframes", {})
+    aliased_dataframes: dict[str, pd.DataFrame] = {}
+    source_labels: set[str] = set()
+
+    for key, frame in dataframes.items():
+        frame_copy = frame.copy()
+        if "model" in frame_copy.columns:
+            source_labels.update(set(frame_copy["model"].astype(str).unique()))
+            frame_copy["model"] = target_model_name
+        aliased_dataframes[key] = frame_copy
+
+    aliased_bundle = {
+        **bundle,
+        "dataframes": aliased_dataframes,
+    }
+
+    if source_labels == {target_model_name}:
+        source_labels = set()
+    return aliased_bundle, source_labels
+
+
 def single_model_seq_len_result_from_bundle(
     bundle: dict[str, Any],
     *,
