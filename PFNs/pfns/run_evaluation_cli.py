@@ -205,7 +205,10 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
     print("\\centering")
     print("\\begin{tabular}{lccccc}")
     print("\\hline")
-    print("Model & Accuracy & ROC-AUC & LogLoss & ECE & Fit+Pred (s) \\\\")
+    print(
+        "Model & Accuracy $\\uparrow$ & ROC-AUC $\\uparrow$ & CE $\\downarrow$ "
+        "& ECE $\\downarrow$ & Fit+Pred (s) $\\downarrow$ \\\\"
+    )
     print("\\hline")
     for model in summary.index:
         row = summary.loc[model]
@@ -225,8 +228,8 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
 
     print("\nFormatted Table:")
     header = (
-        f"{'Model':<20} {'Accuracy':>18} {'ROC-AUC':>18} {'LogLoss':>18} "
-        f"{'ECE':>18} {'Fit (s)':>14} {'Pred (s)':>14}"
+        f"{'Model':<20} {'Accuracy ↑':>18} {'ROC-AUC ↑':>18} {'CE ↓':>18} "
+        f"{'ECE ↓':>18} {'Fit (s) ↓':>14} {'Pred (s) ↓':>14}"
     )
     subheader = (
         f"{'':20} {'mean ± std':>18} {'mean ± std':>18} {'mean ± std':>18} "
