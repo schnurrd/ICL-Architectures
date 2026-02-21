@@ -47,12 +47,12 @@ def test_item_attention_mask_test_to_train_only():
 
 
 def test_item_attention_mask_causal_train_only():
-    layer = _build_layer_with_mask_mode("causal_train_only")
+    layer = _build_layer_with_mask_mode("Comb_ST")
     seq_len = 5
     train_len = 3
 
     mask = layer._build_item_attention_mask(
-        mode="causal_train_only",
+        mode="Comb_ST",
         seq_len_q=seq_len,
         seq_len_kv=seq_len,
         train_len=train_len,
@@ -69,12 +69,12 @@ def test_item_attention_mask_causal_train_only():
 
 
 def test_item_attention_mask_causal_all():
-    layer = _build_layer_with_mask_mode("causal_all")
+    layer = _build_layer_with_mask_mode("Comb_MT")
     seq_len = 5
     train_len = 3
 
     mask = layer._build_item_attention_mask(
-        mode="causal_all",
+        mode="Comb_MT",
         seq_len_q=seq_len,
         seq_len_kv=seq_len,
         train_len=train_len,
@@ -97,36 +97,36 @@ def test_item_attention_rope_pairwise_forward_runs():
 
 @torch.inference_mode()
 def test_causal_all_remaps_to_causal_train_only_in_eval_with_cache():
-    layer_causal_all = _build_layer_with_mask_mode("causal_all")
-    layer_causal_train_only = _build_layer_with_mask_mode("causal_train_only")
-    layer_causal_train_only.load_state_dict(layer_causal_all.state_dict())
-    layer_causal_all.eval()
-    layer_causal_train_only.eval()
+    layer_comb_mt = _build_layer_with_mask_mode("Comb_MT")
+    layer_comb_st = _build_layer_with_mask_mode("Comb_ST")
+    layer_comb_st.load_state_dict(layer_comb_mt.state_dict())
+    layer_comb_mt.eval()
+    layer_comb_st.eval()
 
     state = torch.randn(2, 10, 1, 4)
     interleaved_train_len = 6  # e.g. (x1,y1,x2,y2,x3,y3) in the train part
 
-    out_causal_all = layer_causal_all(
+    out_comb_mt = layer_comb_mt(
         state,
         single_eval_pos=interleaved_train_len,
         cache_trainset_representation=True,
     )
-    out_causal_train_only = layer_causal_train_only(
+    out_comb_st = layer_comb_st(
         state,
         single_eval_pos=interleaved_train_len,
         cache_trainset_representation=True,
     )
-    torch.testing.assert_close(out_causal_all, out_causal_train_only)
+    torch.testing.assert_close(out_comb_mt, out_comb_st)
 
     test_state = state[:, interleaved_train_len:]
-    out_causal_all_cached = layer_causal_all(
+    out_comb_mt_cached = layer_comb_mt(
         test_state,
         single_eval_pos=0,
         cache_trainset_representation=True,
     )
-    out_causal_train_only_cached = layer_causal_train_only(
+    out_comb_st_cached = layer_comb_st(
         test_state,
         single_eval_pos=0,
         cache_trainset_representation=True,
     )
-    torch.testing.assert_close(out_causal_all_cached, out_causal_train_only_cached)
+    torch.testing.assert_close(out_comb_mt_cached, out_comb_st_cached)

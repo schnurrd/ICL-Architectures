@@ -126,7 +126,7 @@ def build_fla_backbone(
     model_type: str,
     *,
     size: str = "small",
-    sequence_mode: str = "cached",
+    sequence_mode: str = "Comb_ST",
     cache_chunk_size: int | None = None,
     train: bool = False,
 ) -> torch.nn.Module:

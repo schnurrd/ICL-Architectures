@@ -188,7 +188,7 @@ def test_incontext_fit_predict_matches_forward_fla(model_type: str) -> None:
     backbone = build_fla_backbone(
         model_type,
         size="equivalence",
-        sequence_mode="cached",
+        sequence_mode="Comb_ST",
         train=False,
     )
     model = _build_model(

@@ -8,6 +8,10 @@ from __future__ import annotations
 import torch
 
 from pfns.model.backbones import FLABackboneConfig
+from pfns.model.mode_normalization import (
+    CANONICAL_SEQUENCE_MODES,
+    resolve_sequence_mode,
+)
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
@@ -26,7 +30,7 @@ GLOBAL_TRAIN_MIXED_PRECISION = (
 )
 GLOBAL_TRAIN_MIXED_PRECISION_DTYPE = "bf16" if GLOBAL_TRAIN_MIXED_PRECISION else "fp32"
 GLOBAL_AGGREGATE_K_GRADIENTS = 2
-SUPPORTED_SEQUENCE_MODES = {"cached", "causal", "teacher_forcing"}
+SUPPORTED_SEQUENCE_MODES = CANONICAL_SEQUENCE_MODES
 
 TRAINING_PROFILES = {
     "low": (6.0e-5, 1000),
@@ -82,7 +86,7 @@ MODEL_SETTINGS = {
     #    - RTX 5070 (bf16):   7it/s, 4.3GB (single target); 5it/s (single target, interleaved); 15it/s, 2GB (multi target); 8it/s, 2.9GiB (multi target, interleaved)
     #    - RTX 2080Ti:  it/s
     #    - A5000:        it/s 
-    "mamba2": { # cached currently not patched
+    "mamba2": { 
         "emsize": 320,
         "config_kwargs": {
             "hidden_size": 320, # default 2048
@@ -151,9 +155,8 @@ def _normalize_model_type(model_type: str) -> str:
     return model_type
 
 
-def _normalize_sequence_mode(sequence_mode: str) -> str:
-    sequence_mode = sequence_mode.strip().lower().replace("-", "_")
-    return sequence_mode
+def _resolve_sequence_mode(sequence_mode: str) -> str:
+    return resolve_sequence_mode(sequence_mode)
 
 
 def get_config(
@@ -161,7 +164,7 @@ def get_config(
     # Architecture
     model_type: str = "kda",
     hidden_size: int | None = None,
-    sequence_mode: str = "cached",
+    sequence_mode: str = "Comb_ST",
     # Training
     training_setup: str = "high",
     batch_size: int | None = None,
@@ -172,7 +175,6 @@ def get_config(
     # Model options
     cache_chunk_size: int | None = None,
     use_short_conv: bool | None = None,
-    interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = "subspace",
     config_kwargs_override: dict[str, object] | None = None,
 ) -> MainConfig:
@@ -184,16 +186,12 @@ def get_config(
         feature_positional_embedding = None
 
     model_type = _normalize_model_type(model_type)
-    sequence_mode = _normalize_sequence_mode(sequence_mode)
+    sequence_mode = _resolve_sequence_mode(sequence_mode)
     training_setup = training_setup.strip().lower()
 
     if model_type not in MODEL_SETTINGS:
         raise ValueError(
             f"Unknown model_type {model_type!r}. Available: {sorted(MODEL_SETTINGS)}"
-        )
-    if sequence_mode not in SUPPORTED_SEQUENCE_MODES:
-        raise ValueError(
-            f"Unknown sequence_mode {sequence_mode!r}. Available: ['cached', 'causal', 'teacher_forcing']"
         )
     if training_setup not in TRAINING_PROFILES:
         raise ValueError(
@@ -300,7 +298,7 @@ def get_config(
         features_per_group=20,
         attention_between_features=False,
         feature_positional_embedding=feature_positional_embedding,
-        interleave_x_y_pairs=interleave_x_y_pairs,
+        interleave_x_y_pairs=sequence_mode.startswith("Int"),
     )
 
     optimizer = OptimizerConfig(
@@ -325,7 +323,6 @@ def get_config(
         f"lr{resolved_lr:g}" if lr else None,
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
-        "interleaved" if interleave_x_y_pairs else None,
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
         f"fpe_{feature_positional_embedding}",
     ]

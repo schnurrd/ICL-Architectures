@@ -14,144 +14,144 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
 }
 
 KDA_MODELS: dict[str, dict[str, Any]] = {
-    "KDA_causal": {
+    "KDA_Comb_MT": {
         "wandb_run_id": "fla_models/runs/ksmv5v4z",
     },
-    "KDA_causal_interleaved": {
+    "KDA_Int_MT": {
         "wandb_run_id": "fla_models/runs/cneseyi0",
     },
-    "KDA_cached": {
+    "KDA_Comb_ST": {
         "wandb_run_id": "fla_models/runs/qkruutrt",
     },
-    "KDA_cached_short_conv": {
+    "KDA_Comb_ST_short_conv": {
         "wandb_run_id": "fla_models/runs/z7xfal1g",
     },
-    "KDA_cached_interleaved": {
+    "KDA_Int_ST": {
         "wandb_run_id": "fla_models/runs/63y7kc9k",
     },
-    "KDA_cached_interleaved_short_conv": {
+    "KDA_Int_ST_short_conv": {
         "wandb_run_id": "fla_models/runs/q8l1av2n",
     },
-    "KDA_teacher_forcing": {
+    "KDA_Int_MT": {
         "wandb_run_id": "fla_models/runs/a925p05n",
     },
-    "KDA_teacher_forcing_short_conv": {
+    "KDA_Int_MT_short_conv": {
         "wandb_run_id": "fla_models/runs/ab6fuy9c",
     },
 }
 
 GLA_MODELS: dict[str, dict[str, Any]] = {
-    "GLA_Causal": {
+    "GLA_Comb_MT": {
         "wandb_run_id": "fla_models/runs/yzw9d63f",
     },
-    "GLA_Causal_interleaved": {
+    "GLA_Int_MT": {
         "wandb_run_id": "fla_models/runs/ztdpate1",
     },
-    "GLA_Cached": {
+    "GLA_Comb_ST": {
         "wandb_run_id": "fla_models/runs/g1ul5lyc",
     },
-    "GLA_Cached_short_conv": {
+    "GLA_Comb_ST_short_conv": {
         "wandb_run_id": "fla_models/runs/47u2og3a",
     },
-    "GLA_Cached_interleaved": {
+    "GLA_Int_ST": {
         "wandb_run_id": "fla_models/runs/9k1i2f9z",
     },
-    "GLA_Cached_interleaved_short_conv": {
+    "GLA_Int_ST_short_conv": {
         "wandb_run_id": "fla_models/runs/do2tv5da",
     },
-    "GLA_Teacher_Forcing": {
+    "GLA_Int_MT": {
         "wandb_run_id": "fla_models/runs/4f224z23",
     },
     
 }
 
 DELTANET_MODELS: dict[str, dict[str, Any]] = {
-    "DeltaNet_Causal": {
+    "DeltaNet_Comb_MT": {
         "wandb_run_id": "fla_models/runs/iwaesmvk",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Causal_short_conv": {
+    "DeltaNet_Comb_MT_short_conv": {
         "wandb_run_id": "fla_models/runs/j735qiit",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached": {
+    "DeltaNet_Comb_ST": {
         "wandb_run_id": "fla_models/runs/q67a0x92", 
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached_Layers_24": {
+    "DeltaNet_Comb_ST_Layers_24": {
         "wandb_run_id": "fla_models/runs/zbcsdb9h", # Twice the number of layers, currently running
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached_Hidden_Size_480": {
+    "DeltaNet_Comb_ST_Hidden_Size_480": {
         "wandb_run_id": "fla_models/runs/tr0jxu69", # 1.5x hidden size, currently running
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached_Hidden_Size_480_Heads_6": {
+    "DeltaNet_Comb_ST_Hidden_Size_480_Heads_6": {
         "wandb_run_id": "fla_models/runs/gzag08i9", # 1.5x hidden size, 1.5x heads, currently running
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached_Hidden_Size_640_Heads_8": {
+    "DeltaNet_Comb_ST_Hidden_Size_640_Heads_8": {
         "wandb_run_id": "fla_models/runs/j8k7t7nb", # 2x hidden size, 2x heads, currently running
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached_Hidden_Size_640": {
+    "DeltaNet_Comb_ST_Hidden_Size_640": {
         "wandb_run_id": "fla_models/runs/niytteb0", # 2x hidden size,
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached_short_conv": {
+    "DeltaNet_Comb_ST_short_conv": {
         "wandb_run_id": "fla_models/runs/nluohjzz", # second model nluohjzz
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached_Interleaved": {
+    "DeltaNet_Int_ST": {
         "wandb_run_id": "fla_models/runs/0r7dz00x",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Cached_Interleaved_short_conv": {
+    "DeltaNet_Int_ST_short_conv": {
         "wandb_run_id": "fla_models/runs/9v4hbvug",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Teacher_Forcing": {
+    "DeltaNet_Int_MT": {
         "wandb_run_id": "fla_models/runs/alqp1bd2",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Teacher_Forcing_short_conv": {
+    "DeltaNet_Int_MT_short_conv": {
         "wandb_run_id": "fla_models/runs/fm8kzerj",
         "eval_autocast_dtype": "bf16",
     },
 }
 
 GATED_DELTANET_MODELS: dict[str, dict[str, Any]] = {
-    "Gated_DeltaNet_Causal": {
+    "Gated_DeltaNet_Comb_MT": {
         "wandb_run_id": "fla_models/runs/h5xhs15j",
     },
-    "Gated_DeltaNet_Cached": {
+    "Gated_DeltaNet_Comb_ST": {
         "wandb_run_id": "fla_models/runs/abi7ojxu",
     },
-    "Gated_DeltaNet_Cached_seq_len_2K": {
+    "Gated_DeltaNet_Comb_ST_seq_len_2K": {
         "wandb_run_id": "fla_models/runs/uah7zywj",
     },
-    "Gated_DeltaNet_Cached_seq_len_10K": {
+    "Gated_DeltaNet_Comb_ST_seq_len_10K": {
         "wandb_run_id": "fla_models/runs/9elhe2fw",
     },
-    "Gated_DeltaNet_Cached_Interleaved": {
+    "Gated_DeltaNet_Int_ST": {
         "wandb_run_id": "fla_models/runs/6temwkyx",
     },
-    "Gated_DeltaNet_Teacher_Forcing": {
+    "Gated_DeltaNet_Int_MT": {
         "wandb_run_id": "fla_models/runs/sjkv0db4",
     },
 }
 
 MAMBA2_MODELS: dict[str, dict[str, Any]] = {
-    "Mamba2_Causal": {
+    "Mamba2_Comb_MT": {
         "wandb_run_id": "fla_models/runs/wccjh2ye",
     },
-    "Mamba2_Cached": {
+    "Mamba2_Comb_ST": {
         "wandb_run_id": "fla_models/runs/sac363pc",
     },
-    "Mamba2_Cached_Interleaved": {
+    "Mamba2_Int_ST": {
         "wandb_run_id": "fla_models/runs/kfgmmqu5",
     },
-    "Mamba2_Teacher_Forcing": {
+    "Mamba2_Int_MT": {
         "wandb_run_id": "fla_models/runs/gn5r8yj6",
     },
 }
@@ -179,16 +179,16 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Int_MT": {
-        "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
-        "eval_autocast_dtype": "bf16",
-    },
+    # "DeltaNet_Int_MT": {
+    #     "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
+    #     "eval_autocast_dtype": "bf16",
+    # },
     "Gated_DeltaNet_Comb_ST": {
         "wandb_run_id": "fla_models/runs/g7rh5nv9",  
     },
-    "Gated_DeltaNet_Int_MT": {
-        "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
-    },
+    # "Gated_DeltaNet_Int_MT": {
+    #     "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
+    # },
     "KDA_Comb_ST": {
         "wandb_run_id": "fla_models/runs/qaskm2mq",
     },
@@ -204,39 +204,39 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
 }
 
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
-    "Non-Causal_TabPFN_fp16": {
+    "Transformer_Non_Causal_fp16": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/d4mttnjl", # fp16 version d4mttnjl, fp 32 version pmcn4brd
         "eval_mode": "forward",
     },
-    "Non-Causal_TabPFN_fp32": {
+    "Transformer_Non_Causal_fp32": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
         "eval_mode": "forward",
     },
-    "Non-Causal_TabPFN_with_RoPE": {
+    "Transformer_Non_Causal_with_RoPE": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/ifvo080r", # second run with fp32 as comparison: 0xi6dcvc
         "eval_mode": "forward",
     },
-    "Non-Causal_TabPFN_interleaved_with_RoPE": {
+    "Transformer_Non_Causal_interleaved_with_RoPE": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/jzs97xfg",
         "eval_mode": "forward",
     },
-    "Causal_Train_Only_TabPFN": {
+    "Transformer_Comb_ST": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
         "eval_mode": "forward",
     },
-    "Causal_Train_Only_TabPFN_interleaved_with_RoPE": {
+    "Transformer_Int_ST_with_RoPE": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/7yzlf15p", 
         "eval_mode": "forward",
     },
-    "Test_To_Train_Only_TabPFN": {
+    "Transformer_Test_To_Train_Only": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
         "eval_mode": "forward",
     },
-    "Causal_All_TabPFN": {
+    "Transformer_Comb_MT": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
         "eval_mode": "forward",
     },
-    "Causal_All_TabPFN_interleaved_with_RoPE": {
+    "Transformer_Int_MT_with_RoPE": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/m74u7psh",
         "eval_mode": "forward",
     },

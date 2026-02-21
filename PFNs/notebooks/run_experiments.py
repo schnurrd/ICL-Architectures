@@ -109,10 +109,6 @@ print(
 
 # models_to_compare = get_models_from_names([
 #     "Softmax_Transformer",
-#     "KDA_causal",
-#     "GLA_Cached",
-#     "DeltaNet_Cached",
-#     "Gated_DeltaNet_Cached_seq_len_10K",
 #     "Rebased",
 #     "Linear_Attention",
 # ])
