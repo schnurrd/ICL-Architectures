@@ -15,7 +15,6 @@ import torch
 from torch import nn
 
 from fla.models import GLAConfig, GLAModel
-from fla.models import RetNetConfig, RetNetModel
 from fla.models import Mamba2Config, Mamba2Model
 from fla.models import KDAConfig, KDAModel
 from fla.models import DeltaNetConfig, DeltaNetModel
@@ -41,7 +40,6 @@ from pfns.model.tabular_model import LayerStack
 # Registry mapping model types to their config and model classes
 FLA_MODEL_REGISTRY = {
     "gla": (GLAConfig, GLAModel),
-    "retnet": (RetNetConfig, RetNetModel),
     "mamba2": (Mamba2Config, Mamba2Model),
     "kda": (KDAConfig, KDAModel),
     "deltanet": (DeltaNetConfig, DeltaNetModel),

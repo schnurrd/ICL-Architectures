@@ -17,9 +17,6 @@ KDA_MODELS: dict[str, dict[str, Any]] = {
     "KDA_Comb_MT": {
         "wandb_run_id": "fla_models/runs/ksmv5v4z",
     },
-    "KDA_Int_MT": {
-        "wandb_run_id": "fla_models/runs/cneseyi0",
-    },
     "KDA_Comb_ST": {
         "wandb_run_id": "fla_models/runs/qkruutrt",
     },
@@ -43,9 +40,6 @@ KDA_MODELS: dict[str, dict[str, Any]] = {
 GLA_MODELS: dict[str, dict[str, Any]] = {
     "GLA_Comb_MT": {
         "wandb_run_id": "fla_models/runs/yzw9d63f",
-    },
-    "GLA_Int_MT": {
-        "wandb_run_id": "fla_models/runs/ztdpate1",
     },
     "GLA_Comb_ST": {
         "wandb_run_id": "fla_models/runs/g1ul5lyc",

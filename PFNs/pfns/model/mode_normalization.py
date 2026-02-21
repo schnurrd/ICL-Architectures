@@ -1,23 +1,23 @@
 from __future__ import annotations
 
 CANONICAL_SEQUENCE_MODES = ("Comb_ST", "Int_ST", "Comb_MT", "Int_MT")
+CANONICAL_ITEM_ATTENTION_MASK_MODES = (
+    "test_to_train_only",
+    "Comb_ST", "Int_ST", "Comb_MT", "Int_MT",
+)
 
 SEQUENCE_MODE_ALIASES = {
     **{mode.lower(): mode for mode in CANONICAL_SEQUENCE_MODES},
     "cached": "Comb_ST",
     "cached_interleaved": "Int_ST",
     "causal": "Comb_MT",
-    "causal_interleaved": "Int_MT",
     "teacher_forcing": "Int_MT",
 }
 
 ITEM_ATTENTION_MASK_MODE_ALIASES = {
+    **{mode.lower(): mode for mode in CANONICAL_ITEM_ATTENTION_MASK_MODES},
     "causal_train_only": "Comb_ST",
     "causal_all": "Comb_MT",
-    "comb_st": "Comb_ST",
-    "int_st": "Int_ST",
-    "comb_mt": "Comb_MT",
-    "int_mt": "Int_MT",
 }
 
 
@@ -40,4 +40,12 @@ def resolve_item_attention_mask_mode(mask_mode: str | None) -> str | None:
     if not isinstance(mask_mode, str):
         return mask_mode
     normalized = normalize_mode_name(mask_mode)
-    return ITEM_ATTENTION_MASK_MODE_ALIASES.get(normalized, mask_mode)
+    canonical = ITEM_ATTENTION_MASK_MODE_ALIASES.get(normalized, normalized)
+    if canonical not in CANONICAL_ITEM_ATTENTION_MASK_MODES:
+        available = sorted(
+            {*CANONICAL_ITEM_ATTENTION_MASK_MODES, *ITEM_ATTENTION_MASK_MODE_ALIASES}
+        )
+        raise ValueError(
+            f"Unknown item_attention_mask_mode {mask_mode!r}. Available: {available}"
+        )
+    return canonical
