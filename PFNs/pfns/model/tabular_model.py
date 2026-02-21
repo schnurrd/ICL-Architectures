@@ -209,6 +209,11 @@ class TabularModel(nn.Module):
         self,
         state_dict,
         prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
     ):
         """Pre-hook to remap checkpoint keys for backward compatibility."""
         old_prefix = prefix + "transformer_layers.layers."

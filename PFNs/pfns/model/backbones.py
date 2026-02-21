@@ -323,7 +323,7 @@ class FLABackboneConfig(BackboneConfig):
 
     model_type: tp.Literal["gla", "mamba2", "kda", "deltanet", "gated_deltanet"] = "gla"
     config_kwargs: dict[str, tp.Any] | None = None
-    sequence_mode: str = "Comb_ST"
+    sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
 
     def __post_init__(self):
