@@ -332,7 +332,7 @@ class TabularModel(nn.Module):
         x_bf, _, _ = self._prepare_batch_first_inputs(test_x, None, None)
         assert x_bf is not None
 
-        embedded_input, current_context_len, should_interleave, use_teacher_forcing_mode = self._build_embedded_input(
+        embedded_input, current_context_len, should_interleave, Int_MT_mode = self._build_embedded_input(
             x_bf,
             None,
             # single_eval_pos=None signals pure test-time transform while
@@ -354,7 +354,7 @@ class TabularModel(nn.Module):
             encoder_out,
             current_context_len,
             should_interleave,
-            use_teacher_forcing_mode,
+            Int_MT_mode,
         )
         
         if not self.batch_first:
@@ -605,7 +605,7 @@ class TabularModel(nn.Module):
         # current_context_len is the length of the training data part
         if "main" in y and y["main"].shape[1] > current_context_len:
             if not (
-                (getattr(self.transformer_layers, "sequence_mode", None) == "teacher_forcing"
+                (getattr(self.transformer_layers, "sequence_mode", None) == "Int_MT"
                 and self.transformer_layers.training)
             ):
                 y["main"][:, current_context_len:] = torch.nan
@@ -659,10 +659,10 @@ class TabularModel(nn.Module):
             use_cached_embeddings=(cache_trainset_representation and single_eval_pos is None),
         )
 
-        use_teacher_forcing_mode = (
-            getattr(self.transformer_layers, "sequence_mode", None) == "teacher_forcing"
+        Int_MT_mode = (
+            getattr(self.transformer_layers, "sequence_mode", None) == "Int_MT"
         )
-        should_interleave = use_teacher_forcing_mode or self.interleave_x_y_pairs
+        should_interleave = Int_MT_mode or self.interleave_x_y_pairs
 
         if should_interleave and self.attention_between_features:
             raise ValueError(
@@ -682,7 +682,7 @@ class TabularModel(nn.Module):
             ), f"Only 1 feature per group supported for attention_between_features=False, got {embedded_x.shape=}."
 
             if should_interleave:
-                if self._is_transformer() or (use_teacher_forcing_mode and self.transformer_layers.training):
+                if self._is_transformer() or (Int_MT_mode and self.transformer_layers.training):
                     embedded_y_tokens = embedded_y.unsqueeze(2)
                     embedded_input = torch.stack(
                         (embedded_x, embedded_y_tokens), dim=2
@@ -760,18 +760,18 @@ class TabularModel(nn.Module):
             )
         del embedded_y, embedded_x
 
-        return embedded_input, current_context_len, should_interleave, use_teacher_forcing_mode
+        return embedded_input, current_context_len, should_interleave, Int_MT_mode
 
     def _decode_from_encoder_out(
         self,
         encoder_out: torch.Tensor,
         current_context_len: int,
         should_interleave: bool,
-        use_teacher_forcing_mode: bool,
+        Int_MT_mode: bool,
     ) -> dict[str, torch.Tensor]:
         if should_interleave:
             if self._is_transformer() or (
-                use_teacher_forcing_mode and self.transformer_layers.training
+                Int_MT_mode and self.transformer_layers.training
             ):
                 encoder_out = encoder_out[:, ::2]  # remove interleaved y tokens
             else:
@@ -836,7 +836,7 @@ class TabularModel(nn.Module):
                 single_eval_pos is not None
             ), "_forward expects single_eval_pos if not caching for pure inference or during training"
 
-        embedded_input, current_context_len, should_interleave, use_teacher_forcing_mode = self._build_embedded_input(
+        embedded_input, current_context_len, should_interleave, Int_MT_mode = self._build_embedded_input(
             x,
             y,
             single_eval_pos=single_eval_pos,
@@ -860,7 +860,7 @@ class TabularModel(nn.Module):
             encoder_out,
             current_context_len,
             should_interleave,
-            use_teacher_forcing_mode,
+            Int_MT_mode,
         )
 
     def add_embeddings(  # noqa: C901, PLR0912

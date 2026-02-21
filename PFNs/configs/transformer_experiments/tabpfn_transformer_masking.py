@@ -39,18 +39,31 @@ def get_config(
 
     max_num_classes = 10
     max_num_features = 20
-    
+
     if masking == "None":
         masking = None
-    
+
+    # for backward compatibility with older config versions
+    if masking in {"causal_train_only", "causal_all"}:
+        if masking == "causal_train_only":
+            masking = "Int_ST" if interleave_x_y_pairs else "Comb_ST"
+        else:
+            masking = "Int_MT" if interleave_x_y_pairs else "Comb_MT"
+
     assert masking in [
         "test_to_train_only",
-        "causal_train_only",
-        "causal_all",
+        "Comb_ST",
+        "Int_ST",
+        "Comb_MT",
+        "Int_MT",
         None,
     ], f"Invalid masking mode: {masking}"
-    
-    print(f"Using masking mode: {masking}")    
+
+    resolved_interleave_x_y_pairs = (
+        ("Int" in masking) if masking is not None else interleave_x_y_pairs
+    )
+
+    print(f"Using masking mode: {masking}")
 
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
     
@@ -107,7 +120,7 @@ def get_config(
         features_per_group=20,
         attention_between_features=False,
         feature_positional_embedding="subspace",
-        interleave_x_y_pairs=interleave_x_y_pairs,
+        interleave_x_y_pairs=resolved_interleave_x_y_pairs,
     )
 
     optimizer = OptimizerConfig(
@@ -117,8 +130,6 @@ def get_config(
     )
     
     wandb_name = f"transformer_modified_masking_{masking}"
-    if interleave_x_y_pairs:
-        wandb_name += "_interleaved"
     if max_seq_len is not None:
         wandb_name += f"_seq{resolved_max_seq_len}"
     if item_attention_use_rope:

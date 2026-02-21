@@ -15,7 +15,6 @@ import torch
 from torch import nn
 
 from fla.models import GLAConfig, GLAModel
-from fla.models import RetNetConfig, RetNetModel
 from fla.models import Mamba2Config, Mamba2Model
 from fla.models import KDAConfig, KDAModel
 from fla.models import DeltaNetConfig, DeltaNetModel
@@ -32,17 +31,25 @@ from pfns.model.fla_patches import (
 )
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.linear_attention import LinearAttention
+from pfns.model.mode_normalization import (
+    CANONICAL_SEQUENCE_MODES,
+    resolve_sequence_mode,
+)
 from pfns.model.rebased_linear_attention import RebasedLinearAttention
 from pfns.model.tabular_model import LayerStack
 # Registry mapping model types to their config and model classes
 FLA_MODEL_REGISTRY = {
     "gla": (GLAConfig, GLAModel),
-    "retnet": (RetNetConfig, RetNetModel),
     "mamba2": (Mamba2Config, Mamba2Model),
     "kda": (KDAConfig, KDAModel),
     "deltanet": (DeltaNetConfig, DeltaNetModel),
     "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
 }
+FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
+
+
+def _resolve_fla_sequence_mode(sequence_mode: str) -> str:
+    return resolve_sequence_mode(sequence_mode)
 
 
 class Backbone(nn.Module, ABC):
@@ -314,9 +321,9 @@ class TransformerBackbone(Backbone):
 class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
-    model_type: tp.Literal["gla", "retnet", "mamba2", "kda", "deltanet", "gated_deltanet"] = "gla"
+    model_type: tp.Literal["gla", "mamba2", "kda", "deltanet", "gated_deltanet"] = "gla"
     config_kwargs: dict[str, tp.Any] | None = None
-    sequence_mode: tp.Literal["cached", "causal", "teacher_forcing"] = "cached"
+    sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
 
     def __post_init__(self):
@@ -324,8 +331,11 @@ class FLABackboneConfig(BackboneConfig):
             raise ValueError(
                 f"Unknown model_type: {self.model_type}. Available: {list(FLA_MODEL_REGISTRY)}"
             )
-        if self.sequence_mode not in {"cached", "causal", "teacher_forcing"}:
-            raise ValueError(f"Unknown sequence_mode: {self.sequence_mode}")
+        object.__setattr__(
+            self,
+            "sequence_mode",
+            _resolve_fla_sequence_mode(self.sequence_mode),
+        )
 
     def create_backbone(self, ninp: int, attention_between_features: bool, **kwargs: tp.Any) -> "Backbone":
         ConfigClass, ModelClass = FLA_MODEL_REGISTRY[self.model_type]
@@ -357,15 +367,13 @@ class FLABackbone(Backbone):
     def __init__(
         self,
         fla_model: nn.Module,
-        sequence_mode: tp.Literal["cached", "causal", "teacher_forcing"] = "cached",
+        sequence_mode: str = "Comb_ST",
         cache_chunk_size: int | None = None,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
-        self.sequence_mode = sequence_mode
+        self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
-        self._debug_cache = os.getenv("FLA_CACHE_DEBUG", "0") not in {"", "0", "false", "False"}
-        self._cache_debugged = False
 
     @staticmethod
     def _summarize_cache(cache_params: tp.Any) -> str:
@@ -624,9 +632,6 @@ class FLABackbone(Backbone):
             # Store cache_position_start as fallback for direct _run_fla calls (bypassing incontext_fit)
             if cache_params is not None and not hasattr(cache_params, "_cache_position_start"):
                 cache_params._cache_position_start = x.size(1)
-            if self._debug_cache and cache_params is not None and not self._cache_debugged:
-                print(f"[FLA cache] {self._summarize_cache(cache_params)}")
-                self._cache_debugged = True
         return last_hidden_state, cache_params
 
     def _patch_contexts(
@@ -775,7 +780,7 @@ class FLABackbone(Backbone):
 
         train_len = min(single_eval_pos, seq_len)
     
-        if self.sequence_mode == "cached" or not self.training: # during eval, always use cached mode
+        if self.sequence_mode in {"Comb_ST", "Int_ST"} or not self.training:
             train_x = x_batched[:, :train_len]
             test_x = x_batched[:, train_len:]
 

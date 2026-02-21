@@ -11,6 +11,7 @@ import torch
 
 from pfns.model.layer_norm import LayerNorm
 from pfns.model.mlp import MLP
+from pfns.model.mode_normalization import resolve_item_attention_mask_mode
 from pfns.model.multi_head_attention import MultiHeadAttention
 from torch import nn
 from torch.nn.modules.transformer import Module, Tensor
@@ -86,8 +87,8 @@ class PerFeatureLayer(Module):
             precomputed_kv: Precomputed key-value pairs for attention.
             item_attention_mask_mode:
                 Optional mask mode applied to attention between items.
-                Supported: "test_to_train_only", "causal_train_only",
-                "causal_all".
+                Supported: "test_to_train_only", "Comb_ST", "Int_ST", "Comb_MT", 
+                "Int_MT", "None"
             item_attention_use_rope:
                 Whether to apply rotary positional embedding (RoPE) to item attention.
                 This affects only attention between items, not between features.
@@ -106,12 +107,16 @@ class PerFeatureLayer(Module):
                 "Cannot use both multiquery_item_attention_for_test_set"
                 "and multiquery_item_attention",
             )
+        
+        item_attention_mask_mode = resolve_item_attention_mask_mode(
+            item_attention_mask_mode
+        )
         if (
-            item_attention_mask_mode == "causal_all"
+            item_attention_mask_mode == "Comb_MT"
             and multiquery_item_attention_for_test_set
         ):
             raise ValueError(
-                "item_attention_mask_mode='causal_all' is not supported with "
+                "item_attention_mask_mode='Comb_MT' is not supported with "
                 "multiquery_item_attention_for_test_set=True."
             )
 
@@ -248,7 +253,7 @@ class PerFeatureLayer(Module):
                     torch.zeros(1, device=device, dtype=dtype),
                     mask[~train_q],
                 )
-        elif mode == "causal_train_only":
+        elif mode == "Comb_ST" or mode == "Int_ST":
             assert train_len > 0, "train_len must be > 0 for item attention masking."
             mask = torch.full(
                 (seq_len_q, seq_len_kv),
@@ -271,7 +276,7 @@ class PerFeatureLayer(Module):
                     torch.zeros(1, device=device, dtype=dtype),
                     mask[~train_q],
                 )
-        elif mode == "causal_all":
+        elif mode == "Comb_MT" or mode == "Int_MT":
             mask = torch.where(
                 k_pos.unsqueeze(0) <= q_pos.unsqueeze(1),
                 torch.zeros(1, device=device, dtype=dtype),
@@ -328,14 +333,18 @@ class PerFeatureLayer(Module):
         if single_eval_pos is None:
             single_eval_pos = 0
         effective_mask_mode = self.item_attention_mask_mode
-        if not self.training and effective_mask_mode == "causal_all":
+        if (
+            not self.training
+            and isinstance(effective_mask_mode, str)
+            and effective_mask_mode.endswith("MT")
+        ):
             # In inference, avoid test-to-test leakage by falling back to the
             # standard train-only causal masking behavior.
-            effective_mask_mode = "causal_train_only"
+            effective_mask_mode = effective_mask_mode.replace("MT", "ST")
 
-        if effective_mask_mode == "causal_all" and cache_trainset_representation:
+        if effective_mask_mode in {"Comb_MT", "Int_MT"} and cache_trainset_representation:
             raise ValueError(
-                "item_attention_mask_mode='causal_all' is not supported with "
+                f"item_attention_mask_mode='{effective_mask_mode}' is not supported with "
                 "cache_trainset_representation=True. Use a single forward pass "
                 "over train+test for full causal masking."
             )
@@ -465,7 +474,7 @@ class PerFeatureLayer(Module):
             attention_src_x = None
             if att_src is not None:
                 attention_src_x = att_src.transpose(1, 2)
-            elif single_eval_pos and effective_mask_mode != "causal_all":
+            elif single_eval_pos and effective_mask_mode not in {"Comb_MT", "Int_MT"}:
                 attention_src_x = x[:, :single_eval_pos].transpose(1, 2)
 
             seq_len_q = x.shape[1]
