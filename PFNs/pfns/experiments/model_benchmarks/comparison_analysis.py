@@ -40,7 +40,7 @@ def summarize_diff(diff: pd.Series) -> dict[str, float | int | bool] | None:
         "ci95_low": ci95_low,
         "ci95_high": ci95_high,
         "n_pairs": n,
-        "ci95_excludes_zero": (ci95_low > 0.0) or (ci95_high < 0.0),
+        "ci95_excludes_zero": (n > 1) and ((ci95_low > 0.0) or (ci95_high < 0.0)),
     }
 
 
