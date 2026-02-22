@@ -1,22 +1,23 @@
 from __future__ import annotations
 
 from typing import Any, Iterable
-from pathlib import Path
-import importlib.util
-import io
-from contextlib import redirect_stdout
 
 import numpy as np
 import pandas as pd
+from scipy.stats import t as student_t
 
 
 def ci95_halfwidth(values: pd.Series) -> float:
+    """
+    Return two-sided 95% CI half-width for the sample mean.
+    """
     n = int(values.shape[0])
     if n <= 1:
         return 0.0
     std = float(values.std(ddof=1))
     sem = float(std / (n ** 0.5))
-    return float(1.96 * sem)
+    t_crit = float(student_t.ppf(0.975, df=n - 1))
+    return float(t_crit * sem)
 
 
 def summarize_diff(diff: pd.Series) -> dict[str, float | int | bool] | None:
@@ -409,53 +410,25 @@ def _resolve_target_labels(
     return list(dict.fromkeys(resolved))
 
 
-def _wide_to_hfawaz_perf_df(
-    *,
-    metric_wide_complete: pd.DataFrame,
-    target_labels: Iterable[str],
-    higher_better: bool,
-) -> pd.DataFrame:
-    """
-    Translate wide paired results to HFawaz expected long format.
-    """
-    target_labels = list(dict.fromkeys(target_labels))
-    wide = metric_wide_complete.reindex(columns=target_labels).dropna(subset=target_labels)
-    if wide.empty:
-        raise RuntimeError("No complete paired rows available to build CD-diagram inputs.")
-
-    score_wide = wide.astype(float).copy()
-    if not higher_better:
-        score_wide = -score_wide
-    score_wide = score_wide.reset_index(drop=True)
-    score_wide["dataset_name"] = np.arange(score_wide.shape[0], dtype=int)
-    return score_wide.melt(
-        id_vars="dataset_name",
-        value_vars=target_labels,
-        var_name="classifier_name",
-        value_name="accuracy",
-    )
-
-
-def _run_hfawaz_wilcoxon(
+def _run_wilcoxon_holm_from_wide(
     *,
     metric_wide_complete: pd.DataFrame,
     target_labels: Iterable[str],
     higher_better: bool,
     alpha: float,
 ) -> tuple[list[tuple[str, str, float, bool]], pd.Series, float]:
+    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import (
+        wilcoxon_holm_from_wide,
+    )
+
     target_labels = list(dict.fromkeys(target_labels))
-    hfawaz = _load_hfawaz_cd_module()
-    df_perf = _wide_to_hfawaz_perf_df(
+    p_values, average_ranks, n_pairs = wilcoxon_holm_from_wide(
         metric_wide_complete=metric_wide_complete,
         target_labels=target_labels,
         higher_better=higher_better,
+        alpha=alpha,
     )
-    with redirect_stdout(io.StringIO()):
-        p_values, average_ranks, max_nb_datasets = hfawaz.wilcoxon_holm(
-            alpha=alpha,
-            df_perf=df_perf,
-        )
-    return p_values, average_ranks.reindex(target_labels).dropna(), float(max_nb_datasets)
+    return p_values, average_ranks.reindex(target_labels).dropna(), float(n_pairs)
 
 
 def pairwise_wilcoxon_from_wide(
@@ -470,14 +443,14 @@ def pairwise_wilcoxon_from_wide(
     Pairwise Wilcoxon signed-rank tables from a wide paired table.
 
     `metric_wide_complete` must have one column per target label and complete paired rows.
-    Holm significance is taken directly from HFawaz `wilcoxon_holm`.
-    HFawaz does not expose Holm-adjusted p-values, so `p_holm` is returned as NaN.
+    Holm-adjusted significance is computed from raw pairwise Wilcoxon p-values.
+    Holm-adjusted p-values are not exposed, so `p_holm` is returned as NaN.
     """
     target_labels = _resolve_target_labels(
         target_labels=target_labels,
         target_settings=target_settings,
     )
-    p_values, average_ranks, max_nb_datasets = _run_hfawaz_wilcoxon(
+    p_values, average_ranks, max_nb_datasets = _run_wilcoxon_holm_from_wide(
         metric_wide_complete=metric_wide_complete,
         target_labels=target_labels,
         higher_better=higher_better,
@@ -513,35 +486,6 @@ def pairwise_wilcoxon_from_wide(
     }
 
 
-_HFAWAZ_MODULE = None
-
-
-def _load_hfawaz_cd_module():
-    """Load the local HFawaz CD-diagram script from notebooks/."""
-    global _HFAWAZ_MODULE
-    if _HFAWAZ_MODULE is not None:
-        return _HFAWAZ_MODULE
-
-    module_path = (
-        Path(__file__).resolve().parents[3]
-        / "notebooks"
-        / "cd-diagram_hfawaz.py"
-    )
-    if not module_path.exists():
-        raise RuntimeError(
-            f"Expected HFawaz CD-diagram file at {module_path}, but it was not found."
-        )
-
-    spec = importlib.util.spec_from_file_location("cd_diagram_hfawaz_local", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Failed to load module spec from {module_path}.")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _HFAWAZ_MODULE = module
-    return module
-
-
 def plot_wilcoxon_cd_diagram(
     *,
     target_labels: Iterable[str] | None = None,
@@ -555,9 +499,9 @@ def plot_wilcoxon_cd_diagram(
     comparison_label: str = "comparison",
 ):
     """
-    Draw a HFawaz-style CD diagram for arbitrary comparisons.
+    Draw a Wilcoxon/Holm CD diagram for arbitrary comparisons.
     """
-    import matplotlib.pyplot as plt
+    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import graph_ranks
 
     target_labels = _resolve_target_labels(
         target_labels=target_labels,
@@ -569,7 +513,7 @@ def plot_wilcoxon_cd_diagram(
             raise RuntimeError(
                 "Provide either (mean_ranks, sig_holm) or metric_wide_complete + higher_better."
             )
-        p_values, mean_ranks, _ = _run_hfawaz_wilcoxon(
+        p_values, mean_ranks, _ = _run_wilcoxon_holm_from_wide(
             metric_wide_complete=metric_wide_complete,
             target_labels=target_labels,
             higher_better=higher_better,
@@ -594,21 +538,15 @@ def plot_wilcoxon_cd_diagram(
     names = ordered.index.to_numpy()
     avranks = ordered.to_numpy(dtype=float).tolist()
 
-    hfawaz = _load_hfawaz_cd_module()
-    with redirect_stdout(io.StringIO()):
-        hfawaz.graph_ranks(
-            avranks=avranks,
-            names=names,
-            p_values=p_values,
-            cd=None,
-            reverse=True,
-            width=9,
-            textspace=1.5,
-            labels=False,
-        )
-    plt.title(title, y=0.93)
-    fig = plt.gcf()
-    ax = plt.gca()
+    fig, ax = graph_ranks(
+        avranks=avranks,
+        names=names,
+        p_values=p_values,
+        reverse=True,
+        width=9,
+        labels=False,
+    )
+    ax.set_title(title, y=0.98)
     ax.text(
         0.5,
         -0.10,
