@@ -390,110 +390,11 @@ def run_comparison_analysis(
         "figures": figures,
     }
 
-
-def _resolve_target_labels(
-    *,
-    target_labels: Iterable[str] | None = None,
-    target_settings: Iterable[str] | None = None,
-) -> list[str]:
-    """
-    Resolve generic `target_labels` and legacy `target_settings` arguments.
-    """
-    if target_labels is None and target_settings is None:
-        raise RuntimeError("Provide target_labels (or legacy target_settings).")
-    if target_labels is not None and target_settings is not None:
-        labels_a = list(dict.fromkeys(target_labels))
-        labels_b = list(dict.fromkeys(target_settings))
-        if labels_a != labels_b:
-            raise RuntimeError("Provide only one of target_labels/target_settings, or pass matching values.")
-    resolved = target_labels if target_labels is not None else target_settings
-    return list(dict.fromkeys(resolved))
-
-
-def _run_wilcoxon_holm_from_wide(
-    *,
-    metric_wide_complete: pd.DataFrame,
-    target_labels: Iterable[str],
-    higher_better: bool,
-    alpha: float,
-) -> tuple[list[tuple[str, str, float, bool]], pd.Series, float]:
-    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import (
-        wilcoxon_holm_from_wide,
-    )
-
-    target_labels = list(dict.fromkeys(target_labels))
-    p_values, average_ranks, n_pairs = wilcoxon_holm_from_wide(
-        metric_wide_complete=metric_wide_complete,
-        target_labels=target_labels,
-        higher_better=higher_better,
-        alpha=alpha,
-    )
-    return p_values, average_ranks.reindex(target_labels).dropna(), float(n_pairs)
-
-
-def pairwise_wilcoxon_from_wide(
-    *,
-    metric_wide_complete: pd.DataFrame,
-    target_labels: Iterable[str] | None = None,
-    target_settings: Iterable[str] | None = None,
-    higher_better: bool,
-    alpha: float = 0.05,
-) -> dict[str, pd.DataFrame]:
-    """
-    Pairwise Wilcoxon signed-rank tables from a wide paired table.
-
-    `metric_wide_complete` must have one column per target label and complete paired rows.
-    Holm-adjusted significance is computed from raw pairwise Wilcoxon p-values.
-    Holm-adjusted p-values are not exposed, so `p_holm` is returned as NaN.
-    """
-    target_labels = _resolve_target_labels(
-        target_labels=target_labels,
-        target_settings=target_settings,
-    )
-    p_values, average_ranks, max_nb_datasets = _run_wilcoxon_holm_from_wide(
-        metric_wide_complete=metric_wide_complete,
-        target_labels=target_labels,
-        higher_better=higher_better,
-        alpha=alpha,
-    )
-
-    raw_p = pd.DataFrame(np.nan, index=target_labels, columns=target_labels, dtype=float)
-    p_holm = pd.DataFrame(np.nan, index=target_labels, columns=target_labels, dtype=float)
-    sig_holm = pd.DataFrame(False, index=target_labels, columns=target_labels, dtype=bool)
-    stat_df = pd.DataFrame(np.nan, index=target_labels, columns=target_labels, dtype=float)
-    n_pairs = pd.DataFrame(
-        float(max_nb_datasets), index=target_labels, columns=target_labels, dtype=float
-    )
-    np.fill_diagonal(n_pairs.values, np.nan)
-
-    for label_a, label_b, p_raw, significant in p_values:
-        label_a = str(label_a)
-        label_b = str(label_b)
-        raw_val = float(p_raw)
-        sig_val = bool(significant)
-        raw_p.loc[label_a, label_b] = raw_val
-        raw_p.loc[label_b, label_a] = raw_val
-        sig_holm.loc[label_a, label_b] = sig_val
-        sig_holm.loc[label_b, label_a] = sig_val
-
-    return {
-        "p_raw": raw_p,
-        "p_holm": p_holm,
-        "sig_holm": sig_holm,
-        "n_pairs": n_pairs,
-        "statistic": stat_df,
-        "average_ranks": average_ranks,
-    }
-
-
 def plot_wilcoxon_cd_diagram(
     *,
-    target_labels: Iterable[str] | None = None,
-    target_settings: Iterable[str] | None = None,
-    metric_wide_complete: pd.DataFrame | None = None,
-    higher_better: bool | None = None,
-    mean_ranks: pd.Series | None = None,
-    sig_holm: pd.DataFrame | None = None,
+    target_labels: Iterable[str],
+    metric_wide_complete: pd.DataFrame,
+    higher_better: bool,
     alpha: float = 0.05,
     title: str = "Wilcoxon/Holm comparison diagram",
     comparison_label: str = "comparison",
@@ -501,40 +402,20 @@ def plot_wilcoxon_cd_diagram(
     """
     Draw a Wilcoxon/Holm CD diagram for arbitrary comparisons.
     """
-    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import graph_ranks
-
-    target_labels = _resolve_target_labels(
-        target_labels=target_labels,
-        target_settings=target_settings,
+    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import (
+        graph_ranks,
+        wilcoxon_holm_from_wide,
     )
-    p_values: list[tuple[str, str, float, bool]]
-    if mean_ranks is None or sig_holm is None:
-        if metric_wide_complete is None or higher_better is None:
-            raise RuntimeError(
-                "Provide either (mean_ranks, sig_holm) or metric_wide_complete + higher_better."
-            )
-        p_values, mean_ranks, _ = _run_wilcoxon_holm_from_wide(
-            metric_wide_complete=metric_wide_complete,
-            target_labels=target_labels,
-            higher_better=higher_better,
-            alpha=alpha,
-        )
-    else:
-        ordered = mean_ranks.loc[target_labels].sort_values(ascending=False)
-        names = ordered.index.tolist()
-        p_values = []
-        for i, name_a in enumerate(names):
-            for name_b in names[i + 1 :]:
-                p_values.append(
-                    (
-                        name_a,
-                        name_b,
-                        np.nan,
-                        bool(sig_holm.loc[name_a, name_b]),
-                    )
-                )
 
-    ordered = mean_ranks.loc[target_labels].sort_values(ascending=False)
+    target_labels = list(dict.fromkeys(target_labels))
+    p_values, mean_ranks, _ = wilcoxon_holm_from_wide(
+        metric_wide_complete=metric_wide_complete,
+        target_labels=target_labels,
+        higher_better=higher_better,
+        alpha=alpha,
+    )
+
+    ordered = mean_ranks.reindex(target_labels).dropna().sort_values(ascending=False)
     names = ordered.index.to_numpy()
     avranks = ordered.to_numpy(dtype=float).tolist()
 

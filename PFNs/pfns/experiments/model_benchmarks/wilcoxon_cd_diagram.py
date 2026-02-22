@@ -18,12 +18,20 @@ from scipy.stats import friedmanchisquare, wilcoxon
 PairwiseResult = tuple[str, str, float, bool]
 
 
-def _prepare_score_matrix(
+def wilcoxon_holm_from_wide(
     *,
     metric_wide_complete: pd.DataFrame,
     target_labels: Iterable[str],
     higher_better: bool,
-) -> tuple[pd.DataFrame, list[str]]:
+    alpha: float = 0.05,
+) -> tuple[list[PairwiseResult], pd.Series, float]:
+    """
+    Pairwise Wilcoxon tests with Holm correction from a wide paired table.
+
+    Returns `(p_values, average_ranks, n_pairs)` where:
+    - `p_values` entries are `(label_a, label_b, p_raw, significant_holm)`.
+    - `average_ranks` uses rank 1 as best and is sorted descending for CD plotting.
+    """
     labels = list(dict.fromkeys(target_labels))
     if len(labels) < 2:
         raise RuntimeError("Need at least two labels for Wilcoxon/Holm analysis.")
@@ -39,28 +47,7 @@ def _prepare_score_matrix(
     score_matrix = score_matrix.astype(float)
     if not higher_better:
         score_matrix = -score_matrix
-    return score_matrix.reset_index(drop=True), labels
-
-
-def wilcoxon_holm_from_wide(
-    *,
-    metric_wide_complete: pd.DataFrame,
-    target_labels: Iterable[str],
-    higher_better: bool,
-    alpha: float = 0.05,
-) -> tuple[list[PairwiseResult], pd.Series, float]:
-    """
-    Pairwise Wilcoxon tests with Holm correction from a wide paired table.
-
-    Returns `(p_values, average_ranks, n_pairs)` where:
-    - `p_values` entries are `(label_a, label_b, p_raw, significant_holm)`.
-    - `average_ranks` uses rank 1 as best and is sorted descending for CD plotting.
-    """
-    score_matrix, labels = _prepare_score_matrix(
-        metric_wide_complete=metric_wide_complete,
-        target_labels=target_labels,
-        higher_better=higher_better,
-    )
+    score_matrix = score_matrix.reset_index(drop=True)
 
     friedman_reject = True
     if len(labels) >= 3:

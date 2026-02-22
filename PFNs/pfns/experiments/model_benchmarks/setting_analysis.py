@@ -24,35 +24,39 @@ SETTING_METRIC_LABELS: dict[str, str] = {
     "ece": "ECE",
 }
 
+def get_setting_preprocess(
+    *, results_df: pd.DataFrame, target_settings: Iterable[str]
+) -> dict[str, Any]:
+    if results_df is None or results_df.empty:
+        raise RuntimeError("No results dataframe available for setting preprocessing.")
+    if "model" not in results_df.columns:
+        raise RuntimeError("Expected a 'model' column in results_df for setting preprocessing.")
 
-def parse_setting_model_name(model_name: str) -> dict[str, str] | None:
-    match = CANONICAL_SETTING_PATTERN.match(str(model_name))
-    if match is None:
-        return None
-    return {
-        "model": str(model_name),
-        "model_type": match.group("model_type"),
-        "setting": match.group("setting"),
-    }
+    target_settings = tuple(dict.fromkeys(target_settings))
 
-
-def extract_setting_model_meta(model_names: Iterable[str]) -> pd.DataFrame:
-    rows = [
-        parsed
-        for model_name in model_names
-        if (parsed := parse_setting_model_name(model_name)) is not None
-    ]
-    if not rows:
+    model_meta_rows: list[dict[str, str]] = []
+    for model_name in sorted(results_df["model"].astype(str).unique()):
+        match = CANONICAL_SETTING_PATTERN.match(model_name)
+        if match is None:
+            continue
+        model_meta_rows.append(
+            {
+                "model": model_name,
+                "model_type": match.group("model_type"),
+                "setting": match.group("setting"),
+            }
+        )
+    if not model_meta_rows:
         raise RuntimeError("No canonical Comb/Int setting models were found.")
-    return pd.DataFrame(rows)
+    model_meta = pd.DataFrame(model_meta_rows)
 
+    setting_results = results_df.merge(model_meta, on="model", how="inner")
+    setting_results = setting_results[
+        setting_results["setting"].isin(target_settings)
+    ].copy()
 
-def build_setting_presence(
-    *, model_type_setting_df: pd.DataFrame, target_settings: Iterable[str]
-) -> pd.DataFrame:
-    target_settings = list(dict.fromkeys(target_settings))
-    return (
-        model_type_setting_df[["model_type", "setting"]]
+    presence = (
+        setting_results[["model_type", "setting"]]
         .drop_duplicates()
         .assign(present=True)
         .pivot_table(
@@ -65,30 +69,6 @@ def build_setting_presence(
         )
         .reindex(columns=target_settings, fill_value=False)
         .sort_index()
-    )
-
-
-def get_setting_preprocess(
-    *, results_df: pd.DataFrame, target_settings: Iterable[str]
-) -> dict[str, Any]:
-    if results_df is None or results_df.empty:
-        raise RuntimeError("No results dataframe available for setting preprocessing.")
-    if "model" not in results_df.columns:
-        raise RuntimeError("Expected a 'model' column in results_df for setting preprocessing.")
-
-    target_settings = tuple(dict.fromkeys(target_settings))
-
-    model_meta = extract_setting_model_meta(
-        sorted(results_df["model"].astype(str).unique())
-    )
-    setting_results = results_df.merge(model_meta, on="model", how="inner")
-    setting_results = setting_results[
-        setting_results["setting"].isin(target_settings)
-    ].copy()
-
-    presence = build_setting_presence(
-        model_type_setting_df=setting_results[["model_type", "setting"]],
-        target_settings=target_settings,
     )
 
     eligible_model_types = presence.index[presence.all(axis=1)].tolist()
