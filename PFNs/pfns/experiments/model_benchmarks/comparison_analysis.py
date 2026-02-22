@@ -611,10 +611,10 @@ def plot_wilcoxon_cd_diagram(
     ax = plt.gca()
     ax.text(
         0.5,
-        -0.08,
+        -0.10,
         (
-            f"Black bars connect non-significant {comparison_label}s "
-            f"(Holm-adjusted Wilcoxon, p >= {alpha:.2f})."
+            f"Black bars: non-significant {comparison_label}s (Holm-adjusted Wilcoxon, p >= {alpha:.2f}). "
+            f"Ranks: 1 = best, {len(target_labels)} = worst."
         ),
         transform=ax.transAxes,
         ha="center",
