@@ -24,6 +24,7 @@ dependencies=[
         'gpytorch>=1.5.0',
         'configspace>=0.4.21',
         'tqdm>=4.62.1',
+        'scipy>=1.10.0',
         'matplotlib>=3.10.1',
         'seaborn>=0.13.0',
         'einops>=0.8.1',
