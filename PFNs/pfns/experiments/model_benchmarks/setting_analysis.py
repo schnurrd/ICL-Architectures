@@ -24,6 +24,7 @@ SETTING_METRIC_LABELS: dict[str, str] = {
     "ece": "ECE",
 }
 
+
 def parse_setting_model_name(model_name: str) -> dict[str, str] | None:
     match = CANONICAL_SETTING_PATTERN.match(str(model_name))
     if match is None:
@@ -67,39 +68,6 @@ def build_setting_presence(
     )
 
 
-def ci95_halfwidth(values: pd.Series) -> float:
-    n = int(values.shape[0])
-    if n <= 1:
-        return 0.0
-    std = float(values.std(ddof=1))
-    sem = float(std / (n ** 0.5))
-    return float(1.96 * sem)
-
-
-def summarize_diff(diff: pd.Series) -> dict[str, float | int | bool] | None:
-    n = int(diff.shape[0])
-    if n == 0:
-        return None
-
-    mean_gain = float(diff.mean())
-    std_gain = float(diff.std(ddof=1)) if n > 1 else 0.0 # sample standard deviation of gains
-    sem_gain = float(std_gain / (n ** 0.5)) if n > 1 else 0.0 # standard errror of mean gain
-    ci95 = ci95_halfwidth(diff)
-    ci95_low = mean_gain - ci95
-    ci95_high = mean_gain + ci95
-
-    return {
-        "mean_gain": mean_gain,
-        "std_gain": std_gain,
-        "sem_gain": sem_gain,
-        "ci95": ci95,
-        "ci95_low": ci95_low,
-        "ci95_high": ci95_high,
-        "n_pairs": n,
-        "ci95_excludes_zero": (ci95_low > 0.0) or (ci95_high < 0.0),
-    }
-
-
 def get_setting_preprocess(
     *, results_df: pd.DataFrame, target_settings: Iterable[str]
 ) -> dict[str, Any]:
@@ -109,7 +77,7 @@ def get_setting_preprocess(
         raise RuntimeError("Expected a 'model' column in results_df for setting preprocessing.")
 
     target_settings = tuple(dict.fromkeys(target_settings))
-    
+
     model_meta = extract_setting_model_meta(
         sorted(results_df["model"].astype(str).unique())
     )
@@ -133,7 +101,7 @@ def get_setting_preprocess(
         setting_results["model_type"].isin(eligible_model_types)
     ].copy()
 
-    payload = {
+    return {
         "target_settings": list(target_settings),
         "model_meta": model_meta,
         "setting_results": setting_results,
@@ -141,4 +109,3 @@ def get_setting_preprocess(
         "presence": presence,
         "eligible_model_types": eligible_model_types,
     }
-    return payload
