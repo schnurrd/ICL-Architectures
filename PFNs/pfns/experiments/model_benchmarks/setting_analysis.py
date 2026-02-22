@@ -38,6 +38,7 @@ def get_setting_preprocess(
     for model_name in sorted(results_df["model"].astype(str).unique()):
         match = CANONICAL_SETTING_PATTERN.match(model_name)
         if match is None:
+            print(f"model ignored: {model_name}")
             continue
         model_meta_rows.append(
             {
