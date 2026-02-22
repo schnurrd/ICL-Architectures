@@ -258,6 +258,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "rebased": REBASED_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
     "transformer_masked": TRANSFORMER_MASKED_MODELS,
+    "fla_models": {**KDA_MODELS, **GLA_MODELS, **DELTANET_MODELS, **GATED_DELTANET_MODELS, **MAMBA2_MODELS},
     "other": OTHER_MODELS,
 }
 
