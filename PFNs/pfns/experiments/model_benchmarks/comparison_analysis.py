@@ -432,7 +432,8 @@ def plot_wilcoxon_cd_diagram(
         0.5,
         -0.10,
         (
-            f"Black bars: non-significant {comparison_label}s (Holm-adjusted Wilcoxon, p >= {alpha:.2f}). "
+            f"Black bars: maximal non-significant {comparison_label} groups "
+            f"(Holm-adjusted Wilcoxon, p >= {alpha:.2f}). "
             f"Ranks: 1 = best, {len(target_labels)} = worst."
         ),
         transform=ax.transAxes,

@@ -9,13 +9,47 @@ This module is an original PFNs implementation.
 
 from collections.abc import Iterable, Sequence
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import friedmanchisquare, wilcoxon
 
 
 PairwiseResult = tuple[str, str, float, bool]
+
+
+def _find_maximal_cliques(
+    nodes: Sequence[str],
+    adjacency: dict[str, set[str]],
+) -> list[set[str]]:
+    """
+    Return maximal cliques for an undirected graph using Bron-Kerbosch.
+
+    Nodes are expected to be small in number for CD diagrams, so an exact search
+    is practical and avoids drawing redundant pairwise bars.
+    """
+    node_set = set(nodes)
+    cliques: list[set[str]] = []
+
+    def bron_kerbosch(r: set[str], p: set[str], x: set[str]) -> None:
+        if not p and not x:
+            if len(r) >= 2:
+                cliques.append(set(r))
+            return
+
+        pivot_candidates = p | x
+        pivot = max(pivot_candidates, key=lambda n: len(adjacency[n])) if pivot_candidates else None
+        if pivot is None:
+            expand = list(p)
+        else:
+            expand = list(p - adjacency[pivot])
+
+        for node in expand:
+            bron_kerbosch(r | {node}, p & adjacency[node], x & adjacency[node])
+            p.remove(node)
+            x.add(node)
+
+    bron_kerbosch(set(), node_set, set())
+    return cliques
 
 
 def wilcoxon_holm_from_wide(
@@ -98,13 +132,15 @@ def graph_ranks(
     """
     Draw a critical-difference style rank diagram.
 
-    Black horizontal bars encode pairwise comparisons that are not significant
-    after Holm correction.
+    Black horizontal bars encode maximal groups of models that are not
+    significantly different after Holm correction.
     """
     if len(avranks) != len(names):
         raise RuntimeError("avranks and names must have matching lengths.")
     if len(avranks) == 0:
         raise RuntimeError("Need at least one rank to draw the diagram.")
+
+    import matplotlib.pyplot as plt
 
     rank_values = np.asarray(avranks, dtype=np.float64)
     rank_names = np.asarray(names, dtype=object)
@@ -140,11 +176,15 @@ def graph_ranks(
     left_idx = order_by_x[:left_count]
     right_idx = order_by_x[left_count:]
 
-    n_intervals = sum(
-        1
-        for name_a, name_b, _p_raw, significant in p_values
-        if (not significant) and (name_a in rank_by_name) and (name_b in rank_by_name)
-    )
+    non_sig_adj: dict[str, set[str]] = {name: set() for name in rank_by_name}
+    for name_a, name_b, _p_raw, significant in p_values:
+        if significant or name_a not in rank_by_name or name_b not in rank_by_name:
+            continue
+        non_sig_adj[name_a].add(name_b)
+        non_sig_adj[name_b].add(name_a)
+
+    non_sig_cliques = _find_maximal_cliques(list(rank_by_name), non_sig_adj)
+    n_intervals = len(non_sig_cliques)
     fig_height = max(4.8, 2.6 + 0.34 * n_methods + 0.12 * min(n_intervals, 8))
     fig, ax = plt.subplots(figsize=(width, fig_height), dpi=130)
     ax.set_axis_off()
@@ -190,31 +230,32 @@ def graph_ranks(
         if labels:
             ax.text(x_rank, y - 0.018, f"{rank:.3f}", ha="center", va="top", fontsize=9, color="#444444")
 
-    raw_intervals: list[tuple[float, float]] = []
-    for name_a, name_b, _p_raw, significant in p_values:
-        if significant or name_a not in rank_by_name or name_b not in rank_by_name:
+    interval_tuples: list[tuple[float, float]] = []
+    for clique in non_sig_cliques:
+        x_values = [rank_to_x(rank_by_name[name]) for name in clique]
+        x_lo, x_hi = min(x_values), max(x_values)
+        # Skip degenerate bars when tied ranks map to the same x-coordinate.
+        if (x_hi - x_lo) <= 1e-8:
             continue
-        x_a = rank_to_x(rank_by_name[name_a])
-        x_b = rank_to_x(rank_by_name[name_b])
-        raw_intervals.append((min(x_a, x_b), max(x_a, x_b)))
+        interval_tuples.append((x_lo, x_hi))
 
-    unique_intervals = sorted(
-        set(raw_intervals),
-        key=lambda item: (item[1] - item[0], item[0]),
-        reverse=True,
+    interval_tuples = sorted(
+        set(interval_tuples),
+        key=lambda item: (item[0], -(item[1] - item[0])),
     )
+
     lane_right_edges: list[float] = []
     base_interval_y = rank_line_y - 0.055
     lane_gap = 0.034
     interval_pad = 0.004
-    for x_lo, x_hi in unique_intervals:
+    for x_lo, x_hi in interval_tuples:
         lane = 0
         while lane < len(lane_right_edges) and x_lo <= lane_right_edges[lane] + interval_pad:
             lane += 1
         if lane == len(lane_right_edges):
             lane_right_edges.append(x_hi)
         else:
-            lane_right_edges[lane] = x_hi
+            lane_right_edges[lane] = max(lane_right_edges[lane], x_hi)
         y = base_interval_y - lane * lane_gap
         ax.plot([x_lo, x_hi], [y, y], color="black", linewidth=5.0, solid_capstyle="butt")
 
