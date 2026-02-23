@@ -59,15 +59,7 @@ GLA_MODELS: dict[str, dict[str, Any]] = {
     
 }
 
-DELTANET_MODELS: dict[str, dict[str, Any]] = {
-    "DeltaNet_Comb_MT": {
-        "wandb_run_id": "fla_models/runs/iwaesmvk",
-        "eval_autocast_dtype": "bf16",
-    },
-    "DeltaNet_Comb_MT_short_conv": {
-        "wandb_run_id": "fla_models/runs/j735qiit",
-        "eval_autocast_dtype": "bf16",
-    },
+DELTANET_MODELS_SIZE_CHANGES: dict[str, dict[str, Any]] = {
     "DeltaNet_Comb_ST": {
         "wandb_run_id": "fla_models/runs/q67a0x92", 
         "eval_autocast_dtype": "bf16",
@@ -90,6 +82,21 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
     },
     "DeltaNet_Comb_ST_Hidden_Size_640": {
         "wandb_run_id": "fla_models/runs/niytteb0", # 2x hidden size,
+        "eval_autocast_dtype": "bf16",
+    },
+}
+
+DELTANET_MODELS: dict[str, dict[str, Any]] = {
+    "DeltaNet_Comb_MT": {
+        "wandb_run_id": "fla_models/runs/iwaesmvk",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Comb_MT_short_conv": {
+        "wandb_run_id": "fla_models/runs/j735qiit",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Comb_ST": {
+        "wandb_run_id": "fla_models/runs/q67a0x92", 
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_short_conv": {
@@ -198,14 +205,14 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
 }
 
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
-    "Transformer_Non_Causal_fp16": {
+    "Transformer_Non_Causal": { # fp16 version
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/d4mttnjl", # fp16 version d4mttnjl, fp 32 version pmcn4brd
         "eval_mode": "forward",
     },
-    "Transformer_Non_Causal_fp32": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
-        "eval_mode": "forward",
-    },
+    # "Transformer_Non_Causal_fp32": {
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
+    #     "eval_mode": "forward",
+    # },
     "Transformer_Non_Causal_with_RoPE": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/ifvo080r", # second run with fp32 as comparison: 0xi6dcvc
         "eval_mode": "forward",
@@ -222,10 +229,10 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/7yzlf15p", 
         "eval_mode": "forward",
     },
-    "Transformer_Test_To_Train_Only": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
-        "eval_mode": "forward",
-    },
+    # "Transformer_Test_To_Train_Only": {
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
+    #     "eval_mode": "forward",
+    # },
     "Transformer_Comb_MT": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
         "eval_mode": "forward",
@@ -252,13 +259,14 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "kda": KDA_MODELS,
     "gla": GLA_MODELS,
     "deltanet": DELTANET_MODELS,
+    "deltanet_size_changes": DELTANET_MODELS_SIZE_CHANGES,
     "gated_deltanet": GATED_DELTANET_MODELS,
     "mamba2": MAMBA2_MODELS,
     "linear_attention": LINEAR_ATTENTION_MODELS,
     "rebased": REBASED_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
     "transformer_masked": TRANSFORMER_MASKED_MODELS,
-    "fla_models": {**KDA_MODELS, **GLA_MODELS, **DELTANET_MODELS, **GATED_DELTANET_MODELS, **MAMBA2_MODELS},
+    "fla_models": {**KDA_MODELS, **GLA_MODELS, **DELTANET_MODELS, **GATED_DELTANET_MODELS, **MAMBA2_MODELS, **DELTANET_MODELS_SIZE_CHANGES},
     "other": OTHER_MODELS,
 }
 
