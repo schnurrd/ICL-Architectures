@@ -318,8 +318,8 @@ def run_comparison_analysis(
     pair_cols = list(pair_cols)
     if len(target_labels) < 2:
         raise RuntimeError("Need at least two labels in target_labels for comparison analysis.")
-    if unit not in {"dataset", "split"}:
-        raise ValueError("unit must be 'dataset' or 'split'.")
+    if unit not in {"dataset", "split", "seqlen"}:
+        raise ValueError("unit must be 'dataset', 'split', or 'seqlen'.")
 
     metric_wide = build_metric_wide_table(
         comparison_results=comparison_results,

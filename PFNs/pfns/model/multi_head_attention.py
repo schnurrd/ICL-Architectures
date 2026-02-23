@@ -335,6 +335,8 @@ class MultiHeadAttention(torch.nn.Module):
         q_position_offset: int | None = None,
         k_position_offset: int = 0,
         rope_pairwise_positions: bool = False,
+        mask_name: str | None = None,
+        eval_pos: int | None = None,
     ):
         """X is the current hidden and has a shape of [batch, ..., seq_len, input_size].
         If keys and values are present in the cache and 'freeze_kv' is not set, they
@@ -410,6 +412,8 @@ class MultiHeadAttention(torch.nn.Module):
             q_position_offset=q_position_offset,
             k_position_offset=k_position_offset,
             rope_pairwise_positions=rope_pairwise_positions,
+            mask_name=mask_name,
+            eval_pos=eval_pos,
         )
         return output.reshape(x_shape_after_transpose[:-1] + output.shape[-1:])
 
@@ -527,6 +531,8 @@ class MultiHeadAttention(torch.nn.Module):
         q_position_offset: int | None,
         k_position_offset: int,
         rope_pairwise_positions: bool,
+        mask_name: str | None,
+        eval_pos: int | None,
     ) -> torch.Tensor:
         """Attention computation.
         Called by 'forward', potentially on shards, once shapes have been normalized.
@@ -554,8 +560,11 @@ class MultiHeadAttention(torch.nn.Module):
                     q,
                     position_offset=q_position_offset,
                     rope_pairwise_positions=rope_pairwise_positions,
+                    mask_name=mask_name,
+                    eval_pos=eval_pos,
+                    use_cached_kv=use_cached_kv,
                 )
-                k = self._apply_rope(
+                k = self._apply_rope( # keys are already cut to training part up to eval_pos so we don't need to worry about fixing rope positions
                     k,
                     position_offset=k_position_offset,
                     rope_pairwise_positions=rope_pairwise_positions,
@@ -567,6 +576,9 @@ class MultiHeadAttention(torch.nn.Module):
                     q,
                     position_offset=q_position_offset,
                     rope_pairwise_positions=rope_pairwise_positions,
+                    mask_name=mask_name,
+                    eval_pos=eval_pos,
+                    use_cached_kv=use_cached_kv,
                 )
                 if kv is not None:
                     k_unbound, v_unbound = kv.unbind(dim=-3)
@@ -633,6 +645,9 @@ class MultiHeadAttention(torch.nn.Module):
         *,
         position_offset: int = 0,
         rope_pairwise_positions: bool = False,
+        mask_name: str | None = None,
+        eval_pos: int | None = None,
+        use_cached_kv: bool = False,
     ) -> torch.Tensor:
         if x.shape[-1] % 2 != 0:
             raise ValueError(
@@ -646,6 +661,14 @@ class MultiHeadAttention(torch.nn.Module):
             device=x.device,
             dtype=torch.long,
         )
+        if mask_name is None or mask_name not in {"Comb_MT", "Int_MT", "causal_all"}:
+            freeze_after = int(eval_pos) if eval_pos is not None and eval_pos > 0 else None
+            if freeze_after is None and use_cached_kv:
+                freeze_after = int(position_offset) if position_offset > 0 else None
+            if freeze_after is not None:
+                frozen = t >= freeze_after
+                if frozen.any():
+                    t[frozen] = freeze_after
         if rope_pairwise_positions:
             t = torch.div(t, 2, rounding_mode="floor")
         t = t.to(dtype=self.inv_freq.dtype)

@@ -73,6 +73,9 @@ def plot_curves_from_df(
         ax = axes[idx]
         subset_metric = df[df["metric"] == metric_key]
         pretrain_boundary = float(pretrain_max_x)
+        x_values = subset_metric[x_col].to_numpy(dtype=np.float64, copy=False)
+        finite_x_values = x_values[np.isfinite(x_values)]
+        positive_x_values = finite_x_values[finite_x_values > 0.0]
 
         for model in sorted(subset_metric["model"].unique()):
             sub = subset_metric[subset_metric["model"] == model]
@@ -112,9 +115,11 @@ def plot_curves_from_df(
         ax.grid(True, which="both", ls="-", alpha=0.2)
         if log_x:
             ax.set_xscale("log")
+            if positive_x_values.size > 0:
+                ax.set_xlim(left=float(positive_x_values.min()), right=float(positive_x_values.max()))
         else:
-            # Start linear plots at zero so the highlighted ranges span from 0 onward.
-            ax.set_xlim(left=0.0)
+            right_limit = float(finite_x_values.max()) if finite_x_values.size > 0 else None
+            ax.set_xlim(left=0.0, right=right_limit)
         if invert_y:
             ax.invert_yaxis()
 

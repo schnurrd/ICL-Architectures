@@ -438,6 +438,8 @@ class PerFeatureLayer(Module):
                         q_position_offset=single_eval_pos if single_eval_pos else None,
                         k_position_offset=0,
                         rope_pairwise_positions=pairwise_rope_enabled,
+                        mask_name=effective_mask_mode,
+                        eval_pos=single_eval_pos if single_eval_pos else None,
                     ).transpose(1, 2)
                 else:
                     new_x_test = None
@@ -462,6 +464,8 @@ class PerFeatureLayer(Module):
                         q_position_offset=0,
                         k_position_offset=0,
                         rope_pairwise_positions=pairwise_rope_enabled,
+                        mask_name=effective_mask_mode,
+                        eval_pos=single_eval_pos if single_eval_pos else None,
                     ).transpose(1, 2)
                 else:
                     new_x_train = None
@@ -499,6 +503,8 @@ class PerFeatureLayer(Module):
                 q_position_offset=0 if single_eval_pos else None,
                 k_position_offset=0,
                 rope_pairwise_positions=pairwise_rope_enabled,
+                mask_name=effective_mask_mode,
+                eval_pos=single_eval_pos if single_eval_pos else None,
             ).transpose(1, 2)
 
         # the mlp tends to require 8 times more memory at its peak, that is why we use 8 here
