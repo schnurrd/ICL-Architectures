@@ -100,11 +100,7 @@ class RebasedFeatureMap(nn.Module):
 class BasedFeatureMap(nn.Module):
     """Polynomial Based feature map: 1 + q^T k + (q^T k)^2 / 2."""
 
-    def __init__(
-        self,
-        *args,
-        **kwargs,
-    ) -> None:
+    def __init__(self) -> None:
         super().__init__()
         self.inv_sqrt2 = 1.0 / math.sqrt(2.0)
 
