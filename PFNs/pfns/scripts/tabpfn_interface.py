@@ -652,8 +652,6 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         # Generate ensemble configurations
         if self.seed is not None:
             torch.manual_seed(self.seed)
-            np.random.seed(self.seed)
-            random.seed(self.seed)
 
         feature_shifts = (
             torch.randperm(X_full.shape[2])

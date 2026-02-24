@@ -717,18 +717,18 @@ def _maybe_patch_mamba2_with_stateless_recurrent(enabled: bool):
         # Short convolution: prepend cached history and apply depthwise conv
         hidden_states_B_C = hidden_states_B_C.view(cache_batch, flat_len, seq_len, -1)
         conv_state = cache_params.conv_states[self.layer_idx].float()  # (cache_batch, conv_dim, kernel_size)
-        x_transposed = hidden_states_B_C.transpose(2, 3)  # (cache_batch, flat_len, conv_dim, seq_len)
+        x_transposed = hidden_states_B_C.transpose(2, 3)  # (cache_batch, flat_len, conv_dim, seq_len=1)
         hist_len = self.conv_kernel_size - 1
         if hist_len > 0:
             conv_history = conv_state[:, :, -hist_len:].unsqueeze(1)  # (cache_batch, 1, conv_dim, k-1)
-            conv_input = torch.cat([conv_history.expand(cache_batch, flat_len, -1, -1), x_transposed], dim=-1)
+            conv_window = torch.cat([conv_history.expand(cache_batch, flat_len, -1, -1), x_transposed], dim=-1)
         else:
-            conv_input = x_transposed
-        
+            conv_window = x_transposed
+
         weight = self.conv1d.weight.squeeze(1).float()  # (conv_dim, kernel_size)
         bias = self.conv1d.bias.float() if self.conv1d.bias is not None else None
         conv_out = F.conv1d(
-            conv_input.view(cache_batch * flat_len, self.conv_dim, -1),
+            conv_window.view(cache_batch * flat_len, self.conv_dim, -1),
             weight.unsqueeze(1), bias=bias, groups=self.conv_dim,
         ).view(cache_batch, flat_len, self.conv_dim, seq_len)
         hidden_states_B_C = self.act(conv_out).transpose(2, 3)  # (cache_batch, flat_len, seq_len, conv_dim)
