@@ -67,6 +67,8 @@ def _maybe_patch_shortconv_forward_pytorch(enabled: bool):
         assert cu_seqlens is None, "cu_seqlens must be None in pytorch ShortConvolution patch."
         assert mask is None, "mask must be None in pytorch ShortConvolution patch."
 
+        assert cache is not None, "cache must be provided in pytorch ShortConvolution patch."
+
         x = x.contiguous()
         cache = cache.contiguous()
         if residual is not None:
@@ -75,7 +77,6 @@ def _maybe_patch_shortconv_forward_pytorch(enabled: bool):
         B, T, D = x.shape
 
         assert T == 1, "We only support decode-like path in pytorch ShortConvolution patch."
-        assert cache is not None, "cache must be provided in pytorch ShortConvolution patch."
 
         weight = self.weight.squeeze(1)
         W = weight.shape[1]
@@ -154,6 +155,7 @@ def _maybe_patch_gla_with_stateless_recurrent(enabled: bool):
         assert gv is None, "naive_recurrent_gla does not support gv."
         assert not reverse, "naive_recurrent_gla does not support reverse processing."
         assert cu_seqlens is None, "naive_recurrent_gla does not support cu_seqlens."
+        assert q.shape[1] == 1, "stateless_gla patch only supports decode-like T=1."
         if gk is None:
             gk = g
         assert gk is not None, "gk is required for naive_recurrent_gla."
@@ -167,6 +169,7 @@ def _maybe_patch_gla_with_stateless_recurrent(enabled: bool):
         orig_batch = q.shape[0]
         cache_batch = h0.shape[0]
         if orig_batch != cache_batch:
+            assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
             flat_len = orig_batch // cache_batch
             q = q.reshape(cache_batch, flat_len, *q.shape[2:])
             k = k.reshape(cache_batch, flat_len, *k.shape[2:])
@@ -385,6 +388,7 @@ def _maybe_patch_kda_with_stateless_recurrent(enabled: bool):
         assert initial_state is not None, "stateless mode requires an initial_state."
         assert not reverse, "stateless_kda does not support reverse processing."
         assert cu_seqlens is None, "stateless_kda does not support cu_seqlens."
+        assert q.shape[1] == 1, "stateless_kda patch only supports decode-like T=1."
 
         scale = k.shape[-1] ** -0.5 if scale is None else scale
         dtype = q.dtype
@@ -495,6 +499,7 @@ def _maybe_patch_deltanet_with_stateless_recurrent(enabled: bool):
         assert cu_seqlens is None, "native_recurrent_deltanet does not support cu_seqlens."
         assert beta is not None, "beta is required for native_recurrent_deltanet."
         assert initial_state is not None, "stateless mode requires an initial_state."
+        assert q.shape[1] == 1, "stateless_deltanet patch only supports decode-like T=1."
         
         scale = k.shape[-1] ** -0.5 if scale is None else scale
 
@@ -579,6 +584,7 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(enabled: bool):
         assert initial_state is not None, "stateless mode requires an initial_state."
         assert cu_seqlens is None, "stateless_gated_deltanet does not support cu_seqlens."
         assert num_householder == 1, "stateless_gated_deltanet only supports num_householder=1."
+        assert q.shape[1] == 1, "stateless_gated_deltanet patch only supports decode-like T=1."
 
         scale = scale if scale is not None else k.shape[-1] ** -0.5
         dtype = q.dtype
@@ -591,6 +597,7 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(enabled: bool):
         cache_batch = s0.shape[0]
 
         if orig_batch != cache_batch:
+            assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
             flat_len = orig_batch // cache_batch
             q = q.reshape(cache_batch, flat_len, *q.shape[2:])
             k = k.reshape(cache_batch, flat_len * num_householder, *k.shape[2:])
@@ -615,8 +622,14 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(enabled: bool):
         
         g_exp = None
         if g is not None:
-            if g.shape[1] == num_heads and g.shape[2] == seq_len:
+            if g.ndim != 3:
+                raise ValueError(f"Expected g.ndim == 3, got g.shape={tuple(g.shape)}")
+            if g.shape[1] == num_heads and g.shape[2] == seq_len and num_heads != seq_len:
                 g = g.transpose(1, 2)
+            elif g.shape != (bsz, seq_len, num_heads):
+                raise ValueError(
+                    f"Unexpected g shape {tuple(g.shape)} for q shape {(bsz, seq_len, num_heads, key_dim)}"
+                )
             g_exp = g.exp().unsqueeze(-1)
 
         q_decayed = q * g_exp if g_exp is not None else q
@@ -681,9 +694,14 @@ def _maybe_patch_mamba2_with_stateless_recurrent(enabled: bool):
         **kwargs
     ):
         assert cache_params is not None, "Stateless mamba2 requires cache_params."
+        assert attention_mask is None, "stateless mamba2 patch does not support attention_mask."
+        assert not kwargs, f"Unsupported extra args for stateless mamba2 patch: {sorted(kwargs)}"
+        assert cache_position is not None, "stateless mamba2 patch requires cache_position."
+        assert cache_position.numel() > 0, "cache_position must be non-empty."
         
         dtype = hidden_states.dtype
         orig_batch, seq_len, _ = hidden_states.shape
+        assert seq_len == 1, "stateless mamba2 patch only supports decode-like seq_len=1."
         cache_batch = cache_params.conv_states[self.layer_idx].shape[0]
         assert orig_batch % cache_batch == 0
         flat_len = orig_batch // cache_batch  # number of test samples per cache entry
@@ -699,17 +717,21 @@ def _maybe_patch_mamba2_with_stateless_recurrent(enabled: bool):
         # Short convolution: prepend cached history and apply depthwise conv
         hidden_states_B_C = hidden_states_B_C.view(cache_batch, flat_len, seq_len, -1)
         conv_state = cache_params.conv_states[self.layer_idx].float()  # (cache_batch, conv_dim, kernel_size)
-        conv_history = conv_state[:, :, -(self.conv_kernel_size - 1):].unsqueeze(1)  # (cache_batch, 1, conv_dim, k-1)
-        x_transposed = hidden_states_B_C.transpose(2, 3)  # (cache_batch, flat_len, conv_dim, seq_len)
-        conv_input = torch.cat([conv_history.expand(cache_batch, flat_len, -1, -1), x_transposed], dim=-1)
-        
+        x_transposed = hidden_states_B_C.transpose(2, 3)  # (cache_batch, flat_len, conv_dim, seq_len=1)
+        hist_len = self.conv_kernel_size - 1
+        if hist_len > 0:
+            conv_history = conv_state[:, :, -hist_len:].unsqueeze(1)  # (cache_batch, 1, conv_dim, k-1)
+            conv_window = torch.cat([conv_history.expand(cache_batch, flat_len, -1, -1), x_transposed], dim=-1)
+        else:
+            conv_window = x_transposed
+
         weight = self.conv1d.weight.squeeze(1).float()  # (conv_dim, kernel_size)
         bias = self.conv1d.bias.float() if self.conv1d.bias is not None else None
         conv_out = F.conv1d(
-            conv_input.view(cache_batch * flat_len, self.conv_dim, -1),
+            conv_window.view(cache_batch * flat_len, self.conv_dim, -1),
             weight.unsqueeze(1), bias=bias, groups=self.conv_dim,
         ).view(cache_batch, flat_len, self.conv_dim, seq_len)
-        hidden_states_B_C = F.silu(conv_out).transpose(2, 3)  # (cache_batch, flat_len, seq_len, conv_dim)
+        hidden_states_B_C = self.act(conv_out).transpose(2, 3)  # (cache_batch, flat_len, seq_len, conv_dim)
         
         # Split conv output into x, B, C and reshape for SSM
         x, B, C = torch.split(hidden_states_B_C, [
@@ -724,10 +746,12 @@ def _maybe_patch_mamba2_with_stateless_recurrent(enabled: bool):
         # SSM discretization: A_bar = exp(A * dt), B_bar = dt * B
         A = -torch.exp(self.A_log.float())  # (num_heads,)
         dt = F.softplus(dt + self.dt_bias.float())  # (cache_batch, flat_len, seq_len, num_heads)
+        dt = torch.clamp(dt, self.time_step_limit[0], self.time_step_limit[1])
         A_bar = torch.exp(A.view(1, 1, 1, -1) * dt).unsqueeze(-1)  # (cache_batch, flat_len, seq_len, num_heads, 1)
         h0 = cache_params.ssm_states[self.layer_idx].float()  # (cache_batch, num_heads, head_dim, ssm_state_size)
         
         # Expand B, C from n_groups to num_heads
+        assert self.num_heads % self.n_groups == 0, "num_heads must be divisible by n_groups."
         heads_per_group = self.num_heads // self.n_groups
         B = B.repeat_interleave(heads_per_group, dim=-2).contiguous()  # (..., num_heads, ssm_state_size)
         C = C.repeat_interleave(heads_per_group, dim=-2).contiguous()
@@ -755,4 +779,3 @@ def _maybe_patch_mamba2_with_stateless_recurrent(enabled: bool):
         yield
     finally:
         mamba_module.Mamba2.forward = original_forward
-

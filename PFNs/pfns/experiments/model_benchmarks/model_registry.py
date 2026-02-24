@@ -254,6 +254,7 @@ BASELINE_MODEL_NAMES: tuple[str, ...] = (
     "TabFlex",
 )
 
+
 MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "transformer": TRANSFORMER_MODELS,
     "kda": KDA_MODELS,
@@ -266,12 +267,39 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "rebased": REBASED_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
     "transformer_masked": TRANSFORMER_MASKED_MODELS,
-    "fla_models": {**KDA_MODELS, **GLA_MODELS, **DELTANET_MODELS, **GATED_DELTANET_MODELS, **MAMBA2_MODELS, **DELTANET_MODELS_SIZE_CHANGES},
+    "fla_models": {
+        **KDA_MODELS,
+        **GLA_MODELS,
+        **DELTANET_MODELS,
+        **GATED_DELTANET_MODELS,
+        **MAMBA2_MODELS,
+        **DELTANET_MODELS_SIZE_CHANGES,
+    },
     "other": OTHER_MODELS,
 }
 
-def _copy_models(models: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {name: config.copy() for name, config in models.items()}
+def _merge_models_with_conflict_check(
+    *,
+    selected: dict[str, dict[str, Any]],
+    selected_sources: dict[str, str],
+    family_name: str,
+    models: dict[str, dict[str, Any]],
+    allowed_names: set[str] | None = None,
+) -> None:
+    for model_name, model_config in models.items():
+        if allowed_names is not None and model_name not in allowed_names:
+            continue
+        existing = selected.get(model_name)
+        if existing is not None and existing != model_config:
+            previous_family = selected_sources[model_name]
+            raise ValueError(
+                f"Model {model_name!r} has conflicting configs across selections: "
+                f"{previous_family!r} vs {family_name!r}. "
+                f"Existing={existing!r}, new={model_config!r}"
+            )
+        if existing is None:
+            selected[model_name] = model_config.copy()
+            selected_sources[model_name] = family_name
 
 
 def get_baseline_models() -> dict[str, dict[str, Any]]:
@@ -285,32 +313,50 @@ def get_baseline_models() -> dict[str, dict[str, Any]]:
 
 
 def get_models_from_names(model_names: Iterable[str]) -> dict[str, dict[str, Any]]:
-    all_models = get_all_models()
-    missing = [name for name in model_names if name not in all_models]
+    model_names = list(model_names)
+    model_names_set = set(model_names)
+    selected: dict[str, dict[str, Any]] = {}
+    selected_sources: dict[str, str] = {}
+    for family_name, family_models in MODEL_FAMILIES.items():
+        _merge_models_with_conflict_check(
+            selected=selected,
+            selected_sources=selected_sources,
+            family_name=family_name,
+            models=family_models,
+            allowed_names=model_names_set,
+        )
+    missing = [name for name in model_names if name not in selected]
     if missing:
-        available = ", ".join(sorted(all_models))
+        available = ", ".join(
+            sorted({name for models in MODEL_FAMILIES.values() for name in models})
+        )
         missing_str = ", ".join(missing)
         raise KeyError(f"Unknown model name(s): {missing_str}. Available models: {available}")
-    return {name: all_models[name].copy() for name in model_names}
+    return {name: selected[name].copy() for name in model_names}
 
 
 def get_models_from_families(family_names: Iterable[str]) -> dict[str, dict[str, Any]]:
+    family_names = list(family_names)
     selected: dict[str, dict[str, Any]] = {}
+    selected_sources: dict[str, str] = {}
     unknown = [name for name in family_names if name not in MODEL_FAMILIES]
     if unknown:
         available = ", ".join(sorted(MODEL_FAMILIES))
         unknown_str = ", ".join(unknown)
         raise KeyError(f"Unknown family name(s): {unknown_str}. Available families: {available}")
+
     for family_name in family_names:
-        selected.update(_copy_models(MODEL_FAMILIES[family_name]))
+        _merge_models_with_conflict_check(
+            selected=selected,
+            selected_sources=selected_sources,
+            family_name=family_name,
+            models=MODEL_FAMILIES[family_name],
+        )
     return selected
 
 
 def get_all_models() -> dict[str, dict[str, Any]]:
-    selected: dict[str, dict[str, Any]] = {}
-    for models in MODEL_FAMILIES.values():
-        selected.update(_copy_models(models))
-    return selected
+    return get_models_from_families(MODEL_FAMILIES)
 
 
 def get_autocast_models_from_registry(

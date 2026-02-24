@@ -344,13 +344,13 @@ class FLABackboneConfig(BackboneConfig):
             "FLA backbones currently do not support attention between features"
         )
 
+        if self.config_kwargs is None:
+            raise ValueError("FLABackboneConfig requires config_kwargs to build the FLA config.")
+
         assert ninp is None or ninp == self.config_kwargs.get("hidden_size", ninp), (
             "FLA backbone ninp must match config_kwargs hidden_size"
         )
-        
-        if self.config_kwargs is None:
-            raise ValueError("FLABackboneConfig requires config_kwargs to build the FLA config.")
-        
+
         config = ConfigClass(**self.config_kwargs)
         fla_model = ModelClass(config)
 

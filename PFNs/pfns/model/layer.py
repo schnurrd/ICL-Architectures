@@ -112,11 +112,11 @@ class PerFeatureLayer(Module):
             item_attention_mask_mode
         )
         if (
-            item_attention_mask_mode == "Comb_MT"
+            item_attention_mask_mode in {"Comb_MT", "Int_MT"}
             and multiquery_item_attention_for_test_set
         ):
             raise ValueError(
-                "item_attention_mask_mode='Comb_MT' is not supported with "
+                f"item_attention_mask_mode='{item_attention_mask_mode}' is not supported with "
                 "multiquery_item_attention_for_test_set=True."
             )
 
@@ -328,6 +328,12 @@ class PerFeatureLayer(Module):
         ), "src must be of shape (batch_size, num_items, num feature blocks, d_model)"
         if single_eval_pos is None:
             single_eval_pos = 0
+        seq_len = state.shape[1]
+        if not (0 <= single_eval_pos <= seq_len):
+            raise ValueError(
+                f"single_eval_pos must satisfy 0 <= single_eval_pos <= {seq_len}, "
+                f"got {single_eval_pos}."
+            )
         effective_mask_mode = self.item_attention_mask_mode
         if (
             not self.training
