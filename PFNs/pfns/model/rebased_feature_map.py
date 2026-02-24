@@ -7,14 +7,6 @@ import torch.nn.functional as F
 from torch import nn
 
 
-def layer_norm(
-    x: torch.Tensor,
-    weight: torch.Tensor | None,
-    bias: torch.Tensor | None,
-) -> torch.Tensor:
-    return F.layer_norm(x, (x.shape[-1],), weight, bias)
-
-
 def flatten_diag_outer_product_off1(
     x: torch.Tensor,
     y: torch.Tensor,
@@ -36,8 +28,6 @@ def _apply_pre_map_transform(
     gamma: torch.Tensor | None,
     beta: torch.Tensor | None,
 ) -> torch.Tensor:
-    if use_beta and use_gamma and normalize:
-        return layer_norm(x, gamma, beta)
     if normalize:
         return F.layer_norm(x, (head_dim,), gamma, beta)
     if use_gamma and use_beta:
@@ -48,7 +38,7 @@ def _apply_pre_map_transform(
         return x.mul(gamma)
     raise RuntimeError(
         "Not supported combination of `use_gamma`, `use_beta` and "
-        f"`normalize`, which is currentlt set as "
+        f"`normalize`, which is currently set as "
         f"(`{use_gamma}`, `{use_beta}`, `{normalize}`)"
     )
 
@@ -79,7 +69,7 @@ class RebasedFeatureMap(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        flatten: bool | None = True,
+        flatten: bool = True,
     ) -> torch.Tensor:
         x = _apply_pre_map_transform(
             x,
@@ -118,7 +108,7 @@ class BasedFeatureMap(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        flatten: bool | None = True,
+        flatten: bool = True,
     ) -> torch.Tensor:
         if not flatten:
             return x

@@ -62,7 +62,7 @@ class RebasedLinearAttention(nn.Module):
         else:
             raise ValueError(
                 f"Unsupported feature_map: {feature_map!r}. "
-                "Expected one of: 'rebased', 'based'."
+                "Expected one of: 'rebased', 'based', 'taylor_exp'."
             )
         self.feature_map_name = feature_map_name
 
