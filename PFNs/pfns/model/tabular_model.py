@@ -1017,12 +1017,14 @@ class LayerStack(nn.Module):
                 self.min_num_layers_layer_dropout == self.num_layers
             ), "half_layers only works without layer dropout"
             n_layers = self.num_layers // 2
-        else:
+        elif self.training and self.min_num_layers_layer_dropout < self.num_layers:
             n_layers = torch.randint(
                 low=self.min_num_layers_layer_dropout,
                 high=self.num_layers + 1,
                 size=(1,),
             ).item()
+        else:
+            n_layers = self.num_layers
 
         for layer in self.layers[:n_layers]:
             if self.recompute_each_layer and x.requires_grad:

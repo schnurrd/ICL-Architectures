@@ -86,6 +86,7 @@ class InferenceEngine:
         self.no_grad = no_grad
         self.categorical_feats = categorical_feats
         self.seed = seed
+        self._numpy_rng = np.random.default_rng(seed)
 
     def _get_sklearn_transformer(self, transform_type: str):
         """Get sklearn transformer based on config."""
@@ -115,19 +116,16 @@ class InferenceEngine:
         categorical_inds = list(self.categorical_feats) if self.categorical_feats else []
         active_indices = list(range(X.shape[2]))
 
+        # ToDo: It would make more sense to switch the order between the constant feature removal and the max feature subsampling.
         if X.shape[2] > max_features:
-            selected = sorted(np.random.choice(X.shape[2], max_features, replace=False))
+            selected = sorted(
+                self._numpy_rng.choice(X.shape[2], max_features, replace=False).tolist()
+            )
             X = X[:, :, selected]
             active_indices = [active_indices[i] for i in selected]
             print(
                 f"Warning: Subsampling features to {max_features} for preprocessing."
             )
-
-        categorical_inds = [
-            new_idx
-            for new_idx, orig_idx in enumerate(active_indices)
-            if orig_idx in self.categorical_feats
-        ]
 
         X = normalize_data(X, normalize_positions=eval_position)  # probably redundant
 
@@ -152,7 +150,7 @@ class InferenceEngine:
             feats = (
                 set(range(X_np.shape[1]))
                 if "all" in transform_type
-                else set(range(X_np.shape[1])) - set(self.categorical_feats)
+                else set(range(X_np.shape[1])) - set(categorical_inds)
             )
 
             warnings.simplefilter("error")
@@ -494,7 +492,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             model_string = os.path.basename(model_path)
 
         self.device = device
-        self.base_path = base_path if base_path is not None else default_base_path
+        self.base_path = Path(base_path) if base_path is not None else default_base_path
         self.model_string = model_string
         self.wandb_run_id = wandb_run_id
         self.N_ensemble_configurations = N_ensemble_configurations
@@ -511,15 +509,18 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.fla_cache_chunk_size = fla_cache_chunk_size
         self.categorical_feats: tuple[int, ...] = ()
 
-        model_key = model_string + "|" + str(device)
+        model_key = (
+            f"{self.base_path.resolve()}|{self.model_string}|{self.device}|"
+            f"{self.wandb_run_id or ''}"
+        )
 
         if model_key in self.models_in_memory:
             model, config, results_file = self.models_in_memory[model_key]
         else:
             model, config, results_file = load_model_workflow(
-                name=model_string,
-                base_path=base_path,
-                device=device,
+                name=self.model_string,
+                base_path=str(self.base_path),
+                device=self.device,
             )
             self.models_in_memory[model_key] = (model, config, results_file)
             if len(self.models_in_memory) == 2:
@@ -651,6 +652,8 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         # Generate ensemble configurations
         if self.seed is not None:
             torch.manual_seed(self.seed)
+            np.random.seed(self.seed)
+            random.seed(self.seed)
 
         feature_shifts = (
             torch.randperm(X_full.shape[2])
@@ -746,8 +749,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
 
     def remove_models_from_memory(self):
         """Clear cached models."""
-        self.models_in_memory = {}
-
+        self.models_in_memory.clear()
 
 def load_model_workflow(name, base_path, device="cpu"):
     """

@@ -503,6 +503,11 @@ class MultiHeadAttention(torch.nn.Module):
                     v = v.expand(*expand_shape)
 
         if cache_kv:
+            kv_for_cache = kv
+            if kv_cache is not None and kv_for_cache is None:
+                # Fast self-attention path computes a stacked qkv tensor directly.
+                assert qkv is not None, "Expected qkv when caching stacked KV projections."
+                kv_for_cache = qkv[..., 1:, :, :]
             if k_cache is not None:
                 k_cache[:] = k
             if v_cache is not None:
@@ -511,9 +516,9 @@ class MultiHeadAttention(torch.nn.Module):
                 if kv_cache.shape[-2] == 1:
                     # we are in the case where only the first head kv is cached
                     # that is the case when we only neeed that for inference
-                    kv_cache[:] = kv[..., :1, :]
+                    kv_cache[:] = kv_for_cache[..., :1, :]
                 else:
-                    kv_cache[:] = kv
+                    kv_cache[:] = kv_for_cache
 
         return q, k, v, kv, qkv
 

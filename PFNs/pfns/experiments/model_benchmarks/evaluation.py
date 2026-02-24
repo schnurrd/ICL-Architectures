@@ -276,6 +276,8 @@ def evaluate_models_over_seqlens(
             for name in configs.keys() 
             if configs[name].train_mixed_precision
         }
+    elif autocast_models is None:
+        autocast_models = {}
     warmup_iters = 3 if use_warmup_iters else 0
 
     if data_generation_seed is not None:

@@ -36,7 +36,7 @@ class ModelConfig(base_config.BaseConfig):
             "subspace",
         ]
         | None
-    ) = None,
+    ) = None
     model_extra_args: tp.Dict[str, base_config.BaseTypes] | None = None
     
     # Legacy parameters for backward compatibility
