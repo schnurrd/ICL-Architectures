@@ -2,28 +2,13 @@ from __future__ import annotations
 
 import torch
 from torch import nn
-import torch.utils.checkpoint
-from contextlib import contextmanager
 
-@contextmanager
-def _checkpoint_no_reentrant():
-    checkpoint_module = torch.utils.checkpoint
-    original_checkpoint = checkpoint_module.checkpoint
-    def checkpoint_wrapper(function, *args, **kwargs):
-        kwargs.setdefault("use_reentrant", False)
-        return original_checkpoint(function, *args, **kwargs)
-    checkpoint_module.checkpoint = checkpoint_wrapper
-    try:
-        yield
-    finally:
-        checkpoint_module.checkpoint = original_checkpoint
-
-from fla.modules.feature_map import RebasedFeatureMap
 from pfns.model.attention_utils import (
     apply_state_to_query_4d,
     build_mlp,
     compute_kv_state_4d,
 )
+from pfns.model.rebased_feature_map import BasedFeatureMap, RebasedFeatureMap
 
 
 class RebasedLinearAttention(nn.Module):
@@ -39,6 +24,7 @@ class RebasedLinearAttention(nn.Module):
         dropout: float = 0.1,
         activation: str = "silu",
         feature_dim: int | None = None,
+        feature_map: str = "rebased",
         use_gamma: bool = True,
         use_beta: bool = True,
         normalize: bool = True,
@@ -62,8 +48,23 @@ class RebasedLinearAttention(nn.Module):
         # V : d_model -> d_model
         self.v_proj = nn.Linear(d_model, d_model)
         self.o_proj = nn.Linear(d_model, d_model)
-        
-        self.feature_map = RebasedFeatureMap(self.feature_dim, use_gamma, use_beta, normalize)
+
+        feature_map_name = feature_map.strip().lower().replace("-", "_")
+        if feature_map_name == "rebased":
+            self.feature_map = RebasedFeatureMap(
+                self.feature_dim,
+                use_gamma,
+                use_beta,
+                normalize,
+            )
+        elif feature_map_name == "based":
+            self.feature_map = BasedFeatureMap()
+        else:
+            raise ValueError(
+                f"Unsupported feature_map: {feature_map!r}. "
+                "Expected one of: 'rebased', 'based'"
+            )
+        self.feature_map_name = feature_map_name
 
         self.norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(2)])
         self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
@@ -94,8 +95,7 @@ class RebasedLinearAttention(nn.Module):
         k = self.k_proj(x_flat).view(b * n, s, self.num_heads, self.feature_dim)
         v = self.v_proj(x_flat).view(b * n, s, self.num_heads, self.head_dim)
 
-        with _checkpoint_no_reentrant():
-            q, k = self.feature_map(q), self.feature_map(k)
+        q, k = self.feature_map(q), self.feature_map(k)
 
         return q, k, v
 
