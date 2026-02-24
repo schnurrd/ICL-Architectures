@@ -332,6 +332,7 @@ class MultiHeadAttention(torch.nn.Module):
         only_cache_first_head_kv: bool = False,
         use_cached_kv: bool = False,
         attn_mask: torch.Tensor | None = None,
+        is_causal: bool = False,
         q_position_offset: int | None = None,
         k_position_offset: int = 0,
         rope_pairwise_positions: bool = False,
@@ -409,6 +410,7 @@ class MultiHeadAttention(torch.nn.Module):
             save_peak_mem_factor=save_peak_mem_factor,
             reuse_first_head_kv=reuse_first_head_kv,
             attn_mask=attn_mask,
+            is_causal=is_causal,
             q_position_offset=q_position_offset,
             k_position_offset=k_position_offset,
             rope_pairwise_positions=rope_pairwise_positions,
@@ -528,6 +530,7 @@ class MultiHeadAttention(torch.nn.Module):
         use_cached_kv: bool,
         reuse_first_head_kv: bool,
         attn_mask: torch.Tensor | None,
+        is_causal: bool,
         q_position_offset: int | None,
         k_position_offset: int,
         rope_pairwise_positions: bool,
@@ -603,6 +606,7 @@ class MultiHeadAttention(torch.nn.Module):
             self.dropout_p,
             self.softmax_scale,
             attn_mask,
+            is_causal=is_causal,
         )
         return torch.einsum(
             "... h d, h d s -> ... s",
@@ -712,10 +716,13 @@ class MultiHeadAttention(torch.nn.Module):
         dropout_p: float | None = None,
         softmax_scale: float | None = None,
         attn_mask: torch.Tensor | None = None,
+        is_causal: bool = False,
     ) -> torch.Tensor:
         assert (k is None) == (v is None)
         assert sum([qkv is None, kv is None, k is None and v is None]) == 2
         assert (qkv is None) != (q is None)
+        if attn_mask is not None and is_causal:
+            raise ValueError("Use either attn_mask or is_causal, not both.")
 
         if qkv is not None:
             q, k, v = qkv.unbind(dim=-3)
@@ -751,6 +758,8 @@ class MultiHeadAttention(torch.nn.Module):
                     )
                 attn_mask = attn_mask.to(device=q.device, dtype=q.dtype)
                 extra_inputs["attn_mask"] = attn_mask
+            if is_causal:
+                extra_inputs["is_causal"] = True
             if USE_TORCH_2_GQA:
                 extra_inputs["enable_gqa"] = True
             else:
@@ -793,6 +802,14 @@ class MultiHeadAttention(torch.nn.Module):
                     attn_mask = attn_mask.expand(batch_size, -1, -1)
                 attn_mask = attn_mask.to(device=logits.device, dtype=logits.dtype)
                 logits = logits + attn_mask.unsqueeze(-1)
+            if is_causal:
+                q_idx = torch.arange(seqlen_q, device=logits.device).unsqueeze(1)
+                k_idx = torch.arange(_seqlen_kv, device=logits.device).unsqueeze(0)
+                causal_mask = k_idx > q_idx
+                logits = logits.masked_fill(
+                    causal_mask.unsqueeze(0).unsqueeze(-1),
+                    float("-inf"),
+                )
             ps = torch.softmax(logits, dim=2)
             ps = torch.dropout(ps, dropout_p, train=True)
             attention_head_outputs = torch.einsum("b q k h, b k h d -> b q h d", ps, v)

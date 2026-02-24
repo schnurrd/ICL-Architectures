@@ -253,39 +253,35 @@ class PerFeatureLayer(Module):
                     torch.zeros(1, device=device, dtype=dtype),
                     mask[~train_q],
                 )
-        elif mode == "Comb_ST" or mode == "Int_ST":
-            assert train_len > 0, "train_len must be > 0 for item attention masking."
-            mask = torch.full(
-                (seq_len_q, seq_len_kv),
-                float("-inf"),
-                device=device,
-                dtype=dtype,
-            )
-            train_q = q_pos < train_len
-            if train_q.any():
-                train_k = k_pos.unsqueeze(0) < train_len
-                causal_k = k_pos.unsqueeze(0) <= q_pos[train_q].unsqueeze(1)
-                mask[train_q] = torch.where(
-                    train_k & causal_k,
-                    torch.zeros(1, device=device, dtype=dtype),
-                    mask[train_q],
-                )
-            if (~train_q).any():
-                mask[~train_q] = torch.where(
-                    k_pos.unsqueeze(0) < train_len,
-                    torch.zeros(1, device=device, dtype=dtype),
-                    mask[~train_q],
-                )
-        elif mode == "Comb_MT" or mode == "Int_MT":
-            mask = torch.where(
-                k_pos.unsqueeze(0) <= q_pos.unsqueeze(1),
-                torch.zeros(1, device=device, dtype=dtype),
-                torch.full((1,), float("-inf"), device=device, dtype=dtype),
-            )
         else:
-            raise ValueError(f"Unknown item_attention_mask_mode: {mode}")
+            raise ValueError(
+                f"Explicit dense masks are only supported for "
+                f"item_attention_mask_mode='test_to_train_only', got {mode!r}."
+            )
 
         return mask
+
+    @staticmethod
+    def _translate_item_attention_to_is_causal(
+        *,
+        mode: str,
+        seq_len_kv: int,
+        train_len: int,
+        q_offset: int = 0,
+        k_offset: int = 0,
+    ) -> bool:
+        if q_offset != k_offset:
+            return False
+
+        if mode in {"Comb_MT", "Int_MT"}:
+            return True
+
+        if mode in {"Comb_ST", "Int_ST"}:
+            if train_len <= 0:
+                return False
+            return (k_offset + seq_len_kv) <= train_len
+
+        return False
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         state.setdefault("save_peak_mem_factor", None)
@@ -388,12 +384,31 @@ class PerFeatureLayer(Module):
                 seq_len_kv: int,
                 q_offset: int = 0,
                 k_offset: int = 0,
-            ) -> torch.Tensor | None:
+            ) -> tuple[torch.Tensor | None, bool]:
                 if (
                     effective_mask_mode is None
                     or (cache_trainset_representation and not single_eval_pos)
                 ):
-                    return None
+                    return None, False
+
+                if self._translate_item_attention_to_is_causal(
+                    mode=effective_mask_mode,
+                    seq_len_kv=seq_len_kv,
+                    train_len=single_eval_pos,
+                    q_offset=q_offset,
+                    k_offset=k_offset,
+                ):
+                    return None, True
+
+                if effective_mask_mode in {"Comb_MT", "Int_MT", "Comb_ST", "Int_ST"}:
+                    if seq_len_kv > 0 and (k_offset + seq_len_kv - 1) <= q_offset:
+                        return None, False
+                    raise ValueError(
+                        "Causal item mask modes should be represented by "
+                        "`is_causal=True` (aligned windows) or by a key window "
+                        "that is entirely in the query's past."
+                    )
+
                 return self._build_item_attention_mask(
                     mode=effective_mask_mode,
                     seq_len_q=seq_len_q,
@@ -403,7 +418,7 @@ class PerFeatureLayer(Module):
                     dtype=x.dtype,
                     q_offset=q_offset,
                     k_offset=k_offset,
-                )
+                ), False
 
             pairwise_rope_enabled = (
                 rope_pairwise_positions
@@ -415,7 +430,7 @@ class PerFeatureLayer(Module):
                 if single_eval_pos < x.shape[1]:
                     test_len = x.shape[1] - single_eval_pos
                     test_kv_len = single_eval_pos if single_eval_pos else test_len
-                    test_attention_mask = build_attention_mask(
+                    test_attention_mask, test_is_causal = build_attention_mask(
                         seq_len_q=test_len,
                         seq_len_kv=test_kv_len,
                         q_offset=single_eval_pos,
@@ -435,6 +450,7 @@ class PerFeatureLayer(Module):
                         use_cached_kv=not single_eval_pos,
                         reuse_first_head_kv=True,
                         attn_mask=test_attention_mask,
+                        is_causal=test_is_causal,
                         q_position_offset=single_eval_pos if single_eval_pos else None,
                         k_position_offset=0,
                         rope_pairwise_positions=pairwise_rope_enabled,
@@ -445,7 +461,7 @@ class PerFeatureLayer(Module):
                     new_x_test = None
 
                 if single_eval_pos:
-                    train_attention_mask = build_attention_mask(
+                    train_attention_mask, train_is_causal = build_attention_mask(
                         seq_len_q=single_eval_pos,
                         seq_len_kv=single_eval_pos,
                         q_offset=0,
@@ -461,6 +477,7 @@ class PerFeatureLayer(Module):
                         allow_inplace=True,
                         use_cached_kv=False,
                         attn_mask=train_attention_mask,
+                        is_causal=train_is_causal,
                         q_position_offset=0,
                         k_position_offset=0,
                         rope_pairwise_positions=pairwise_rope_enabled,
@@ -485,7 +502,7 @@ class PerFeatureLayer(Module):
             seq_len_kv = (
                 attention_src_x.shape[2] if attention_src_x is not None else seq_len_q
             )
-            attention_mask = build_attention_mask(
+            attention_mask, is_causal = build_attention_mask(
                 seq_len_q=seq_len_q,
                 seq_len_kv=seq_len_kv,
                 q_offset=0,
@@ -500,6 +517,7 @@ class PerFeatureLayer(Module):
                 allow_inplace=True,
                 use_cached_kv=cache_trainset_representation and not single_eval_pos,
                 attn_mask=attention_mask,
+                is_causal=is_causal,
                 q_position_offset=0 if single_eval_pos else None,
                 k_position_offset=0,
                 rope_pairwise_positions=pairwise_rope_enabled,
