@@ -58,6 +58,7 @@ def get_config(
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = "subspace",
+    feature_map: str = "rebased",
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -85,6 +86,11 @@ def get_config(
         if aggregate_k_gradients is not None
         else profile["aggregate_k_gradients"]
     )
+    resolved_feature_map = feature_map.strip().lower().replace("-", "_")
+    if resolved_feature_map not in {"rebased", "based"}:
+        raise ValueError(
+            f"Unknown feature_map {feature_map!r}. Available: ['rebased', 'based']"
+        )
 
     resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences
 
@@ -130,6 +136,7 @@ def get_config(
             dropout=0.0,
             layer_kwargs={
                 "feature_dim": 32,
+                "feature_map": resolved_feature_map,
                 "use_gamma": True,
                 "use_beta": True,
                 "normalize": True,
@@ -158,6 +165,7 @@ def get_config(
         wandb_extras.append(f"agg{resolved_aggregate_k}")
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
+    wandb_extras.append(f"fm_{resolved_feature_map}")
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
