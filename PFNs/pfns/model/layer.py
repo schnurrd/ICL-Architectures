@@ -270,15 +270,16 @@ class PerFeatureLayer(Module):
         q_offset: int = 0,
         k_offset: int = 0,
     ) -> bool:
+        if q_offset != k_offset:
+            return False
+
         if mode in {"Comb_MT", "Int_MT"}:
-            return q_offset == k_offset
+            return True
 
         if mode in {"Comb_ST", "Int_ST"}:
             if train_len <= 0:
                 return False
-            keys_end = k_offset + seq_len_kv
-            keys_are_train_only = keys_end <= train_len
-            return keys_are_train_only and q_offset == k_offset
+            return (k_offset + seq_len_kv) <= train_len
 
         return False
 
