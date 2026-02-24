@@ -50,19 +50,19 @@ class RebasedLinearAttention(nn.Module):
         self.o_proj = nn.Linear(d_model, d_model)
 
         feature_map_name = feature_map.strip().lower().replace("-", "_")
-        if feature_map_name in {"rebased"}:
+        if feature_map_name == "rebased":
             self.feature_map = RebasedFeatureMap(
                 self.feature_dim,
                 use_gamma,
                 use_beta,
                 normalize,
             )
-        elif feature_map_name in {"based", "taylor_exp"}:
+        elif feature_map_name == "based":
             self.feature_map = BasedFeatureMap()
         else:
             raise ValueError(
                 f"Unsupported feature_map: {feature_map!r}. "
-                "Expected one of: 'rebased', 'based', 'taylor_exp'."
+                "Expected one of: 'rebased', 'based'"
             )
         self.feature_map_name = feature_map_name
 

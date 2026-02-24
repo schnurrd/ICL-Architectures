@@ -36,6 +36,9 @@ def _apply_pre_map_transform(
     if use_gamma:
         assert gamma is not None
         return x.mul(gamma)
+    if use_beta:
+        assert beta is not None
+        return x.add(beta)
     raise RuntimeError(
         "Not supported combination of `use_gamma`, `use_beta` and "
         f"`normalize`, which is currently set as "
