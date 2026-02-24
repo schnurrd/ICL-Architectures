@@ -59,6 +59,7 @@ def get_config(
     interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = "subspace",
     feature_map: str = "rebased",
+    feature_dim: int | None = None,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -86,6 +87,8 @@ def get_config(
         if aggregate_k_gradients is not None
         else profile["aggregate_k_gradients"]
     )
+    resolved_feature_dim = 32 if feature_dim is None else int(feature_dim)
+
     resolved_feature_map = feature_map.strip().lower().replace("-", "_")
     if resolved_feature_map not in {"rebased", "based"}:
         raise ValueError(
@@ -135,7 +138,7 @@ def get_config(
             activation="silu",
             dropout=0.0,
             layer_kwargs={
-                "feature_dim": 32,
+                "feature_dim": resolved_feature_dim,
                 "feature_map": resolved_feature_map,
                 "use_gamma": True,
                 "use_beta": True,
