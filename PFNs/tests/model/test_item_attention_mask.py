@@ -46,46 +46,18 @@ def test_item_attention_mask_test_to_train_only():
     torch.testing.assert_close(mask, expected)
 
 
-def test_item_attention_mask_causal_train_only():
-    layer = _build_layer_with_mask_mode("Comb_ST")
-    seq_len = 5
-    train_len = 3
-
-    mask = layer._build_item_attention_mask(
-        mode="Comb_ST",
-        seq_len_q=seq_len,
-        seq_len_kv=seq_len,
-        train_len=train_len,
-        device=torch.device("cpu"),
-        dtype=torch.float32,
-    )
-
-    expected = torch.full((seq_len, seq_len), float("-inf"))
-    tril_mask = torch.tril(torch.ones((train_len, train_len), dtype=torch.bool))
-    expected[:train_len, :train_len][tril_mask] = 0.0
-    expected[train_len:, :train_len] = 0.0
-
-    torch.testing.assert_close(mask, expected)
-
-
-def test_item_attention_mask_causal_all():
-    layer = _build_layer_with_mask_mode("Comb_MT")
-    seq_len = 5
-    train_len = 3
-
-    mask = layer._build_item_attention_mask(
-        mode="Comb_MT",
-        seq_len_q=seq_len,
-        seq_len_kv=seq_len,
-        train_len=train_len,
-        device=torch.device("cpu"),
-        dtype=torch.float32,
-    )
-
-    expected = torch.full((seq_len, seq_len), float("-inf"))
-    expected[torch.tril(torch.ones((seq_len, seq_len), dtype=torch.bool))] = 0.0
-
-    torch.testing.assert_close(mask, expected)
+@pytest.mark.parametrize("mode", ["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"])
+def test_item_attention_mask_builder_rejects_causal_modes(mode: str):
+    layer = _build_layer_with_mask_mode(mode)
+    with pytest.raises(ValueError, match="Explicit dense masks are only supported"):
+        layer._build_item_attention_mask(
+            mode=mode,
+            seq_len_q=5,
+            seq_len_kv=5,
+            train_len=3,
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+        )
 
 
 def test_item_attention_rope_pairwise_forward_runs():
