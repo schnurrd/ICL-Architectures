@@ -199,14 +199,16 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "KDA_Comb_ST",
         "wandb_run_id": "fla_models/runs/qaskm2mq",
     },
-    "Rebased_Comb_ST": {
+    "equal_params:Rebased_Comb_ST": {
+        "display_name": "Rebased_Comb_ST",
         "wandb_run_id": "fla_models/runs/ntkpkzf3", 
     },
     "equal_params:Transformer_Comb_ST": {
         "display_name": "Transformer_Comb_ST",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
     },
-    "Linear_Attention_Comb_ST": {
+    "equal_params:Linear_Attention_Comb_ST": {
+        "display_name": "Linear_Attention_Comb_ST",
         "wandb_run_id": "linear_attention/runs/ygawhsm9",
     },
 }
@@ -303,7 +305,7 @@ def _copy_model_config_with_display_name(
     return copied
 
 
-def _functional_config(model_config: dict[str, Any]) -> dict[str, Any]:
+def functional_model_config(model_config: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in model_config.items()
@@ -322,8 +324,8 @@ def _merge_models_with_conflict_check(
         if allowed_names is not None and model_name not in allowed_names:
             continue
         existing = selected.get(model_name)
-        existing_functional = _functional_config(existing) if existing is not None else None
-        new_functional = _functional_config(model_config)
+        existing_functional = functional_model_config(existing) if existing is not None else None
+        new_functional = functional_model_config(model_config)
         if existing is not None and existing_functional != new_functional:
             previous_family = selected_sources[model_name]
             raise ValueError(
