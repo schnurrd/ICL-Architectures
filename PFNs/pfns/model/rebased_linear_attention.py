@@ -83,7 +83,7 @@ class RebasedLinearAttention(nn.Module):
     def _apply_feature_map(self, x: torch.Tensor) -> torch.Tensor:
         return (
             checkpoint(self.feature_map, x, use_reentrant=False)
-            if self.training and self.gradient_checkpointing
+            if x.requires_grad and self.gradient_checkpointing
             else self.feature_map(x)
         )
 

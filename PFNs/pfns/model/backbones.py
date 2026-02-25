@@ -10,7 +10,6 @@ import typing as tp
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
 from dataclasses import dataclass
-from functools import partial
 
 import torch
 from torch import nn
@@ -872,9 +871,11 @@ class LinearAttentionBackbone(Backbone):
             )
             if should_recompute:
                 out = checkpoint(
-                    partial(layer, single_eval_pos=single_eval_pos, **kwargs),
+                    layer,
                     out,
+                    single_eval_pos=single_eval_pos,
                     use_reentrant=False,
+                    **kwargs,
                 )
             else:
                 out = layer(out, single_eval_pos=single_eval_pos, **kwargs)
