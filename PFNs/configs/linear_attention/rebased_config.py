@@ -66,6 +66,7 @@ def get_config(
     feature_map: str = "rebased",
     feature_dim: int | None = None,
     dense: bool = True,
+    eps: float = 1e-5,
     gradient_checkpointing: bool = False,
     recompute_every_n_layers: int | None = None,
 ) -> MainConfig:
@@ -103,6 +104,7 @@ def get_config(
             f"Unknown feature_map {feature_map!r}. Available: ['rebased', 'based']"
         )
     resolved_dense = bool(dense)
+    resolved_eps = float(eps)
     resolved_gradient_checkpointing = bool(gradient_checkpointing)
     resolved_recompute_every_n_layers = (
         None if recompute_every_n_layers is None else int(recompute_every_n_layers)
@@ -163,6 +165,7 @@ def get_config(
                 "use_gamma": True,
                 "use_beta": True,
                 "normalize": True,
+                "eps": resolved_eps,
             },
         ),
         features_per_group=20,
@@ -192,6 +195,8 @@ def get_config(
     if feature_dim is not None:
         wandb_extras.append(f"fd_{resolved_feature_dim}")
     wandb_extras.append(f"dense_{int(resolved_dense)}")
+    if eps != 1e-5:
+        wandb_extras.append(f"eps_{resolved_eps:g}")
     if gradient_checkpointing:
         wandb_extras.append("gc_1")
     if (
