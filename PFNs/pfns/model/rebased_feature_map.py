@@ -7,15 +7,24 @@ import torch.nn.functional as F
 from torch import nn
 
 
-def flatten_diag_outer_product_off1(
-    x: torch.Tensor,
-    y: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    z = torch.einsum("...i,...j->...ij", x, y)
-    n = z.size(-1)
-    indices = torch.triu_indices(n, n, 1, device=z.device)
-    diag_idx = torch.arange(0, n, device=z.device)
-    return z[..., indices[0], indices[1]], z[..., diag_idx, diag_idx]
+def _dense_pairwise_flat(x: torch.Tensor) -> torch.Tensor:
+    return (x.unsqueeze(-1) * x.unsqueeze(-2)).flatten(start_dim=-2)
+
+
+class _UpperTriCache(nn.Module):
+    def _diag_and_offdiag_products(
+        self,
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        i, j = torch.triu_indices(
+            x.shape[-1],
+            x.shape[-1],
+            1,
+            device=x.device,
+        )
+        diag = x.square()
+        offdiag = x[..., i] * x[..., j]
+        return diag, offdiag
 
 
 def _apply_pre_map_transform(
@@ -46,7 +55,7 @@ def _apply_pre_map_transform(
     )
 
 
-class RebasedFeatureMap(nn.Module):
+class RebasedFeatureMap(_UpperTriCache):
     """Torch-native implementation matching FLA's RebasedFeatureMap behavior."""
 
     def __init__(
@@ -55,12 +64,14 @@ class RebasedFeatureMap(nn.Module):
         use_gamma: bool | None = True,
         use_beta: bool | None = True,
         normalize: bool | None = True,
+        dense: bool = True,
     ) -> None:
         super().__init__()
         self.head_dim = head_dim
         self.use_gamma = use_gamma
         self.use_beta = use_beta
         self.normalize = normalize
+        self.dense = dense
 
         self.gamma = None
         self.beta = None
@@ -87,7 +98,12 @@ class RebasedFeatureMap(nn.Module):
         if not flatten:
             return x
 
-        x2_1, x2_2 = flatten_diag_outer_product_off1(x, x)
+        if self.dense:
+            # Dense basis includes all d^2 pairwise terms; scaled to match the
+            # compressed basis kernel value.
+            return _dense_pairwise_flat(x) * self.head_dim ** -0.5
+
+        x2_2, x2_1 = self._diag_and_offdiag_products(x)
         return torch.cat(
             [
                 x2_2 * self.head_dim ** -0.5,
@@ -97,11 +113,15 @@ class RebasedFeatureMap(nn.Module):
         )
 
 
-class BasedFeatureMap(nn.Module):
+class BasedFeatureMap(_UpperTriCache):
     """Polynomial Based feature map: 1 + q^T k + (q^T k)^2 / 2."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        dense: bool = True,
+    ) -> None:
         super().__init__()
+        self.dense = dense
         self.inv_sqrt2 = 1.0 / math.sqrt(2.0)
 
     def forward(
@@ -112,6 +132,13 @@ class BasedFeatureMap(nn.Module):
         if not flatten:
             return x
 
-        x2 = (x.unsqueeze(-1) * x.unsqueeze(-2)).flatten(start_dim=-2)
+        if self.dense:
+            x2 = _dense_pairwise_flat(x)
+            ones = torch.ones_like(x[..., :1])
+            return torch.cat([ones, x, x2 * self.inv_sqrt2], dim=-1)
+    
+        # Exact basis with d(d+1)/2 quadratic terms.
+        x2_diag, x2_offdiag = self._diag_and_offdiag_products(x)
+        x2 = torch.cat([x2_diag, x2_offdiag * math.sqrt(2.0)], dim=-1)
         ones = torch.ones_like(x[..., :1])
         return torch.cat([ones, x, x2 * self.inv_sqrt2], dim=-1)

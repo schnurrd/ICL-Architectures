@@ -28,8 +28,13 @@ GLOBAL_TRAIN_MIXED_PRECISION = (
 GLOBAL_TRAIN_MIXED_PRECISION_DTYPE = "bf16" if GLOBAL_TRAIN_MIXED_PRECISION else "fp32"
 
 # Training speed on different gpus:
-# -> In this model compiled is faster than non compiled 
+# -> In this model compiled is faster than non compiled (feature dim 32)
 #    - RTX 5070 (bf16):   2.25it/s, 4.7GB
+#    - RTX 2080Ti (fp32): 
+#    - A5000:     (bf16):
+
+# Based Model speed with 12.79M parameters
+#    - RTX 5070 (bf16):   2.4it/s, 6.8 GB
 #    - RTX 2080Ti (fp32): 
 #    - A5000:     (bf16):
 
@@ -60,6 +65,7 @@ def get_config(
     feature_positional_embedding: str | None = "subspace",
     feature_map: str = "rebased",
     feature_dim: int | None = None,
+    dense: bool = True,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -94,6 +100,7 @@ def get_config(
         raise ValueError(
             f"Unknown feature_map {feature_map!r}. Available: ['rebased', 'based']"
         )
+    resolved_dense = bool(dense)
 
     resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences
 
@@ -140,6 +147,7 @@ def get_config(
             layer_kwargs={
                 "feature_dim": resolved_feature_dim,
                 "feature_map": resolved_feature_map,
+                "dense": resolved_dense,
                 "use_gamma": True,
                 "use_beta": True,
                 "normalize": True,
@@ -169,6 +177,9 @@ def get_config(
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
     wandb_extras.append(f"fm_{resolved_feature_map}")
+    if feature_dim is not None:
+        wandb_extras.append(f"fd_{resolved_feature_dim}")
+    wandb_extras.append(f"dense_{int(resolved_dense)}")
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
