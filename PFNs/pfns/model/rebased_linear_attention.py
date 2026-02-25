@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from pfns.model.attention_utils import (
     apply_state_to_query_4d,
@@ -29,6 +30,7 @@ class RebasedLinearAttention(nn.Module):
         use_gamma: bool = True,
         use_beta: bool = True,
         normalize: bool = True,
+        gradient_checkpointing: bool = False,
         eps: float = 1e-5,
     ) -> None:
         super().__init__()
@@ -46,6 +48,7 @@ class RebasedLinearAttention(nn.Module):
             else self.head_dim
         )
         resolved_dense = bool(dense)
+        self.gradient_checkpointing = bool(gradient_checkpointing)
         
         self.eps = eps
         self.dropout = nn.Dropout(dropout)
@@ -77,6 +80,13 @@ class RebasedLinearAttention(nn.Module):
         self.norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(2)])
         self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
 
+    def _apply_feature_map(self, x: torch.Tensor) -> torch.Tensor:
+        return (
+            checkpoint(self.feature_map, x, use_reentrant=False)
+            if x.requires_grad and self.gradient_checkpointing
+            else self.feature_map(x)
+        )
+
     def _prepare_input(
         self,
         x: torch.Tensor,
@@ -103,7 +113,7 @@ class RebasedLinearAttention(nn.Module):
         k = self.k_proj(x_flat).view(b * n, s, self.num_heads, self.feature_dim)
         v = self.v_proj(x_flat).view(b * n, s, self.num_heads, self.head_dim)
 
-        q, k = self.feature_map(q), self.feature_map(k)
+        q, k = self._apply_feature_map(q), self._apply_feature_map(k)
 
         return q, k, v
 

@@ -66,6 +66,8 @@ def get_config(
     feature_map: str = "rebased",
     feature_dim: int | None = None,
     dense: bool = True,
+    gradient_checkpointing: bool = False,
+    recompute_every_n_layers: int = 1,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -101,6 +103,8 @@ def get_config(
             f"Unknown feature_map {feature_map!r}. Available: ['rebased', 'based']"
         )
     resolved_dense = bool(dense)
+    resolved_gradient_checkpointing = bool(gradient_checkpointing)
+    resolved_recompute_every_n_layers = int(recompute_every_n_layers)
 
     resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences
 
@@ -144,10 +148,13 @@ def get_config(
             num_heads=4,
             activation="silu",
             dropout=0.0,
+            recompute_layer=resolved_gradient_checkpointing,
+            recompute_every_n_layers=resolved_recompute_every_n_layers,
             layer_kwargs={
                 "feature_dim": resolved_feature_dim,
                 "feature_map": resolved_feature_map,
                 "dense": resolved_dense,
+                "gradient_checkpointing": resolved_gradient_checkpointing,
                 "use_gamma": True,
                 "use_beta": True,
                 "normalize": True,
@@ -180,6 +187,10 @@ def get_config(
     if feature_dim is not None:
         wandb_extras.append(f"fd_{resolved_feature_dim}")
     wandb_extras.append(f"dense_{int(resolved_dense)}")
+    if gradient_checkpointing:
+        wandb_extras.append("gc_1")
+    if recompute_every_n_layers != 1:
+        wandb_extras.append(f"recompn_{resolved_recompute_every_n_layers}")
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
