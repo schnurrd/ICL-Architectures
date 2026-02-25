@@ -214,29 +214,29 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     #     "eval_mode": "forward",
     # },
     "Transformer_Non_Causal_with_RoPE": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/ifvo080r", # second run with fp32 as comparison: 0xi6dcvc
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xsbe5y6d", # old runs: xsbe5y6d, second run with fp32 as comparison: 0xi6dcvc
         "eval_mode": "forward",
     },
-    "Transformer_Non_Causal_interleaved_with_RoPE": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/jzs97xfg",
+    "Transformer_Non_Causal_interleaved_with_RoPE_paired": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   # new one uses pairwise rope while old one does not jzs97xfg
         "eval_mode": "forward",
     },
     "Transformer_Comb_ST": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
         "eval_mode": "forward",
     },
-    "Transformer_Int_ST_with_RoPE": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/7yzlf15p", 
+    "Transformer_Int_ST_with_RoPE_paired": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
         "eval_mode": "forward",
     },
     # "Transformer_Test_To_Train_Only": {
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
     #     "eval_mode": "forward",
     # },
-    "Transformer_Comb_MT": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
-        "eval_mode": "forward",
-    },
+    # "Transformer_Comb_MT": { # todo update with new model
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
+    #     "eval_mode": "forward",
+    # },
     "Transformer_Int_MT_with_RoPE": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/m74u7psh",
         "eval_mode": "forward",
