@@ -24,6 +24,7 @@ class RebasedLinearAttention(nn.Module):
         dropout: float = 0.1,
         activation: str = "silu",
         feature_dim: int | None = None,
+        dense: bool = True,
         feature_map: str = "rebased",
         use_gamma: bool = True,
         use_beta: bool = True,
@@ -37,7 +38,14 @@ class RebasedLinearAttention(nn.Module):
         self.d_model = d_model
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
-        self.feature_dim = feature_dim if feature_dim is not None else self.head_dim
+        feature_map_name = feature_map.strip().lower().replace("-", "_")
+        effective_feature_dim = int(feature_dim) if feature_dim is not None else None
+        self.feature_dim = (
+            effective_feature_dim
+            if effective_feature_dim is not None
+            else self.head_dim
+        )
+        resolved_dense = bool(dense)
         
         self.eps = eps
         self.dropout = nn.Dropout(dropout)
@@ -49,16 +57,16 @@ class RebasedLinearAttention(nn.Module):
         self.v_proj = nn.Linear(d_model, d_model)
         self.o_proj = nn.Linear(d_model, d_model)
 
-        feature_map_name = feature_map.strip().lower().replace("-", "_")
         if feature_map_name == "rebased":
             self.feature_map = RebasedFeatureMap(
                 self.feature_dim,
                 use_gamma,
                 use_beta,
                 normalize,
+                dense=resolved_dense,
             )
         elif feature_map_name == "based":
-            self.feature_map = BasedFeatureMap()
+            self.feature_map = BasedFeatureMap(dense=resolved_dense)
         else:
             raise ValueError(
                 f"Unsupported feature_map: {feature_map!r}. "
