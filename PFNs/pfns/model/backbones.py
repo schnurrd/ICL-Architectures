@@ -839,13 +839,15 @@ class LinearAttentionBackbone(Backbone):
         layers: nn.ModuleList,
         *,
         recompute_each_layer: bool = False,
-        recompute_every_n_layers: int = 1,
+        recompute_every_n_layers: int | None = 1,
     ):
         super().__init__()
         self.layers = layers
         self.recompute_each_layer = bool(recompute_each_layer)
-        self.recompute_every_n_layers = int(recompute_every_n_layers)
-        if self.recompute_every_n_layers <= 0:
+        self.recompute_every_n_layers = (
+            None if recompute_every_n_layers is None else int(recompute_every_n_layers)
+        )
+        if self.recompute_every_n_layers is not None and self.recompute_every_n_layers <= 0:
             raise ValueError("recompute_every_n_layers must be >= 1")
 
     def forward(
@@ -867,6 +869,7 @@ class LinearAttentionBackbone(Backbone):
             should_recompute = (
                 self.recompute_each_layer
                 and out.requires_grad
+                and self.recompute_every_n_layers is not None
                 and (idx % self.recompute_every_n_layers == 0)
             )
             if should_recompute:
@@ -915,7 +918,7 @@ class RebasedBackboneConfig(BackboneConfig):
     activation: str = "silu"
     dropout: float = 0.1
     recompute_layer: bool = False
-    recompute_every_n_layers: int = 1
+    recompute_every_n_layers: int | None = None
     layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
 
 
