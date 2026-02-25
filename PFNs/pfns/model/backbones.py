@@ -10,9 +10,11 @@ import typing as tp
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
 from dataclasses import dataclass
+from functools import partial
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from fla.models import GLAConfig, GLAModel
 from fla.models import Mamba2Config, Mamba2Model
@@ -802,6 +804,8 @@ class LinearAttentionBackboneConfig(BackboneConfig):
     mlp_hidden_dim: int = 200
     dropout: float = 0.0
     activation: tp.Literal["gelu", "relu", "swish", "silu"] = "silu"
+    recompute_layer: bool = False
+    recompute_every_n_layers: int = 1
     layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
 
     def create_backbone(
@@ -822,14 +826,28 @@ class LinearAttentionBackboneConfig(BackboneConfig):
             )
             for _ in range(self.nlayers)
         ])
-        return LinearAttentionBackbone(layers)
+        return LinearAttentionBackbone(
+            layers,
+            recompute_each_layer=self.recompute_layer,
+            recompute_every_n_layers=self.recompute_every_n_layers,
+        )
 
 
 class LinearAttentionBackbone(Backbone):
     """Stack of LinearAttention layers as a backbone."""
-    def __init__(self, layers: nn.ModuleList):
+    def __init__(
+        self,
+        layers: nn.ModuleList,
+        *,
+        recompute_each_layer: bool = False,
+        recompute_every_n_layers: int = 1,
+    ):
         super().__init__()
         self.layers = layers
+        self.recompute_each_layer = bool(recompute_each_layer)
+        self.recompute_every_n_layers = int(recompute_every_n_layers)
+        if self.recompute_every_n_layers <= 0:
+            raise ValueError("recompute_every_n_layers must be >= 1")
 
     def forward(
         self,
@@ -846,8 +864,20 @@ class LinearAttentionBackbone(Backbone):
         assert (
             cache_trainset_representation is False
         ), "cache_trainset_representation not supported in LinearAttention backbone"
-        for layer in self.layers:
-            out = layer(out, single_eval_pos=single_eval_pos)
+        for idx, layer in enumerate(self.layers):
+            should_recompute = (
+                self.recompute_each_layer
+                and out.requires_grad
+                and (idx % self.recompute_every_n_layers == 0)
+            )
+            if should_recompute:
+                out = checkpoint(
+                    partial(layer, single_eval_pos=single_eval_pos, **kwargs),
+                    out,
+                    use_reentrant=False,
+                )
+            else:
+                out = layer(out, single_eval_pos=single_eval_pos, **kwargs)
         return out
 
     def incontext_fit(
@@ -883,6 +913,8 @@ class RebasedBackboneConfig(BackboneConfig):
     num_heads: int = 2
     activation: str = "silu"
     dropout: float = 0.1
+    recompute_layer: bool = False
+    recompute_every_n_layers: int = 1
     layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
 
 
@@ -909,4 +941,8 @@ class RebasedBackboneConfig(BackboneConfig):
                 for _ in range(self.nlayers)
             ]
         )
-        return LinearAttentionBackbone(layers)
+        return LinearAttentionBackbone(
+            layers,
+            recompute_each_layer=self.recompute_layer,
+            recompute_every_n_layers=self.recompute_every_n_layers,
+        )
