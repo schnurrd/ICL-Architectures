@@ -41,7 +41,8 @@ GLA_MODELS: dict[str, dict[str, Any]] = {
     "GLA_Comb_MT": {
         "wandb_run_id": "fla_models/runs/yzw9d63f",
     },
-    "GLA_Comb_ST": {
+    "gla:GLA_Comb_ST": {
+        "display_name": "GLA_Comb_ST",
         "wandb_run_id": "fla_models/runs/g1ul5lyc",
     },
     "GLA_Comb_ST_short_conv": {
@@ -170,13 +171,16 @@ REBASED_MODELS: dict[str, dict[str, Any]] = {
 }
 
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
-    "GLA_Comb_ST": {
+    "equal_params:GLA_Comb_ST": {
+        "display_name": "GLA_Comb_ST",
         "wandb_run_id": "fla_models/runs/4vsqz1ee",
     },
-    "Mamba2_Comb_ST": {
+    "equal_params:Mamba2_Comb_ST": {
+        "display_name": "Mamba2_Comb_ST",
         "wandb_run_id": "fla_models/runs/o9e00w17",
     },
-    "DeltaNet_Comb_ST": {
+    "equal_params:DeltaNet_Comb_ST": {
+        "display_name": "DeltaNet_Comb_ST",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "eval_autocast_dtype": "bf16",
     },
@@ -184,22 +188,27 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     #     "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
     #     "eval_autocast_dtype": "bf16",
     # },
-    "Gated_DeltaNet_Comb_ST": {
+    "equal_params:Gated_DeltaNet_Comb_ST": {
+        "display_name": "Gated_DeltaNet_Comb_ST",
         "wandb_run_id": "fla_models/runs/g7rh5nv9",  
     },
     # "Gated_DeltaNet_Int_MT": {
     #     "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
     # },
-    "KDA_Comb_ST": {
+    "equal_params:KDA_Comb_ST": {
+        "display_name": "KDA_Comb_ST",
         "wandb_run_id": "fla_models/runs/qaskm2mq",
     },
-    "Rebased_Comb_ST": {
+    "equal_params:Rebased_Comb_ST": {
+        "display_name": "Rebased_Comb_ST",
         "wandb_run_id": "fla_models/runs/ntkpkzf3", 
     },
-    "Transformer_Comb_ST": {
+    "equal_params:Transformer_Comb_ST": {
+        "display_name": "Transformer_Comb_ST",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
     },
-    "Linear_Attention_Comb_ST": {
+    "equal_params:Linear_Attention_Comb_ST": {
+        "display_name": "Linear_Attention_Comb_ST",
         "wandb_run_id": "linear_attention/runs/ygawhsm9",
     },
 }
@@ -278,6 +287,31 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "other": OTHER_MODELS,
 }
 
+NON_FUNCTIONAL_CONFIG_KEYS = frozenset({"display_name"})
+
+
+def _default_display_name(model_name: str) -> str:
+    if ":" in model_name:
+        return model_name.split(":", maxsplit=1)[1]
+    return model_name
+
+
+def _copy_model_config_with_display_name(
+    model_name: str,
+    model_config: dict[str, Any],
+) -> dict[str, Any]:
+    copied = model_config.copy()
+    copied.setdefault("display_name", _default_display_name(model_name))
+    return copied
+
+
+def functional_model_config(model_config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in model_config.items()
+        if key not in NON_FUNCTIONAL_CONFIG_KEYS
+    }
+
 def _merge_models_with_conflict_check(
     *,
     selected: dict[str, dict[str, Any]],
@@ -290,7 +324,9 @@ def _merge_models_with_conflict_check(
         if allowed_names is not None and model_name not in allowed_names:
             continue
         existing = selected.get(model_name)
-        if existing is not None and existing != model_config:
+        existing_functional = functional_model_config(existing) if existing is not None else None
+        new_functional = functional_model_config(model_config)
+        if existing is not None and existing_functional != new_functional:
             previous_family = selected_sources[model_name]
             raise ValueError(
                 f"Model {model_name!r} has conflicting configs across selections: "
@@ -298,7 +334,7 @@ def _merge_models_with_conflict_check(
                 f"Existing={existing!r}, new={model_config!r}"
             )
         if existing is None:
-            selected[model_name] = model_config.copy()
+            selected[model_name] = _copy_model_config_with_display_name(model_name, model_config)
             selected_sources[model_name] = family_name
 
 
@@ -307,6 +343,7 @@ def get_baseline_models() -> dict[str, dict[str, Any]]:
         name: {
             "runner": "baseline",
             "baseline_name": name,
+            "display_name": name,
         }
         for name in BASELINE_MODEL_NAMES
     }

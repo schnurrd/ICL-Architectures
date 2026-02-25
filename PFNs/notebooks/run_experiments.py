@@ -24,6 +24,9 @@ from pfns.experiments.model_benchmarks.model_registry import (
     get_models_from_families,
     get_models_from_names,
 )
+
+DEFAULT_MODEL_FAMILIES_FOR_RUN = MODEL_FAMILIES.keys()  # By default, run all families 
+
 from pfns.experiments.model_benchmarks.workflows import (
     alias_single_model_seq_len_bundle,
     build_seq_len_run_metadata,

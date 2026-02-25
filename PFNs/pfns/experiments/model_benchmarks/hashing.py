@@ -4,6 +4,7 @@ import hashlib
 import json
 from typing import Any
 
+from pfns.experiments.model_benchmarks.model_registry import functional_model_config
 
 def model_identity_from_config(
     *,
@@ -26,14 +27,15 @@ def single_model_hash(
     hash_length: int = 16,
 ) -> str:
     """Build a deterministic short hash keyed by model identity + config + experiment payload."""
+    filtered_model_config = functional_model_config(model_config)
     model_identity = model_identity_from_config(
         model_name=model_name,
-        model_config=model_config,
+        model_config=filtered_model_config,
     )
     payload = {
         "experiment": experiment_payload,
         "model_identity": model_identity,
-        "model_config": model_config,
+        "model_config": filtered_model_config,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
