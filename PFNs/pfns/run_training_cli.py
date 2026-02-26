@@ -243,9 +243,10 @@ def _is_associative_recall_config(config: pfns.train.MainConfig) -> bool:
     """Detect whether the loaded config uses the associative recall prior."""
     for prior_cfg in config.priors:
         prior_names = getattr(prior_cfg, "prior_names", None)
-        if isinstance(prior_names, str):
-            if prior_names == "associative_recall":
-                return True
+        if isinstance(prior_names, str) and prior_names == "associative_recall":
+            return True
+        if isinstance(prior_names, (list, tuple)) and "associative_recall" in prior_names:
+            return True
     return False
 
 
