@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import time
 from typing import Any
 
 import torch
 
+from pfns.priors.associative_recall import generate_associative_recall_batch
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
+
+SEQ_LEN_TASK_VARIANTS: tuple[str, ...] = ("tabular_prior", "associative_recall")
+
+
+@dataclass
+class BenchmarkBatch:
+    x: torch.Tensor
+    y: torch.Tensor
+    target_y: torch.Tensor
+    categorical_mask: torch.Tensor | None = None
+    style: torch.Tensor | None = None
+    y_style: torch.Tensor | None = None
 
 
 class ClassCoverageBatchGenerator:
@@ -130,3 +144,103 @@ class ClassCoverageBatchGenerator:
     def __iter__(self):
         for _ in range(self.num_batches):
             yield self.sample_one()
+
+
+class AssociativeRecallBatchGenerator:
+    """Sample associative-recall key-value batches with shared API.
+
+    Queries are sampled from the smallest train prefix so they remain answerable for
+    every evaluated sequence length in the sweep.
+    """
+
+    def __init__(
+        self,
+        *,
+        num_batches: int,
+        largest_seqlen: int,
+        smallest_seqlen: int,
+        num_features: int,
+        num_classes: int,
+        number_of_test_samples: int,
+        batch_device: str = "cpu",
+    ) -> None:
+        if min(num_batches, smallest_seqlen, num_features, number_of_test_samples) < 1:
+            raise ValueError(
+                "num_batches, smallest_seqlen, num_features, and "
+                "number_of_test_samples must be >= 1."
+            )
+        if num_classes < 2:
+            raise ValueError("num_classes must be >= 2.")
+        if largest_seqlen < smallest_seqlen:
+            raise ValueError("largest_seqlen must be >= smallest_seqlen.")
+
+        self.num_batches = num_batches
+        self.largest_seqlen = largest_seqlen
+        self.smallest_seqlen = smallest_seqlen
+        self.num_features = num_features
+        self.num_classes = num_classes
+        self.number_of_test_samples = number_of_test_samples
+        self.batch_device = batch_device
+
+    def sample_one(self) -> tuple[BenchmarkBatch, float]:
+        start_time = time.perf_counter()
+        sampled = generate_associative_recall_batch(
+            batch_size=1,
+            largest_seqlen=self.largest_seqlen,
+            smallest_seqlen=self.smallest_seqlen,
+            num_features=self.num_features,
+            num_classes=self.num_classes,
+            number_of_test_samples=self.number_of_test_samples,
+            batch_device=self.batch_device,
+        )
+
+        batch = BenchmarkBatch(
+            x=sampled.x,
+            y=sampled.y,
+            target_y=sampled.target_y,
+            categorical_mask=sampled.categorical_mask,
+            style=sampled.style,
+            y_style=sampled.y_style,
+        )
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        return batch, float(elapsed_ms)
+
+    def __iter__(self):
+        for _ in range(self.num_batches):
+            yield self.sample_one()
+
+
+def create_seq_len_batch_generator(
+    *,
+    task_variant: str,
+    num_batches: int,
+    largest_seqlen: int,
+    smallest_seqlen: int,
+    num_features: int,
+    num_classes: int,
+    number_of_test_samples: int,
+    default_device: str,
+    task_kwargs: dict[str, Any] | None = None,
+):
+    options = dict(task_kwargs or {})
+    if task_variant == "tabular_prior":
+        generator_cls = ClassCoverageBatchGenerator
+        options.setdefault("prior_device", default_device)
+    elif task_variant == "associative_recall":
+        generator_cls = AssociativeRecallBatchGenerator
+        options.setdefault("batch_device", default_device)
+    else:
+        available = ", ".join(SEQ_LEN_TASK_VARIANTS)
+        raise ValueError(
+            f"Unknown task_variant {task_variant!r}. Available variants: {available}"
+        )
+
+    return generator_cls(
+        num_batches=num_batches,
+        largest_seqlen=largest_seqlen,
+        smallest_seqlen=smallest_seqlen,
+        num_features=num_features,
+        num_classes=num_classes,
+        number_of_test_samples=number_of_test_samples,
+        **options,
+    )

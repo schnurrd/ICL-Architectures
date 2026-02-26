@@ -7,6 +7,11 @@ from __future__ import annotations
 
 import torch
 
+from pfns.prior_defaults import (
+    ASSOCIATIVE_RECALL_SETTINGS,
+    TABPFN_PRIOR_DEFAULTS,
+    build_prior_for_task,
+)
 from pfns.model.backbones import FLABackboneConfig
 from pfns.model.mode_normalization import (
     CANONICAL_SEQUENCE_MODES,
@@ -14,7 +19,6 @@ from pfns.model.mode_normalization import (
 )
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
-from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
 from pfns.run_logger import WandbConfig
 from pfns.train import (
     BatchShapeSamplerConfig,
@@ -35,6 +39,7 @@ SUPPORTED_SEQUENCE_MODES = CANONICAL_SEQUENCE_MODES
 TRAINING_PROFILES = {
     "low": (6.0e-5, 1000),
     "high": (3.0e-5, 4000),
+    "ar": (3.0e-5, 500),
 }
 
 MODEL_SETTINGS = {
@@ -165,6 +170,7 @@ def get_config(
     model_type: str = "kda",
     hidden_size: int | None = None,
     sequence_mode: str = "Comb_ST",
+    task_variant: str = "tabular_prior",
     # Training
     training_setup: str = "high",
     batch_size: int | None = None,
@@ -179,8 +185,8 @@ def get_config(
     config_kwargs_override: dict[str, object] | None = None,
 ) -> MainConfig:
     """Build a MainConfig for FLA backbone training."""
-    max_num_classes = 10
-    max_num_features = 20
+    max_num_classes = int(TABPFN_PRIOR_DEFAULTS["max_num_classes"])
+    max_num_features = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
     
     if feature_positional_embedding == "None":
         feature_positional_embedding = None
@@ -188,6 +194,13 @@ def get_config(
     model_type = _normalize_model_type(model_type)
     sequence_mode = _resolve_sequence_mode(sequence_mode)
     training_setup = training_setup.strip().lower()
+    is_associative_recall = task_variant == ASSOCIATIVE_RECALL_SETTINGS["task_variant"]
+    if is_associative_recall and training_setup != "ar":
+        print(
+            f"Overriding training_setup={training_setup!r} to 'ar' "
+            f"because task_variant={task_variant!r}."
+        )
+        training_setup = "ar"
 
     if model_type not in MODEL_SETTINGS:
         raise ValueError(
@@ -204,12 +217,14 @@ def get_config(
         if steps_per_epoch is not None
         else int(profile_steps_per_epoch)
     )
+    resolved_epochs = 200
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
-    resolved_aggregate_k = (
-        aggregate_k_gradients
-        if aggregate_k_gradients is not None
-        else GLOBAL_AGGREGATE_K_GRADIENTS
-    )
+    if aggregate_k_gradients is not None:
+        resolved_aggregate_k = aggregate_k_gradients
+    elif is_associative_recall:
+        resolved_aggregate_k = 1
+    else:
+        resolved_aggregate_k = GLOBAL_AGGREGATE_K_GRADIENTS
     resolved_batch_size = batch_size or DEFAULT_BATCH_SIZE
     train_mixed_precision = GLOBAL_TRAIN_MIXED_PRECISION
     train_mixed_precision_dtype = GLOBAL_TRAIN_MIXED_PRECISION_DTYPE
@@ -222,20 +237,20 @@ def get_config(
         )
     resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences 
 
-    prior = TabPFNPriorConfig(
-        prior_type="mlp",
+    prior = build_prior_for_task(
+        task_variant=task_variant,
+        prior_device=resolved_prior_device,
         max_num_classes=max_num_classes,
         max_num_features=max_num_features,
-        flexible=True,
-        differentiable=True,
-        nan_handling=True,
-        return_categorical_mask=True,
-        device=resolved_prior_device,
     )
 
     batch_shape = BatchShapeSamplerConfig(
         batch_size=resolved_batch_size,
-        min_single_eval_pos=24,
+        min_single_eval_pos=(
+            ASSOCIATIVE_RECALL_SETTINGS["min_single_eval_pos"]
+            if is_associative_recall
+            else 24
+        ),
         max_seq_len=resolved_max_seq_len,
         min_num_features=2,
         max_num_features=max_num_features,
@@ -330,6 +345,8 @@ def get_config(
     wandb_name = (
         f"{model_type}_{sequence_mode}_{training_setup}_{extras_str}_config_{config_index}_matched"
     )
+    if is_associative_recall:
+        wandb_name += "_ar"
     wandb_config = WandbConfig(
         entity="icl_arch",
         project="fla_models",
@@ -349,7 +366,7 @@ def get_config(
         optimizer=optimizer,
         model=model,
         batch_shape_sampler=batch_shape,
-        epochs=200,
+        epochs=resolved_epochs,
         warmup_epochs=10,
         steps_per_epoch=resolved_steps_per_epoch,
         n_targets_per_input=1,

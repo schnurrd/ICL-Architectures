@@ -239,6 +239,16 @@ def _update_wandb(config: pfns.train.MainConfig, **updates) -> pfns.train.MainCo
     return _update_config(config, wandb=WandbConfig(**{**base.__dict__, **updates}))
 
 
+def _is_associative_recall_config(config: pfns.train.MainConfig) -> bool:
+    """Detect whether the loaded config uses the associative recall prior."""
+    for prior_cfg in config.priors:
+        prior_names = getattr(prior_cfg, "prior_names", None)
+        if isinstance(prior_names, str):
+            if prior_names == "associative_recall":
+                return True
+    return False
+
+
 def _build_checkpoint_path(
     prefix: str,
     config_file: str,
@@ -364,7 +374,10 @@ def main():
     if run_manager.run_id:
         print(f"Wandb run: {run_manager.run_id}")
 
-    should_run_eval = config.train_state_dict_save_path is not None
+    should_run_eval = (
+        config.train_state_dict_save_path is not None
+        and not _is_associative_recall_config(config)
+    )
     
     print(f"Starting / Continuing training:")
     print(f"  Epochs: {config.epochs} epochs")
@@ -395,10 +408,15 @@ def main():
         print(f"Model saved to: {config.train_state_dict_save_path}")
         run_manager.save_model(config.train_state_dict_save_path)
 
-    if config.train_state_dict_save_path is None:
-        print(
-            "Skipping automatic evaluation because no train_state_dict_save_path was provided."
-        )
+    if not should_run_eval:
+        if config.train_state_dict_save_path is None:
+            print(
+                "Skipping automatic evaluation because no train_state_dict_save_path was provided."
+            )
+        else:
+            print(
+                "Skipping automatic evaluation because associative recall mode is active."
+            )
         return
 
     base_path = os.path.dirname(config.train_state_dict_save_path)

@@ -35,12 +35,14 @@ class AdhocPriorConfig(PriorConfig):
         ), f"Either prior_name or get_batch_method must be provided, got prior_names={self.prior_names} and get_batch_methods={self.get_batch_methods}"
 
         if self.prior_names is not None:
+            if isinstance(self.prior_names, str): # string is also a sequence
+                prior_names = [self.prior_names]
+            elif isinstance(self.prior_names, Sequence):
+                prior_names = list(self.prior_names)
+            else:
+                prior_names = [self.prior_names]
             get_batch_methods = []
-            for prior_name in (
-                self.prior_names
-                if isinstance(self.prior_names, Sequence)
-                else [self.prior_names]
-            ):
+            for prior_name in prior_names:
                 prior_module = importlib.import_module(f"pfns.priors.{prior_name}")
                 get_batch_methods.append(prior_module.get_batch)
         else:
@@ -50,7 +52,7 @@ class AdhocPriorConfig(PriorConfig):
                 else [self.get_batch_methods]
             )
 
-        return partial(get_batch_sequence(*get_batch_methods), **self.prior_kwargs)
+        return partial(get_batch_sequence(*get_batch_methods), **(self.prior_kwargs or {}))
 
 
 @dataclass
