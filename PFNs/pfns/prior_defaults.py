@@ -15,6 +15,7 @@ TABPFN_PRIOR_DEFAULTS = {
 
 ASSOCIATIVE_RECALL_SETTINGS = {
     "task_variant": "associative_recall",
+    "wandb_project": "associative_recall",
     "min_single_eval_pos": 128,
     "fixed_num_features": 10,
     "fixed_num_classes": 10,

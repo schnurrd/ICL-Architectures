@@ -232,7 +232,11 @@ def get_config(
 
     wandb_config = WandbConfig(
         entity="icl_arch",
-        project="tabpfn_transformer",
+        project=(
+            ASSOCIATIVE_RECALL_SETTINGS["wandb_project"]
+            if is_associative_recall
+            else "tabpfn_transformer"
+        ),
         name=wandb_name,
         tags=["matched_high_config"],
         mode="online",

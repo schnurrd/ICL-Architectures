@@ -184,7 +184,11 @@ def get_config(
         wandb_name += "_ar"
     wandb_config = WandbConfig(
         entity="icl_arch",
-        project="linear_attention",
+        project=(
+            ASSOCIATIVE_RECALL_SETTINGS["wandb_project"]
+            if is_associative_recall
+            else "linear_attention"
+        ),
         name=wandb_name,
         tags=["matched_high_config"],
         mode="online",

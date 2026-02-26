@@ -349,7 +349,11 @@ def get_config(
         wandb_name += "_ar"
     wandb_config = WandbConfig(
         entity="icl_arch",
-        project="fla_models",
+        project=(
+            ASSOCIATIVE_RECALL_SETTINGS["wandb_project"]
+            if is_associative_recall
+            else "fla_models"
+        ),
         name=wandb_name,
         tags=[
             "matched_high_config",
