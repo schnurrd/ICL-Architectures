@@ -258,7 +258,7 @@ BASELINE_MODEL_NAMES: tuple[str, ...] = (
     "RandomForest",
     "XGBoost",
     "CatBoost",
-    "TabICL",
+    "TabICLv2",
     "TabPFNv2.5",
     "TabFlex",
 )

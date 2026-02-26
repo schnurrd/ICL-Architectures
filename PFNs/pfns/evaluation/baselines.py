@@ -246,7 +246,7 @@ class CatBoostBaseline:
         return np.asarray(self.model.predict_proba(X))
 
 class TabICLBaseline:
-    name = "TabICL"
+    name = "TabICLv2"
 
     def __init__(self, random_state: int = 42, **tabicl_kwargs):
         self.random_state = random_state
