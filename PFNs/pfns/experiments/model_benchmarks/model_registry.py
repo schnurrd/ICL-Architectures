@@ -242,12 +242,12 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
     #     "eval_mode": "forward",
     # },
-    # "Transformer_Comb_MT": { # todo update with new model
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
-    #     "eval_mode": "forward",
-    # },
-    "Transformer_Int_MT_with_RoPE": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/m74u7psh",
+    "Transformer_Comb_MT": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
+        "eval_mode": "forward",
+    },
+    "Transformer_Int_MT_with_RoPE": { 
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
         "eval_mode": "forward",
     },
 }
