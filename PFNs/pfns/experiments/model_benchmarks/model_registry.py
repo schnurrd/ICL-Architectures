@@ -230,7 +230,8 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   # new one uses pairwise rope while old one does not jzs97xfg
         "eval_mode": "forward",
     },
-    "Transformer_Comb_ST": {
+    "masked:Transformer_Comb_ST": {
+        "display_name": "Transformer_Comb_ST",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
         "eval_mode": "forward",
     },
