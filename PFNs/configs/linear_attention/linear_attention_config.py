@@ -51,6 +51,7 @@ TRAINING_PROFILES = {
         "lr": 3.0e-5,
         "steps_per_epoch": 500,
         "aggregate_k_gradients": 1,
+        "epochs": 200,
     },
 }
 

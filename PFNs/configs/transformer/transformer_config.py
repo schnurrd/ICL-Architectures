@@ -115,6 +115,7 @@ TRAINING_PROFILES = {
         "nhid": 320 * 2,
         "lr": 3.0e-5,
         "steps_per_epoch": 500,
+        "epochs": 200,
         "warmup_epochs": 10,
         "aggregate_k_gradients": 1,
         "attention_between_features": False,

@@ -40,7 +40,7 @@ SUPPORTED_SEQUENCE_MODES = CANONICAL_SEQUENCE_MODES
 TRAINING_PROFILES = {
     "low": {"lr": 6.0e-5, "steps_per_epoch": 1000, "epochs": 200},
     "high": {"lr": 3.0e-5, "steps_per_epoch": 4000, "epochs": 200},
-    "ar": {"lr": 3.0e-5, "steps_per_epoch": 1000},
+    "ar": {"lr": 3.0e-5, "steps_per_epoch": 1000, "epochs": 200},
 }
 
 MODEL_SETTINGS = {
