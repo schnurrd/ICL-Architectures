@@ -11,6 +11,7 @@ from pfns.prior_defaults import (
     ASSOCIATIVE_RECALL_SETTINGS,
     TABPFN_PRIOR_DEFAULTS,
     build_prior_for_task,
+    resolve_training_setup_for_task,
 )
 from pfns.model.backbones import FLABackboneConfig
 from pfns.model.mode_normalization import (
@@ -37,9 +38,9 @@ GLOBAL_AGGREGATE_K_GRADIENTS = 2
 SUPPORTED_SEQUENCE_MODES = CANONICAL_SEQUENCE_MODES
 
 TRAINING_PROFILES = {
-    "low": (6.0e-5, 1000),
-    "high": (3.0e-5, 4000),
-    "ar": (3.0e-5, 500),
+    "low": {"lr": 6.0e-5, "steps_per_epoch": 1000, "epochs": 200},
+    "high": {"lr": 3.0e-5, "steps_per_epoch": 4000, "epochs": 200},
+    "ar": {"lr": 3.0e-5, "steps_per_epoch": 1000},
 }
 
 MODEL_SETTINGS = {
@@ -194,13 +195,10 @@ def get_config(
     model_type = _normalize_model_type(model_type)
     sequence_mode = _resolve_sequence_mode(sequence_mode)
     training_setup = training_setup.strip().lower()
-    is_associative_recall = task_variant == ASSOCIATIVE_RECALL_SETTINGS["task_variant"]
-    if is_associative_recall and training_setup != "ar":
-        print(
-            f"Overriding training_setup={training_setup!r} to 'ar' "
-            f"because task_variant={task_variant!r}."
-        )
-        training_setup = "ar"
+    training_setup, is_associative_recall = resolve_training_setup_for_task(
+        training_setup=training_setup,
+        task_variant=task_variant,
+    )
 
     if model_type not in MODEL_SETTINGS:
         raise ValueError(
@@ -210,14 +208,14 @@ def get_config(
         raise ValueError(
             f"Unknown training_setup {training_setup!r}. Available: {sorted(TRAINING_PROFILES)}"
         )
-    profile_lr, profile_steps_per_epoch = TRAINING_PROFILES[training_setup]
-    resolved_lr = float(profile_lr) if lr is None else float(lr)
+    profile = TRAINING_PROFILES[training_setup]
+    resolved_lr = float(profile["lr"]) if lr is None else float(lr)
     resolved_steps_per_epoch = (
         int(steps_per_epoch)
         if steps_per_epoch is not None
-        else int(profile_steps_per_epoch)
+        else int(profile["steps_per_epoch"])
     )
-    resolved_epochs = 200
+    resolved_epochs = int(profile.get("epochs", 200))
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
     if aggregate_k_gradients is not None:
         resolved_aggregate_k = aggregate_k_gradients

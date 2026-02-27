@@ -11,6 +11,7 @@ from pfns.prior_defaults import (
     ASSOCIATIVE_RECALL_SETTINGS,
     TABPFN_PRIOR_DEFAULTS,
     build_prior_for_task,
+    resolve_training_setup_for_task,
 )
 from pfns.model.backbones import LinearAttentionBackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
@@ -80,13 +81,10 @@ def get_config(
         feature_positional_embedding = None
 
     training_setup = training_setup.strip().lower()
-    is_associative_recall = task_variant == ASSOCIATIVE_RECALL_SETTINGS["task_variant"]
-    if is_associative_recall and training_setup != "ar":
-        print(
-            f"Overriding training_setup={training_setup!r} to 'ar' "
-            f"because task_variant={task_variant!r}."
-        )
-        training_setup = "ar"
+    training_setup, is_associative_recall = resolve_training_setup_for_task(
+        training_setup=training_setup,
+        task_variant=task_variant,
+    )
     if training_setup not in TRAINING_PROFILES:
         raise ValueError(
             f"Unknown training_setup {training_setup!r}. Available: {sorted(TRAINING_PROFILES)}"

@@ -22,6 +22,18 @@ ASSOCIATIVE_RECALL_SETTINGS = {
 }
 
 
+def resolve_training_setup_for_task(*, training_setup: str, task_variant: str) -> tuple[str, bool]:
+    """Resolve training setup and return whether associative recall is active."""
+    is_associative_recall = task_variant == ASSOCIATIVE_RECALL_SETTINGS["task_variant"]
+    if is_associative_recall and training_setup != "ar":
+        print(
+            f"Overriding training_setup={training_setup!r} to 'ar' "
+            f"because task_variant={task_variant!r}."
+        )
+        training_setup = "ar"
+    return training_setup, is_associative_recall
+
+
 def build_prior_for_task(
     *,
     task_variant: str,
