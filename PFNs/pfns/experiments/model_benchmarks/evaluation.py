@@ -20,7 +20,7 @@ from pfns.training_utils import (
 from pfns.utils import get_default_device, torch_nanmean
 
 from .constants import MEMORY_NAMES, METRIC_NAMES, SCHEMA_VERSION, TIMING_NAMES
-from .sampling import ClassCoverageBatchGenerator
+from .sampling import create_seq_len_batch_generator
 
 EVAL_MODES = ["fit_predict", "forward"]
 
@@ -258,6 +258,8 @@ def evaluate_models_over_seqlens(
     device: str | None = None,
     progress_desc: str = "Overall progress",
     data_generation_seed: int | None = None,
+    task_variant: str = "tabular_prior",
+    task_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run sequence-length evaluation for all models and return nested result tables."""
     if not models:
@@ -279,6 +281,7 @@ def evaluate_models_over_seqlens(
     elif autocast_models is None:
         autocast_models = {}
     warmup_iters = 3 if use_warmup_iters else 0
+    resolved_task_kwargs = dict(task_kwargs or {})
 
     if data_generation_seed is not None:
         _set_data_generation_seed(int(data_generation_seed))
@@ -290,13 +293,16 @@ def evaluate_models_over_seqlens(
         if print_timing:
             print(*args, **kwargs)
 
-    batch_generator = ClassCoverageBatchGenerator(
+    batch_generator = create_seq_len_batch_generator(
+        task_variant=task_variant,
         num_batches=number_of_repetitions,
         smallest_seqlen=smallest_seqlen,
         largest_seqlen=largest_seqlen,
         num_features=num_features,
         num_classes=num_classes,
         number_of_test_samples=number_of_test_samples,
+        default_device=resolved_device,
+        task_kwargs=resolved_task_kwargs,
     )
 
     for rep, (base_batch, data_gen_ms) in enumerate(
@@ -369,5 +375,7 @@ def evaluate_models_over_seqlens(
             "data_generation_seed": (
                 int(data_generation_seed) if data_generation_seed is not None else None
             ),
+            "task_variant": task_variant,
+            "task_kwargs": resolved_task_kwargs,
         },
     }

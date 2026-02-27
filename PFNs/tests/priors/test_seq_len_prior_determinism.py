@@ -2,7 +2,10 @@ import pytest
 import torch
 
 from pfns.experiments.model_benchmarks.evaluation import _set_data_generation_seed
-from pfns.experiments.model_benchmarks.sampling import ClassCoverageBatchGenerator
+from pfns.experiments.model_benchmarks.sampling import (
+    AssociativeRecallBatchGenerator,
+    ClassCoverageBatchGenerator,
+)
 
 NOTEBOOK_DATA_GENERATION_SEED = 42
 
@@ -29,6 +32,21 @@ def _sample_one_batch(*, data_generation_seed: int, device: str):
         single_eval_pos=40,
         n_targets_per_input=1,
     )
+
+
+def _sample_one_ar_batch(*, data_generation_seed: int, device: str):
+    _set_data_generation_seed(data_generation_seed)
+    generator = AssociativeRecallBatchGenerator(
+        num_batches=1,
+        smallest_seqlen=8,
+        largest_seqlen=40,
+        num_features=4,
+        num_classes=3,
+        number_of_test_samples=16,
+        batch_device=_resolve_test_device(device),
+    )
+    batch, _ = generator.sample_one()
+    return batch
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -60,3 +78,20 @@ def test_prior_generation_changes_when_seed_changes(device: str):
     )
 
     assert not torch.equal(batch_a.x, batch_b.x)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_associative_recall_queries_come_from_smallest_prefix(device: str):
+    batch = _sample_one_ar_batch(
+        data_generation_seed=NOTEBOOK_DATA_GENERATION_SEED,
+        device=device,
+    )
+    largest_seqlen = 40
+    smallest_seqlen = 8
+
+    train_x = batch.x[0, :largest_seqlen]
+    test_x = batch.x[0, largest_seqlen:]
+
+    prefix_x = train_x[:smallest_seqlen]
+    prefix_matches = (test_x[:, None, :] == prefix_x[None, :, :]).all(dim=-1).any(dim=1)
+    assert torch.all(prefix_matches)

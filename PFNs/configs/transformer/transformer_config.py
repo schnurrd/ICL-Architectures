@@ -7,10 +7,15 @@ from __future__ import annotations
 
 import torch
 
+from pfns.prior_defaults import (
+    ASSOCIATIVE_RECALL_SETTINGS,
+    TABPFN_PRIOR_DEFAULTS,
+    build_prior_for_task,
+    resolve_training_setup_for_task,
+)
 from pfns.model.backbones import TransformerBackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
-from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
 from pfns.run_logger import WandbConfig
 from pfns.train import (
     BatchShapeSamplerConfig,
@@ -26,8 +31,8 @@ GLOBAL_TRAIN_MIXED_PRECISION = (
 )
 GLOBAL_TRAIN_MIXED_PRECISION_DTYPE = "bf16" if GLOBAL_TRAIN_MIXED_PRECISION else "fp32"
 
-MAX_NUM_CLASSES = 10
-MAX_NUM_FEATURES = 20
+MAX_NUM_CLASSES = int(TABPFN_PRIOR_DEFAULTS["max_num_classes"])
+MAX_NUM_FEATURES = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
 
 BASE_PROFILE = {
     "nhead": 8,
@@ -103,12 +108,27 @@ TRAINING_PROFILES = {
         "features_per_group": MAX_NUM_FEATURES,
         "wandb_suffix": "_very_high",
     },
+    "ar": {
+        **BASE_PROFILE,
+        "nlayers": 15,
+        "emsize": 320,
+        "nhid": 320 * 2,
+        "lr": 3.0e-5,
+        "steps_per_epoch": 500,
+        "epochs": 200,
+        "warmup_epochs": 10,
+        "aggregate_k_gradients": 1,
+        "attention_between_features": False,
+        "features_per_group": MAX_NUM_FEATURES,
+        "wandb_suffix": "_ar",
+    },
 }
 
 def get_config(
     config_index: int = 0,
     training_setup: str = "low",
     max_seq_len: int | None = None,
+    task_variant: str = "tabular_prior",
     interleave_x_y_pairs: bool = False,
     item_attention_use_rope: bool = False,
     item_attention_rope_base: float = 128_000.0,
@@ -120,6 +140,10 @@ def get_config(
     """
 
     training_setup = training_setup.strip().lower()
+    training_setup, is_associative_recall = resolve_training_setup_for_task(
+        training_setup=training_setup,
+        task_variant=task_variant,
+    )
     if training_setup not in TRAINING_PROFILES:
         raise ValueError(
             f"Unknown training_setup {training_setup!r}. "
@@ -135,23 +159,27 @@ def get_config(
     resolved_layer_kwargs = resolved_layer_kwargs or None
 
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
+    resolved_epochs = profile.get("epochs", 200)
+    resolved_steps_per_epoch = profile["steps_per_epoch"]
 
     resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences 
 
-    prior = TabPFNPriorConfig(
-        prior_type="mlp",
+    prior = build_prior_for_task(
+        task_variant=task_variant,
+        prior_device=resolved_prior_device,
         max_num_classes=MAX_NUM_CLASSES,
         max_num_features=MAX_NUM_FEATURES,
-        flexible=True,
-        differentiable=True,
-        return_categorical_mask=True,
-        nan_handling=True,
-        device=resolved_prior_device,
     )
 
+    resolved_batch_size = 8
+
     batch_shape = BatchShapeSamplerConfig(
-        batch_size=8,
-        min_single_eval_pos=24,
+        batch_size=resolved_batch_size,
+        min_single_eval_pos=(
+            ASSOCIATIVE_RECALL_SETTINGS["min_single_eval_pos"]
+            if is_associative_recall
+            else 24
+        ),
         max_seq_len=resolved_max_seq_len,
         min_num_features=2,
         max_num_features=MAX_NUM_FEATURES,
@@ -198,10 +226,16 @@ def get_config(
         wandb_name += "_item_rope"
         if item_attention_rope_pairwise_positions:
             wandb_name += "_pairwise"
+    if is_associative_recall:
+        wandb_name += "_ar"
 
     wandb_config = WandbConfig(
         entity="icl_arch",
-        project="tabpfn_transformer",
+        project=(
+            ASSOCIATIVE_RECALL_SETTINGS["wandb_project"]
+            if is_associative_recall
+            else "tabpfn_transformer"
+        ),
         name=wandb_name,
         tags=["matched_high_config"],
         mode="online",
@@ -213,9 +247,9 @@ def get_config(
         optimizer=optimizer,
         model=model,
         batch_shape_sampler=batch_shape,
-        epochs=profile["epochs"],
+        epochs=resolved_epochs,
         warmup_epochs=profile["warmup_epochs"],
-        steps_per_epoch=profile["steps_per_epoch"],
+        steps_per_epoch=resolved_steps_per_epoch,
         n_targets_per_input=1,
         train_mixed_precision=GLOBAL_TRAIN_MIXED_PRECISION,
         train_mixed_precision_dtype=GLOBAL_TRAIN_MIXED_PRECISION_DTYPE,
