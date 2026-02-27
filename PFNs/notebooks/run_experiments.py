@@ -61,6 +61,15 @@ def parse_cli_args():
         description="Run sequence length benchmark experiments."
     )
     parser.add_argument(
+        "--models",
+        nargs="+",
+        default=None,
+        help=(
+            "Optional exact model names to evaluate. "
+            "Example: --models Softmax_Transformer Rebased"
+        ),
+    )
+    parser.add_argument(
         "--num-repeats",
         dest="num_repetitions",
         type=int,
@@ -116,7 +125,10 @@ print(
 #     "Linear_Attention",
 # ])
 
-all_models_to_compare = get_all_models()
+if CLI_ARGS.models:
+    all_models_to_compare = get_models_from_names(CLI_ARGS.models)
+else:
+    all_models_to_compare = get_all_models()
 all_model_items = list(all_models_to_compare.items())
 models_to_compare = dict(all_model_items[CLI_ARGS.run_index::CLI_ARGS.num_runs])
 if not models_to_compare:
@@ -129,6 +141,8 @@ if not models_to_compare:
 device = str(get_default_device())
 print(f"Using device: {device}")
 print(f"Models assigned to this run: {len(models_to_compare)} / {len(all_model_items)}")
+if CLI_ARGS.models:
+    print(f"Requested models: {CLI_ARGS.models}")
 
 expected_run_metadata = build_seq_len_run_metadata(experiment=EXPERIMENT, device=device)
 

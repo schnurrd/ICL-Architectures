@@ -285,6 +285,11 @@ def evaluate_models_over_seqlens(
 
     if data_generation_seed is not None:
         _set_data_generation_seed(int(data_generation_seed))
+        if task_variant == "associative_recall":
+            resolved_task_kwargs.setdefault(
+                "data_generation_seed",
+                int(data_generation_seed),
+            )
 
     tables = BenchmarkTables.create(list(models))
     smallest_seqlen, largest_seqlen = min(seqlen_list), max(seqlen_list)

@@ -163,6 +163,7 @@ class AssociativeRecallBatchGenerator:
         num_classes: int,
         number_of_test_samples: int,
         batch_device: str = "cpu",
+        data_generation_seed: int | None = None,
     ) -> None:
         if min(num_batches, smallest_seqlen, num_features, number_of_test_samples) < 1:
             raise ValueError(
@@ -181,9 +182,16 @@ class AssociativeRecallBatchGenerator:
         self.num_classes = num_classes
         self.number_of_test_samples = number_of_test_samples
         self.batch_device = batch_device
+        self.data_generation_seed = (
+            int(data_generation_seed) if data_generation_seed is not None else None
+        )
+        self._sample_index = 0
 
     def sample_one(self) -> tuple[BenchmarkBatch, float]:
         start_time = time.perf_counter()
+        if self.data_generation_seed is not None:
+            torch.manual_seed(self.data_generation_seed + self._sample_index)
+            self._sample_index += 1
         sampled = generate_associative_recall_batch(
             batch_size=1,
             largest_seqlen=self.largest_seqlen,

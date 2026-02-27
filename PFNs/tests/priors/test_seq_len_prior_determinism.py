@@ -35,7 +35,6 @@ def _sample_one_batch(*, data_generation_seed: int, device: str):
 
 
 def _sample_one_ar_batch(*, data_generation_seed: int, device: str):
-    _set_data_generation_seed(data_generation_seed)
     generator = AssociativeRecallBatchGenerator(
         num_batches=1,
         smallest_seqlen=8,
@@ -44,6 +43,7 @@ def _sample_one_ar_batch(*, data_generation_seed: int, device: str):
         num_classes=3,
         number_of_test_samples=16,
         batch_device=_resolve_test_device(device),
+        data_generation_seed=data_generation_seed,
     )
     batch, _ = generator.sample_one()
     return batch
@@ -95,3 +95,24 @@ def test_associative_recall_queries_come_from_smallest_prefix(device: str):
     prefix_x = train_x[:smallest_seqlen]
     prefix_matches = (test_x[:, None, :] == prefix_x[None, :, :]).all(dim=-1).any(dim=1)
     assert torch.all(prefix_matches)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_associative_recall_generation_is_deterministic_with_fixed_seed(device: str):
+    batch_a = _sample_one_ar_batch(
+        data_generation_seed=NOTEBOOK_DATA_GENERATION_SEED,
+        device=device,
+    )
+    torch.randn(128)
+    resolved_device = _resolve_test_device(device)
+    if resolved_device.startswith("cuda"):
+        torch.randn(128, device=resolved_device)
+    batch_b = _sample_one_ar_batch(
+        data_generation_seed=NOTEBOOK_DATA_GENERATION_SEED,
+        device=device,
+    )
+
+    assert torch.equal(batch_a.x, batch_b.x)
+    assert torch.equal(batch_a.y, batch_b.y)
+    assert torch.equal(batch_a.target_y, batch_b.target_y)
+    assert torch.equal(batch_a.categorical_mask, batch_b.categorical_mask)
