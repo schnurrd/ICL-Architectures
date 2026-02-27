@@ -395,42 +395,38 @@ def main():
             compile=args.compile,
             overwrite=args.overwrite,
             logger=run_manager,
-            finish_logger=not should_run_eval,
+            finish_logger=False,
         )
-    except KeyboardInterrupt:
-        print("\nTraining interrupted by user.")
-        sys.exit(1)
 
-    print("\nTraining completed successfully!")
-    print(f"Total training time: {result['total_time']:.2f} seconds")
-    print(f"Final loss: {result['total_loss']:.6f}")
+        print("\nTraining completed successfully!")
+        print(f"Total training time: {result['total_time']:.2f} seconds")
+        print(f"Final loss: {result['total_loss']:.6f}")
 
-    if config.train_state_dict_save_path is not None:
-        print(f"Model saved to: {config.train_state_dict_save_path}")
-        run_manager.save_model(config.train_state_dict_save_path)
+        if config.train_state_dict_save_path is not None:
+            print(f"Model saved to: {config.train_state_dict_save_path}")
+            run_manager.save_model(config.train_state_dict_save_path)
 
-    if not should_run_eval:
-        if config.train_state_dict_save_path is None:
-            print(
-                "Skipping automatic evaluation because no train_state_dict_save_path was provided."
-            )
-        else:
-            print(
-                "Skipping automatic evaluation because associative recall mode is active."
-            )
-        return
+        if not should_run_eval:
+            if config.train_state_dict_save_path is None:
+                print(
+                    "Skipping automatic evaluation because no train_state_dict_save_path was provided."
+                )
+            else:
+                print(
+                    "Skipping automatic evaluation because associative recall mode is active."
+                )
+            return
 
-    base_path = os.path.dirname(config.train_state_dict_save_path)
-    checkpoint_name = os.path.basename(config.train_state_dict_save_path)
-    eval_device = args.device or get_default_device()
+        base_path = os.path.dirname(config.train_state_dict_save_path)
+        checkpoint_name = os.path.basename(config.train_state_dict_save_path)
+        eval_device = args.device or get_default_device()
 
-    print(
-        "\nStarting automatic evaluation on OpenCC benchmark with TabPFN only "
-        "(n_splits=5, batch_size_inference=16, preprocess_transforms=['none','power','robust'], "
-        "max_features=20, max_samples=1000, max_classes=10)..."
-    )
+        print(
+            "\nStarting automatic evaluation on OpenCC benchmark with TabPFN only "
+            "(n_splits=5, batch_size_inference=16, preprocess_transforms=['none','power','robust'], "
+            "max_features=20, max_samples=1000, max_classes=10)..."
+        )
 
-    try:
         results = run_evaluation(
             runner="tabpfn",
             model_config={
@@ -462,6 +458,9 @@ def main():
             summary=summary,
             per_dataset=per_dataset,
         )
+    except KeyboardInterrupt:
+        print("\nTraining interrupted by user.")
+        sys.exit(1)
     finally:
         run_manager.finish()
 
