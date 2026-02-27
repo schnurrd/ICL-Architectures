@@ -458,9 +458,6 @@ def main():
             summary=summary,
             per_dataset=per_dataset,
         )
-    except KeyboardInterrupt:
-        print("\nTraining interrupted by user.")
-        sys.exit(1)
     finally:
         run_manager.finish()
 
