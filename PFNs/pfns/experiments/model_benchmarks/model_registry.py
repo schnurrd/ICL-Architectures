@@ -163,12 +163,12 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
     "Mamba2_Comb_MT": {
         "wandb_run_id": "fla_models/runs/ku412muw",
     },
-    # "Mamba2_Comb_ST": {
-    #     "wandb_run_id": "fla_models/runs/arzdn9rh", # still running
-    # },
-    # "Mamba2_Int_ST": {
-    #     "wandb_run_id": "fla_models/runs/cdyctzjo", # still running
-    # },
+    "Mamba2_Comb_ST": {
+        "wandb_run_id": "fla_models/runs/arzdn9rh",
+    },
+    "Mamba2_Int_ST": {
+        "wandb_run_id": "fla_models/runs/cdyctzjo",
+    },
     "Mamba2_Int_MT": {
         "wandb_run_id": "fla_models/runs/hvmrqqbi",
     },
@@ -240,22 +240,18 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
 }
 
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
-    "Transformer_Non_Causal": { # fp16 version
+    "Transformer_Non_Causal": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
         "eval_mode": "forward",
     },
-    # "Transformer_Non_Causal_fp32": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
-    #     "eval_mode": "forward",
-    # },
     "Transformer_Non_Causal_with_RoPE_pairwise": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xsbe5y6d", # old runs: xsbe5y6d, second run with fp32 as comparison: 0xi6dcvc
         "eval_mode": "forward",
     },
-    # "Transformer_Non_Causal_interleaved_with_RoPE_pairwise": { # running
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   # new one uses pairwise rope while old one does not jzs97xfg
-    #     "eval_mode": "forward",
-    # },
+    "Transformer_Non_Causal_interleaved_with_RoPE_pairwise": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   # new one uses pairwise rope while old one does not jzs97xfg
+        "eval_mode": "forward",
+    },
     "masked:Transformer_Comb_ST": {
         "display_name": "Transformer_Comb_ST",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
