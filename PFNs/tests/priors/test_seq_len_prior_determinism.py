@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from pfns.experiments.model_benchmarks.evaluation import _set_data_generation_seed
-from pfns.experiments.model_benchmarks.sampling import (
+from pfns.experiments.model_benchmarks.benchmark_batch_generators import (
     AssociativeRecallBatchGenerator,
     ClassCoverageBatchGenerator,
 )

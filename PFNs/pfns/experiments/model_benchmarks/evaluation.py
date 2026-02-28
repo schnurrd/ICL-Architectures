@@ -20,7 +20,7 @@ from pfns.training_utils import (
 from pfns.utils import get_default_device, torch_nanmean
 
 from .constants import MEMORY_NAMES, METRIC_NAMES, SCHEMA_VERSION, TIMING_NAMES
-from .sampling import create_seq_len_batch_generator
+from .benchmark_batch_generators import create_seq_len_batch_generator
 
 EVAL_MODES = ["fit_predict", "forward"]
 
