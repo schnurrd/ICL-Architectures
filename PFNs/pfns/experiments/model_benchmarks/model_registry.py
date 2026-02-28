@@ -143,20 +143,37 @@ GATED_DELTANET_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+# MAMBA2_MODELS: dict[str, dict[str, Any]] = {
+#     "Mamba2_Comb_MT": {
+#         "wandb_run_id": "fla_models/runs/wccjh2ye",
+#     },
+#     "Mamba2_Comb_ST": {
+#         "wandb_run_id": "fla_models/runs/sac363pc",
+#     },
+#     "Mamba2_Int_ST": {
+#         "wandb_run_id": "fla_models/runs/kfgmmqu5",
+#     },
+#     "Mamba2_Int_MT": {
+#         "wandb_run_id": "fla_models/runs/gn5r8yj6",
+#     },
+# }
+
+# New mamba2 models (retrained)
 MAMBA2_MODELS: dict[str, dict[str, Any]] = {
     "Mamba2_Comb_MT": {
-        "wandb_run_id": "fla_models/runs/wccjh2ye",
+        "wandb_run_id": "fla_models/runs/ku412muw",
     },
-    "Mamba2_Comb_ST": {
-        "wandb_run_id": "fla_models/runs/sac363pc",
-    },
-    "Mamba2_Int_ST": {
-        "wandb_run_id": "fla_models/runs/kfgmmqu5",
-    },
+    # "Mamba2_Comb_ST": {
+    #     "wandb_run_id": "fla_models/runs/arzdn9rh", # still running
+    # },
+    # "Mamba2_Int_ST": {
+    #     "wandb_run_id": "fla_models/runs/cdyctzjo", # still running
+    # },
     "Mamba2_Int_MT": {
-        "wandb_run_id": "fla_models/runs/gn5r8yj6",
+        "wandb_run_id": "fla_models/runs/hvmrqqbi",
     },
 }
+
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention": {
@@ -164,10 +181,19 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
-REBASED_MODELS: dict[str, dict[str, Any]] = {
-    "Rebased": {
+BASED_MODELS: dict[str, dict[str, Any]] = {
+    "Rebased_feat_dim_32": {
         "wandb_run_id": "fla_models/runs/72wtj14x"
     },
+    "Rebased_feat_dim_16": {
+        "wandb_run_id": "fla_models/runs/478t1e31"
+    },
+    # "Based_feat_dim_32": {
+    #     "wandb_run_id": "fla_models/runs/csb759y0" # still running
+    # },
+    "Based_feat_dim_16": {
+        "wandb_run_id": "fla_models/runs/kxe10m62"
+    }
 }
 
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
@@ -203,7 +229,7 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Rebased_Comb_ST",
         "wandb_run_id": "fla_models/runs/ntkpkzf3", 
     },
-    "equal_params:Transformer_Comb_ST": {
+    "equal_params:Transformer_Comb_ST": { # non-causal version
         "display_name": "Transformer_Comb_ST",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
     },
@@ -215,27 +241,27 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
 
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     "Transformer_Non_Causal": { # fp16 version
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/d4mttnjl", # fp16 version d4mttnjl, fp 32 version pmcn4brd
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
         "eval_mode": "forward",
     },
     # "Transformer_Non_Causal_fp32": {
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
     #     "eval_mode": "forward",
     # },
-    "Transformer_Non_Causal_with_RoPE": {
+    "Transformer_Non_Causal_with_RoPE_pairwise": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xsbe5y6d", # old runs: xsbe5y6d, second run with fp32 as comparison: 0xi6dcvc
         "eval_mode": "forward",
     },
-    "Transformer_Non_Causal_interleaved_with_RoPE_paired": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   # new one uses pairwise rope while old one does not jzs97xfg
-        "eval_mode": "forward",
-    },
+    # "Transformer_Non_Causal_interleaved_with_RoPE_pairwise": { # running
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   # new one uses pairwise rope while old one does not jzs97xfg
+    #     "eval_mode": "forward",
+    # },
     "masked:Transformer_Comb_ST": {
         "display_name": "Transformer_Comb_ST",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
         "eval_mode": "forward",
     },
-    "Transformer_Int_ST_with_RoPE_paired": {
+    "Transformer_Int_ST_with_RoPE_pairwise": { 
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
         "eval_mode": "forward",
     },
@@ -247,7 +273,7 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
         "eval_mode": "forward",
     },
-    "Transformer_Int_MT_with_RoPE": { 
+    "Transformer_Int_MT_with_RoPE_pairwise": { 
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
         "eval_mode": "forward",
     },
@@ -274,7 +300,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "gated_deltanet": GATED_DELTANET_MODELS,
     "mamba2": MAMBA2_MODELS,
     "linear_attention": LINEAR_ATTENTION_MODELS,
-    "rebased": REBASED_MODELS,
+    "based": BASED_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
     "transformer_masked": TRANSFORMER_MASKED_MODELS,
     "fla_models": {
