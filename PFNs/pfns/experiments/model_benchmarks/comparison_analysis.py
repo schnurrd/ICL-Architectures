@@ -222,10 +222,12 @@ def plot_gain_barh(
 ):
     """Horizontal bar plot for reference-based paired gains."""
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator, FormatStrFormatter
 
     if error_bars not in {"std", "ci95"}:
         raise ValueError("error_bars must be 'std' or 'ci95'.")
     err_col = "std_gain" if error_bars == "std" else "ci95"
+    error_bar_label = "SD" if error_bars == "std" else "95% confidence intervals"
 
     plot_df = gain_summary.sort_values("mean_gain", ascending=True)
     bar_colors = [
@@ -233,7 +235,7 @@ def plot_gain_barh(
         for low, high in zip(plot_df["ci95_low"], plot_df["ci95_high"])
     ]
 
-    fig, ax = plt.subplots(figsize=(8.5, max(3.8, 0.65 * len(plot_df))), dpi=130)
+    fig, ax = plt.subplots(figsize=(9.8, max(3.8, 0.72 * len(plot_df))), dpi=400)
     ax.barh(
         plot_df[compare_col],
         plot_df["mean_gain"],
@@ -245,8 +247,12 @@ def plot_gain_barh(
     )
     ax.axvline(0.0, color="black", linewidth=1.0, alpha=0.8)
     ax.set_xlabel(f"Gain vs {reference_label} on {metric_label} (positive is better)")
-    ax.set_title(f"Comparison gain with {error_bars} intervals (unit={unit})")
+    ax.set_title(f"Paired gain vs {reference_label} with {error_bar_label}")
     ax.grid(axis="x", alpha=0.25)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=7))
+    ax.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
+    ax.tick_params(axis="x", labelsize=11)
+    ax.tick_params(axis="y", labelsize=11)
     fig.tight_layout()
     return fig, ax
 
@@ -269,7 +275,7 @@ def plot_gain_boxplot(
         for label in ordered_labels
     ]
 
-    fig, ax = plt.subplots(figsize=(8.5, max(3.8, 0.65 * len(ordered_labels))), dpi=130)
+    fig, ax = plt.subplots(figsize=(8.5, max(3.8, 0.65 * len(ordered_labels))), dpi=400)
     ax.boxplot(
         box_data,
         labels=ordered_labels,
@@ -377,7 +383,7 @@ def run_comparison_analysis(
             higher_better=higher_better,
             alpha=wilcoxon_alpha,
             comparison_label=comparison_label,
-            title=f"Wilcoxon/Holm comparison diagram ({metric_label}, unit={unit})",
+            title=f"Wilcoxon/Holm comparison diagram ({metric_label})",
         )
 
     return {
@@ -430,7 +436,7 @@ def plot_wilcoxon_cd_diagram(
     ax.set_title(title, y=0.98)
     ax.text(
         0.5,
-        -0.10,
+        -0.06,
         (
             f"Black bars: maximal non-significant {comparison_label} groups "
             f"(Holm-adjusted Wilcoxon, p >= {alpha:.2f}). "

@@ -194,31 +194,33 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/ntkpkzf3", 
     },
     "equal_params:GLA_Comb_ST": {
-        "display_name": "GLA",
+        "display_name": "Gated Linear Attention",
         "wandb_run_id": "fla_models/runs/4vsqz1ee",
-    },
-    "equal_params:Mamba2_Comb_ST": {
-        "display_name": "Mamba2",
-        "wandb_run_id": "fla_models/runs/o9e00w17",
     },
     "equal_params:DeltaNet_Comb_ST": {
         "display_name": "DeltaNet",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "eval_autocast_dtype": "bf16",
     },
-    # "DeltaNet_Int_MT": {
+    # "equal_params:DeltaNet_Int_MT": {
+    #     "display_name": "DeltaNet (Int MT)",
     #     "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
     #     "eval_autocast_dtype": "bf16",
     # },
     "equal_params:Gated_DeltaNet_Comb_ST": {
-        "display_name": "Gated_DeltaNet",
+        "display_name": "Gated DeltaNet",
         "wandb_run_id": "fla_models/runs/g7rh5nv9",  
     },
-    # "Gated_DeltaNet_Int_MT": {
+    # "equal_params:Gated_DeltaNet_Int_MT": {
+    #     "display_name": "Gated DeltaNet (Int MT)",
     #     "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
     # },
+    "equal_params:Mamba2_Comb_ST": {
+        "display_name": "Mamba2",
+        "wandb_run_id": "fla_models/runs/o9e00w17",
+    },
     "equal_params:KDA_Comb_ST": {
-        "display_name": "KDA",
+        "display_name": "Kimi Delta Attention",
         "wandb_run_id": "fla_models/runs/5jfgan9d", # old run qaskm2mq
     },
 }

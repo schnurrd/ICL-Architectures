@@ -16,6 +16,7 @@ from pfns.evaluation import (
 )
 from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
 from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENCHMARK
+from pfns.experiments.model_benchmarks.plotting import resolve_display_name_map
 from pfns.utils import get_default_device
 
 
@@ -199,6 +200,9 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
     print("=" * 111)
 
     summary = summarize_results(results)
+    display_name_map = resolve_display_name_map(results)
+    model_display_names = [display_name_map.get(str(model), str(model)) for model in summary.index]
+    model_col_width = max(20, max((len(name) for name in model_display_names), default=0))
 
     print("\nLaTeX table:")
     print("\\begin{table}[ht]")
@@ -212,7 +216,8 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
     print("\\hline")
     for model in summary.index:
         row = summary.loc[model]
-        model_latex = model.replace("_", "\\_")
+        model_display = display_name_map.get(str(model), str(model))
+        model_latex = model_display.replace("_", "\\_")
         acc_str = f"{row['accuracy_mean']:.4f} $\\pm$ {row['accuracy_std']:.4f}"
         auc_str = f"{row['roc_auc_mean']:.4f} $\\pm$ {row['roc_auc_std']:.4f}"
         ll_str = f"{row['log_loss_mean']:.4f} $\\pm$ {row['log_loss_std']:.4f}"
@@ -228,11 +233,11 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
 
     print("\nFormatted Table:")
     header = (
-        f"{'Model':<20} {'Accuracy ↑':>18} {'ROC-AUC ↑':>18} {'CE ↓':>18} "
+        f"{'Model':<{model_col_width}} {'Accuracy ↑':>18} {'ROC-AUC ↑':>18} {'CE ↓':>18} "
         f"{'ECE ↓':>18} {'Fit (s) ↓':>14} {'Pred (s) ↓':>14}"
     )
     subheader = (
-        f"{'':20} {'mean ± std':>18} {'mean ± std':>18} {'mean ± std':>18} "
+        f"{'':{model_col_width}} {'mean ± std':>18} {'mean ± std':>18} {'mean ± std':>18} "
         f"{'mean ± std':>18} {'mean':>14} {'mean':>14}"
     )
     print(header)
@@ -240,6 +245,7 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
     print("-" * len(header))
     for model in summary.index:
         row = summary.loc[model]
+        model_display = display_name_map.get(str(model), str(model))
         acc_str = f"{row['accuracy_mean']:.4f} ± {row['accuracy_std']:.4f}"
         auc_str = f"{row['roc_auc_mean']:.4f} ± {row['roc_auc_std']:.4f}"
         ll_str = f"{row['log_loss_mean']:.4f} ± {row['log_loss_std']:.4f}"
@@ -247,7 +253,7 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
         fit_str = f"{row['fit_time_mean']:.2f}"
         pred_str = f"{row['predict_time_mean']:.2f}"
         print(
-            f"{model:<20} {acc_str:>18} {auc_str:>18} {ll_str:>18} {ece_str:>18} "
+            f"{model_display:<{model_col_width}} {acc_str:>18} {auc_str:>18} {ll_str:>18} {ece_str:>18} "
             f"{fit_str:>14} {pred_str:>14}"
         )
     print("=" * len(header))
@@ -271,7 +277,6 @@ def compute_per_dataset_stats(results):
     per_dataset = per_dataset.reset_index()
     return per_dataset
 
-
 def summarize_results(results):
     if results.empty:
         return None
@@ -292,8 +297,6 @@ def summarize_results(results):
         }
     ).round(4)
     return summary.sort_values("accuracy_mean", ascending=False)
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default=None)

@@ -186,7 +186,7 @@ def graph_ranks(
     non_sig_cliques = _find_maximal_cliques(list(rank_by_name), non_sig_adj)
     n_intervals = len(non_sig_cliques)
     fig_height = max(4.8, 2.6 + 0.34 * n_methods + 0.12 * min(n_intervals, 8))
-    fig, ax = plt.subplots(figsize=(width, fig_height), dpi=130)
+    fig, ax = plt.subplots(figsize=(width, fig_height), dpi=400)
     ax.set_axis_off()
 
     ax.plot([x_axis_min, x_axis_max], [rank_line_y, rank_line_y], color="black", linewidth=2.0)

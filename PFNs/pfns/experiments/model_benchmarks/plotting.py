@@ -12,6 +12,7 @@ import seaborn as sns
 from .constants import DEFAULT_COLORS, DEFAULT_LINESTYLES, DEFAULT_MARKERS
 from .model_registry import get_all_models
 
+
 def _registry_display_name_map() -> dict[str, str]:
     return {
         model_name: str(model_config.get("display_name", model_name))
@@ -19,10 +20,10 @@ def _registry_display_name_map() -> dict[str, str]:
     }
 
 
-def _resolve_display_name_map(df: pd.DataFrame) -> dict[str, str]:
+def resolve_display_name_map(df: pd.DataFrame | None = None) -> dict[str, str]:
     display_name_map = _registry_display_name_map().copy()
 
-    if "display_name" not in df.columns:
+    if df is None or "display_name" not in df.columns or "model" not in df.columns:
         return display_name_map
 
     display_df = df.loc[df["display_name"].notna(), ["model", "display_name"]].drop_duplicates(
@@ -70,16 +71,17 @@ def plot_curves_from_df(
     title_suffix: str = "",
     show_std: bool = False,
     log_x: bool = False,
+    log_y: bool = False,
     invert_y: bool = False,
     figsize: tuple[int, int] = (24, 6),
-    dpi: int = 300,
+    dpi: int = 400,
 ):
     """Generic plotting function used by notebook-level plot wrappers."""
     if df.empty:
         print("No data to plot.")
         return None, None
 
-    display_name_map = _resolve_display_name_map(df)
+    display_name_map = resolve_display_name_map(df)
     sns.set_theme(style="whitegrid", font_scale=1.2)
     fig, axes = plt.subplots(nrows=1, ncols=len(specs), figsize=figsize, dpi=dpi)
     fig.subplots_adjust(left=0.06, bottom=0.2, right=0.98, top=0.92, wspace=0.25)
@@ -95,6 +97,7 @@ def plot_curves_from_df(
     boundary_linestyle = "--"
     metric_keys = {metric_key for metric_key, _ in specs}
     show_split = bool(metric_keys.intersection({"acc", "ce", "roc_auc"}))
+    legend_model_count = 0
 
     for idx, (metric_key, metric_name) in enumerate(specs):
         ax = axes[idx]
@@ -103,6 +106,8 @@ def plot_curves_from_df(
         present_model_set = set(present_models)
         model_names = [name for name in get_all_models() if name in present_model_set]
         model_names.extend(name for name in present_models if name not in model_names)
+        if idx == 0:
+            legend_model_count = len(model_names)
         pretrain_boundary = float(pretrain_max_x)
         x_values = subset_metric[x_col].to_numpy(dtype=np.float64, copy=False)
         finite_x_values = x_values[np.isfinite(x_values)]
@@ -151,6 +156,8 @@ def plot_curves_from_df(
         else:
             right_limit = float(finite_x_values.max()) if finite_x_values.size > 0 else None
             ax.set_xlim(left=0.0, right=right_limit)
+        if log_y:
+            ax.set_yscale("log")
         if invert_y:
             ax.invert_yaxis()
 
@@ -222,7 +229,8 @@ def plot_curves_from_df(
         )
         axes[0].add_artist(range_legend)
 
-    axes[0].legend(fontsize=11, loc="upper left", bbox_to_anchor=(0, -0.2), ncol=3)
+    legend_ncol = max(1, (legend_model_count + 1) // 2)
+    axes[0].legend(fontsize=11, loc="upper left", bbox_to_anchor=(0, -0.2), ncol=legend_ncol)
     for i in range(1, len(specs)):
         if axes[i].get_legend():
             axes[i].get_legend().remove()
