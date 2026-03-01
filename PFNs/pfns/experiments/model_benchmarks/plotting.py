@@ -10,6 +10,32 @@ import pandas as pd
 import seaborn as sns
 
 from .constants import DEFAULT_COLORS, DEFAULT_LINESTYLES, DEFAULT_MARKERS
+from .model_registry import get_all_models
+
+def _registry_display_name_map() -> dict[str, str]:
+    return {
+        model_name: str(model_config.get("display_name", model_name))
+        for model_name, model_config in get_all_models().items()
+    }
+
+
+def _resolve_display_name_map(df: pd.DataFrame) -> dict[str, str]:
+    display_name_map = _registry_display_name_map().copy()
+
+    if "display_name" not in df.columns:
+        return display_name_map
+
+    display_df = df.loc[df["display_name"].notna(), ["model", "display_name"]].drop_duplicates(
+        subset=["model"]
+    )
+    display_name_map.update(
+        {
+            str(row["model"]): str(row["display_name"])
+            for _, row in display_df.iterrows()
+            if str(row["display_name"]).strip()
+        }
+    )
+    return display_name_map
 
 
 def build_model_style_map(
@@ -53,6 +79,7 @@ def plot_curves_from_df(
         print("No data to plot.")
         return None, None
 
+    display_name_map = _resolve_display_name_map(df)
     sns.set_theme(style="whitegrid", font_scale=1.2)
     fig, axes = plt.subplots(nrows=1, ncols=len(specs), figsize=figsize, dpi=dpi)
     fig.subplots_adjust(left=0.06, bottom=0.2, right=0.98, top=0.92, wspace=0.25)
@@ -72,12 +99,16 @@ def plot_curves_from_df(
     for idx, (metric_key, metric_name) in enumerate(specs):
         ax = axes[idx]
         subset_metric = df[df["metric"] == metric_key]
+        present_models = subset_metric["model"].astype(str).unique().tolist()
+        present_model_set = set(present_models)
+        model_names = [name for name in get_all_models() if name in present_model_set]
+        model_names.extend(name for name in present_models if name not in model_names)
         pretrain_boundary = float(pretrain_max_x)
         x_values = subset_metric[x_col].to_numpy(dtype=np.float64, copy=False)
         finite_x_values = x_values[np.isfinite(x_values)]
         positive_x_values = finite_x_values[finite_x_values > 0.0]
 
-        for model in sorted(subset_metric["model"].unique()):
+        for model in model_names:
             sub = subset_metric[subset_metric["model"] == model]
             agg = (
                 sub.groupby(x_col, observed=True)[value_col]
@@ -92,7 +123,7 @@ def plot_curves_from_df(
             ax.plot(
                 agg[x_col],
                 agg["mean"],
-                label=model if idx == 0 else None,
+                label=display_name_map.get(str(model), str(model)) if idx == 0 else None,
                 linestyle=linestyle,
                 color=color,
                 linewidth=2.5,

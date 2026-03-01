@@ -181,16 +181,28 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
 }
 
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
+    "equal_params:Transformer_Comb_ST": { # non-causal version
+        "display_name": "Transformer",
+        "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
+    },
+    "equal_params:Linear_Attention_Comb_ST": {
+        "display_name": "Linear Attention",
+        "wandb_run_id": "linear_attention/runs/ygawhsm9",
+    },
+    "equal_params:Rebased_Comb_ST": {
+        "display_name": r"Linear Attention (Rebased $\phi$)",
+        "wandb_run_id": "fla_models/runs/ntkpkzf3", 
+    },
     "equal_params:GLA_Comb_ST": {
-        "display_name": "GLA_Comb_ST",
+        "display_name": "GLA",
         "wandb_run_id": "fla_models/runs/4vsqz1ee",
     },
     "equal_params:Mamba2_Comb_ST": {
-        "display_name": "Mamba2_Comb_ST",
+        "display_name": "Mamba2",
         "wandb_run_id": "fla_models/runs/o9e00w17",
     },
     "equal_params:DeltaNet_Comb_ST": {
-        "display_name": "DeltaNet_Comb_ST",
+        "display_name": "DeltaNet",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "eval_autocast_dtype": "bf16",
     },
@@ -199,31 +211,15 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     #     "eval_autocast_dtype": "bf16",
     # },
     "equal_params:Gated_DeltaNet_Comb_ST": {
-        "display_name": "Gated_DeltaNet_Comb_ST",
+        "display_name": "Gated_DeltaNet",
         "wandb_run_id": "fla_models/runs/g7rh5nv9",  
     },
     # "Gated_DeltaNet_Int_MT": {
     #     "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
     # },
     "equal_params:KDA_Comb_ST": {
-        "display_name": "KDA_Comb_ST",
-        "wandb_run_id": "fla_models/runs/qaskm2mq",
-    },
-    "equal_params:KDA_Comb_ST_2": {
-        "display_name": "KDA_Comb_ST_2",
-        "wandb_run_id": "fla_models/runs/5jfgan9d",
-    },
-    "equal_params:Rebased_Comb_ST": {
-        "display_name": "Rebased_Comb_ST",
-        "wandb_run_id": "fla_models/runs/ntkpkzf3", 
-    },
-    "equal_params:Transformer_Comb_ST": { # non-causal version
-        "display_name": "Transformer_Comb_ST",
-        "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
-    },
-    "equal_params:Linear_Attention_Comb_ST": {
-        "display_name": "Linear_Attention_Comb_ST",
-        "wandb_run_id": "linear_attention/runs/ygawhsm9",
+        "display_name": "KDA",
+        "wandb_run_id": "fla_models/runs/5jfgan9d", # old run qaskm2mq
     },
 }
 
