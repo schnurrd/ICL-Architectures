@@ -143,22 +143,6 @@ GATED_DELTANET_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
-# MAMBA2_MODELS: dict[str, dict[str, Any]] = {
-#     "Mamba2_Comb_MT": {
-#         "wandb_run_id": "fla_models/runs/wccjh2ye",
-#     },
-#     "Mamba2_Comb_ST": {
-#         "wandb_run_id": "fla_models/runs/sac363pc",
-#     },
-#     "Mamba2_Int_ST": {
-#         "wandb_run_id": "fla_models/runs/kfgmmqu5",
-#     },
-#     "Mamba2_Int_MT": {
-#         "wandb_run_id": "fla_models/runs/gn5r8yj6",
-#     },
-# }
-
-# New mamba2 models (retrained)
 MAMBA2_MODELS: dict[str, dict[str, Any]] = {
     "Mamba2_Comb_MT": {
         "wandb_run_id": "fla_models/runs/ku412muw",
@@ -188,9 +172,9 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
     "Rebased_feat_dim_16": {
         "wandb_run_id": "fla_models/runs/478t1e31"
     },
-    # "Based_feat_dim_32": {
-    #     "wandb_run_id": "fla_models/runs/csb759y0" # still running
-    # },
+    "Based_feat_dim_32": {
+        "wandb_run_id": "fla_models/runs/csb759y0"
+    },
     "Based_feat_dim_16": {
         "wandb_run_id": "fla_models/runs/kxe10m62"
     }
