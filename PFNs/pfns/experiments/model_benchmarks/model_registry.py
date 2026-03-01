@@ -209,6 +209,10 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "KDA_Comb_ST",
         "wandb_run_id": "fla_models/runs/qaskm2mq",
     },
+    "equal_params:KDA_Comb_ST_2": {
+        "display_name": "KDA_Comb_ST_2",
+        "wandb_run_id": "fla_models/runs/5jfgan9d",
+    },
     "equal_params:Rebased_Comb_ST": {
         "display_name": "Rebased_Comb_ST",
         "wandb_run_id": "fla_models/runs/ntkpkzf3", 
