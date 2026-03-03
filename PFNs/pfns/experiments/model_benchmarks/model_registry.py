@@ -22,26 +22,26 @@ KDA_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "KDA Combined Single Target",
         "wandb_run_id": "fla_models/runs/qkruutrt",
     },
-    "KDA_Comb_ST_short_conv": {
-        "display_name": "KDA Combined Single Target (Short Conv)",
-        "wandb_run_id": "fla_models/runs/z7xfal1g",
-    },
+    # "KDA_Comb_ST_short_conv": {
+    #     "display_name": "KDA Combined Single Target (Short Conv)",
+    #     "wandb_run_id": "fla_models/runs/z7xfal1g",
+    # },
     "KDA_Int_ST": {
         "display_name": "KDA Interleaved Single Target",
         "wandb_run_id": "fla_models/runs/63y7kc9k",
     },
-    "KDA_Int_ST_short_conv": {
-        "display_name": "KDA Interleaved Single Target (Short Conv)",
-        "wandb_run_id": "fla_models/runs/q8l1av2n",
-    },
+    # "KDA_Int_ST_short_conv": {
+    #     "display_name": "KDA Interleaved Single Target (Short Conv)",
+    #     "wandb_run_id": "fla_models/runs/q8l1av2n",
+    # },
     "KDA_Int_MT": {
         "display_name": "KDA Interleaved Multi Target",
         "wandb_run_id": "fla_models/runs/a925p05n",
     },
-    "KDA_Int_MT_short_conv": {
-        "display_name": "KDA Interleaved Multi Target (Short Conv)",
-        "wandb_run_id": "fla_models/runs/ab6fuy9c",
-    },
+    # "KDA_Int_MT_short_conv": {
+    #     "display_name": "KDA Interleaved Multi Target (Short Conv)",
+    #     "wandb_run_id": "fla_models/runs/ab6fuy9c",
+    # },
 }
 
 GLA_MODELS: dict[str, dict[str, Any]] = {
@@ -53,18 +53,18 @@ GLA_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "GLA Combined Single Target",
         "wandb_run_id": "fla_models/runs/g1ul5lyc",
     },
-    "GLA_Comb_ST_short_conv": {
-        "display_name": "GLA Combined Single Target (Short Conv)",
-        "wandb_run_id": "fla_models/runs/47u2og3a",
-    },
+    # "GLA_Comb_ST_short_conv": {
+    #     "display_name": "GLA Combined Single Target (Short Conv)",
+    #     "wandb_run_id": "fla_models/runs/47u2og3a",
+    # },
     "GLA_Int_ST": {
         "display_name": "GLA Interleaved Single Target",
         "wandb_run_id": "fla_models/runs/9k1i2f9z",
     },
-    "GLA_Int_ST_short_conv": {
-        "display_name": "GLA Interleaved Single Target (Short Conv)",
-        "wandb_run_id": "fla_models/runs/do2tv5da",
-    },
+    # "GLA_Int_ST_short_conv": {
+    #     "display_name": "GLA Interleaved Single Target (Short Conv)",
+    #     "wandb_run_id": "fla_models/runs/do2tv5da",
+    # },
     "GLA_Int_MT": {
         "display_name": "GLA Interleaved Multi Target",
         "wandb_run_id": "fla_models/runs/4f224z23",
@@ -73,33 +73,33 @@ GLA_MODELS: dict[str, dict[str, Any]] = {
 }
 
 DELTANET_MODELS_SIZE_CHANGES: dict[str, dict[str, Any]] = {
-    "DeltaNet_Comb_ST": {
-        "display_name": "DeltaNet (Reference)", # reference model for size changes
+    "size_changes:DeltaNet_Comb_ST": {
+        "display_name": "12 Layers, Hid. S. 320, Heads 6", # reference model for size changes
         "wandb_run_id": "fla_models/runs/q67a0x92", 
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Layers_24": {
-        "display_name": "DeltaNet 24 Layers",
+        "display_name": "24 Layers",
         "wandb_run_id": "fla_models/runs/zbcsdb9h", # Twice the number of layers, currently running
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Hidden_Size_480": {
-        "display_name": "DeltaNet Hidden Size 480", 
+        "display_name": "Hidden Size 480", 
         "wandb_run_id": "fla_models/runs/tr0jxu69", # 1.5x hidden size, currently running
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Hidden_Size_480_Heads_6": {
-        "display_name": "DeltaNet Hidden Size 480, Heads 6",
+        "display_name": "Hidden Size 480, Heads 6",
         "wandb_run_id": "fla_models/runs/gzag08i9", # 1.5x hidden size, 1.5x heads, currently running
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Hidden_Size_640_Heads_8": {
-        "display_name": "DeltaNet Hidden Size 640, Heads 8",
+        "display_name": "Hidden Size 640, Heads 8",
         "wandb_run_id": "fla_models/runs/j8k7t7nb", # 2x hidden size, 2x heads, currently running
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Hidden_Size_640": {
-        "display_name": "DeltaNet Hidden Size 640",
+        "display_name": "Hidden Size 640",
         "wandb_run_id": "fla_models/runs/niytteb0", # 2x hidden size,
         "eval_autocast_dtype": "bf16",
     },
@@ -111,45 +111,45 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/iwaesmvk",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_MT_short_conv": {
-        "display_name": "DeltaNet Combined Multi Target (Short Conv)",
-        "wandb_run_id": "fla_models/runs/j735qiit",
-        "eval_autocast_dtype": "bf16",
-    },
+    # "DeltaNet_Comb_MT_short_conv": {
+    #     "display_name": "DeltaNet Combined Multi Target (Short Conv)",
+    #     "wandb_run_id": "fla_models/runs/j735qiit",
+    #     "eval_autocast_dtype": "bf16",
+    # },
     "DeltaNet_Comb_ST": {
         "display_name": "DeltaNet Combined Single Target",
         "wandb_run_id": "fla_models/runs/q67a0x92", 
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_short_conv": {
-        "display_name": "DeltaNet Combined Single Target (Short Conv)",
-        "wandb_run_id": "fla_models/runs/nluohjzz", # second model nluohjzz
-        "eval_autocast_dtype": "bf16",
-    },
+    # "DeltaNet_Comb_ST_short_conv": {
+    #     "display_name": "DeltaNet Combined Single Target (Short Conv)",
+    #     "wandb_run_id": "fla_models/runs/nluohjzz", # second model nluohjzz
+    #     "eval_autocast_dtype": "bf16",
+    # },
     "DeltaNet_Int_ST": {
         "display_name": "DeltaNet Interleaved Single Target",
         "wandb_run_id": "fla_models/runs/0r7dz00x",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Int_ST_short_conv": {
-        "display_name": "DeltaNet Interleaved Single Target (Short Conv)",
-        "wandb_run_id": "fla_models/runs/9v4hbvug",
-        "eval_autocast_dtype": "bf16",
-    },
+    # "DeltaNet_Int_ST_short_conv": {
+    #     "display_name": "DeltaNet Interleaved Single Target (Short Conv)",
+    #     "wandb_run_id": "fla_models/runs/9v4hbvug",
+    #     "eval_autocast_dtype": "bf16",
+    # },
     "DeltaNet_Int_MT": {
         "display_name": "DeltaNet Interleaved Multi Target",
         "wandb_run_id": "fla_models/runs/alqp1bd2",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Int_MT_short_conv": {
-        "display_name": "DeltaNet Interleaved Multi Target (Short Conv)",
-        "wandb_run_id": "fla_models/runs/fm8kzerj",
-        "eval_autocast_dtype": "bf16",
-    },
+    # "DeltaNet_Int_MT_short_conv": {
+    #     "display_name": "DeltaNet Interleaved Multi Target (Short Conv)",
+    #     "wandb_run_id": "fla_models/runs/fm8kzerj",
+    #     "eval_autocast_dtype": "bf16",
+    # },
 }
 
 GATED_DELTANET_MODELS_SEQ_LEN_CHANGES: dict[str, dict[str, Any]] = {
-    "Gated_DeltaNet_Comb_ST": {
+    "seq_len_changes:Gated_DeltaNet_Comb_ST": {
         "display_name": "Gated DeltaNet (Default)",
         "wandb_run_id": "fla_models/runs/abi7ojxu",
     },
@@ -210,19 +210,19 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
 
 BASED_MODELS: dict[str, dict[str, Any]] = {
     "Rebased_feat_dim_32": {
-        "display_name": "Linear Attention (Rebased $\phi$ with 32-dim features)",
+        "display_name": "Rebased $\phi$ with 32-dim features",
         "wandb_run_id": "fla_models/runs/72wtj14x"
     },
     "Rebased_feat_dim_16": {
-        "display_name": "Linear Attention (Rebased $\phi$ with 16-dim features)",
+        "display_name": "Rebased $\phi$ with 16-dim features",
         "wandb_run_id": "fla_models/runs/478t1e31"
     },
     "Based_feat_dim_32": {
-        "display_name": "Linear Attention (Based $\phi$ with 32-dim features)",
+        "display_name": "Based $\phi$ with 32-dim features",
         "wandb_run_id": "fla_models/runs/csb759y0"
     },
     "Based_feat_dim_16": {
-        "display_name": "Linear Attention (Based $\phi$ with 16-dim features)",
+        "display_name": "Based $\phi$ with 16-dim features",
         "wandb_run_id": "fla_models/runs/kxe10m62"
     }
 }
@@ -288,29 +288,29 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     #     "eval_mode": "forward",
     # },
     "masked:Transformer_Comb_ST": {
-        "display_name": "Causal Combined Single Target",
+        "display_name": "Causal Single Target",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
         "eval_mode": "forward",
     },
-    "Transformer_Int_ST_with_RoPE_pairwise": { 
-        "display_name": "Causal Interleaved Single Target",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
-        "eval_mode": "forward",
-    },
+    # "Transformer_Int_ST_with_RoPE_pairwise": { 
+    #     "display_name": "Causal Interleaved Single Target",
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
+    #     "eval_mode": "forward",
+    # },
     # "Transformer_Test_To_Train_Only": {
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
     #     "eval_mode": "forward",
     # },
     "Transformer_Comb_MT": {
-        "display_name": "Causal Combined Multi Target",
+        "display_name": "Causal Multi Target",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
         "eval_mode": "forward",
     },
-    "Transformer_Int_MT_with_RoPE_pairwise": { 
-        "display_name": "Causal Interleaved Multi Target",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
-        "eval_mode": "forward",
-    },
+    # "Transformer_Int_MT_with_RoPE_pairwise": { 
+    #     "display_name": "Causal Interleaved Multi Target",
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
+    #     "eval_mode": "forward",
+    # },
 }
 
 OTHER_MODELS: dict[str, dict[str, Any]] = {}

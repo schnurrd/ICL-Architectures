@@ -19,6 +19,45 @@ from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENC
 from pfns.experiments.model_benchmarks.plotting import resolve_display_name_map
 from pfns.utils import get_default_device
 
+SUMMARY_METRIC_DEFAULTS: dict[str, dict[str, Any]] = {
+    "accuracy": {"label": "Accuracy", "direction": "up", "precision": 4, "show_std": True},
+    "roc_auc": {"label": "ROC-AUC", "direction": "up", "precision": 4, "show_std": True},
+    "log_loss": {"label": "CE", "direction": "down", "precision": 4, "show_std": True},
+    "ece": {"label": "ECE", "direction": "down", "precision": 4, "show_std": True},
+    "fit_time": {"label": "Fit (s)", "direction": "down", "precision": 2, "show_std": False},
+    "predict_time": {"label": "Pred (s)", "direction": "down", "precision": 2, "show_std": False},
+}
+TIMING_METRICS = {"fit_time", "predict_time"}
+
+
+def _resolve_summary_metrics(
+    metric_specs: list[str | dict[str, Any]] | tuple[str | dict[str, Any], ...] | None,
+) -> list[dict[str, Any]]:
+    if metric_specs is None:
+        metric_specs = list(SUMMARY_METRIC_DEFAULTS)
+
+    resolved_specs: list[dict[str, Any]] = []
+    for metric_spec in metric_specs:
+        if isinstance(metric_spec, str):
+            metric_name = metric_spec
+            spec = {"metric": metric_name}
+        else:
+            spec = dict(metric_spec)
+            metric_name = str(spec["metric"])
+
+        if metric_name not in SUMMARY_METRIC_DEFAULTS:
+            available_metrics = ", ".join(sorted(SUMMARY_METRIC_DEFAULTS))
+            raise KeyError(
+                f"Unknown summary metric '{metric_name}'. Available metrics: {available_metrics}"
+            )
+
+        resolved = {**SUMMARY_METRIC_DEFAULTS[metric_name], **spec, "metric": metric_name}
+        if metric_name in TIMING_METRICS:
+            resolved["show_std"] = False
+        resolved_specs.append(resolved)
+
+    return resolved_specs
+
 
 def run_evaluation(
     *,
@@ -190,7 +229,11 @@ def run_real_world_model_from_config(
     )
 
 
-def print_results_summary(results, title: str = "Aggregated Results Across All Datasets"):
+def print_results_summary(
+    results,
+    title: str = "Aggregated Results Across All Datasets",
+    metrics: list[str | dict[str, Any]] | tuple[str | dict[str, Any], ...] | None = None,
+):
     if results.empty:
         print("Evaluation produced no results.")
         return
@@ -203,58 +246,102 @@ def print_results_summary(results, title: str = "Aggregated Results Across All D
     display_name_map = resolve_display_name_map(results)
     model_display_names = [display_name_map.get(str(model), str(model)) for model in summary.index]
     model_col_width = max(20, max((len(name) for name in model_display_names), default=0))
+    metric_specs = _resolve_summary_metrics(metrics)
+    arrow = {
+        "up": {"latex": "$\\uparrow$", "text": "↑"},
+        "down": {"latex": "$\\downarrow$", "text": "↓"},
+    }
+
+    def format_metric(row, spec: dict[str, Any], *, latex: bool) -> str:
+        metric = str(spec["metric"])
+        precision = int(spec["precision"])
+        value = f"{float(row[f'{metric}_mean']):.{precision}f}"
+        if not spec["show_std"]:
+            return value
+        std = f"{float(row[f'{metric}_std']):.{precision}f}"
+        separator = " $\\pm$ " if latex else " ± "
+        return f"{value}{separator}{std}"
 
     print("\nLaTeX table:")
     print("\\begin{table}[ht]")
     print("\\centering")
-    print("\\begin{tabular}{lccccc}")
+    print(f"\\begin{{tabular}}{{l{'c' * len(metric_specs)}}}")
     print("\\hline")
-    print(
-        "Model & Accuracy $\\uparrow$ & ROC-AUC $\\uparrow$ & CE $\\downarrow$ "
-        "& ECE $\\downarrow$ & Fit+Pred (s) $\\downarrow$ \\\\"
+    latex_header = " & ".join(
+        [
+            "Model",
+            *[
+                f"{spec['label']} {arrow[str(spec['direction'])]['latex']}"
+                for spec in metric_specs
+            ],
+        ]
     )
+    print(f"{latex_header} \\\\")
     print("\\hline")
     for model in summary.index:
         row = summary.loc[model]
         model_display = display_name_map.get(str(model), str(model))
         model_latex = model_display.replace("_", "\\_")
-        acc_str = f"{row['accuracy_mean']:.4f} $\\pm$ {row['accuracy_std']:.4f}"
-        auc_str = f"{row['roc_auc_mean']:.4f} $\\pm$ {row['roc_auc_std']:.4f}"
-        ll_str = f"{row['log_loss_mean']:.4f} $\\pm$ {row['log_loss_std']:.4f}"
-        ece_str = f"{row['ece_mean']:.4f} $\\pm$ {row['ece_std']:.4f}"
-        fit_pred_str = f"{(row['fit_time_mean'] + row['predict_time_mean']):.2f}"
+        formatted_values = [format_metric(row, spec, latex=True) for spec in metric_specs]
         print(
-            f"{model_latex} & {acc_str} & {auc_str} & {ll_str} & {ece_str} "
-            f"& {fit_pred_str} \\\\"
+            " & ".join(
+                [
+                    model_latex,
+                    *formatted_values,
+                ]
+            )
+            + " \\\\"
         )
     print("\\hline")
     print("\\end{tabular}")
     print("\\end{table}")
 
     print("\nFormatted Table:")
+    formatted_rows: list[tuple[str, list[str]]] = []
+    for model in summary.index:
+        row = summary.loc[model]
+        model_display = display_name_map.get(str(model), str(model))
+        formatted_values = [format_metric(row, spec, latex=False) for spec in metric_specs]
+        formatted_rows.append((model_display, formatted_values))
+
+    column_headers = [
+        f"{spec['label']} {arrow[str(spec['direction'])]['text']}"
+        for spec in metric_specs
+    ]
+    column_subheaders = ["mean ± std" if spec["show_std"] else "mean" for spec in metric_specs]
+    column_widths = [
+        max(
+            len(column_headers[idx]),
+            len(column_subheaders[idx]),
+            max((len(row_values[idx]) for _, row_values in formatted_rows), default=0),
+        )
+        for idx in range(len(metric_specs))
+    ]
+
     header = (
-        f"{'Model':<{model_col_width}} {'Accuracy ↑':>18} {'ROC-AUC ↑':>18} {'CE ↓':>18} "
-        f"{'ECE ↓':>18} {'Fit (s) ↓':>14} {'Pred (s) ↓':>14}"
+        f"{'Model':<{model_col_width}}"
+        + "".join(
+            f" {column_headers[idx]:>{column_widths[idx]}}"
+            for idx in range(len(column_headers))
+        )
     )
     subheader = (
-        f"{'':{model_col_width}} {'mean ± std':>18} {'mean ± std':>18} {'mean ± std':>18} "
-        f"{'mean ± std':>18} {'mean':>14} {'mean':>14}"
+        f"{'':{model_col_width}}"
+        + "".join(
+            f" {column_subheaders[idx]:>{column_widths[idx]}}"
+            for idx in range(len(column_subheaders))
+        )
     )
     print(header)
     print(subheader)
     print("-" * len(header))
-    for model in summary.index:
-        row = summary.loc[model]
-        model_display = display_name_map.get(str(model), str(model))
-        acc_str = f"{row['accuracy_mean']:.4f} ± {row['accuracy_std']:.4f}"
-        auc_str = f"{row['roc_auc_mean']:.4f} ± {row['roc_auc_std']:.4f}"
-        ll_str = f"{row['log_loss_mean']:.4f} ± {row['log_loss_std']:.4f}"
-        ece_str = f"{row['ece_mean']:.4f} ± {row['ece_std']:.4f}"
-        fit_str = f"{row['fit_time_mean']:.2f}"
-        pred_str = f"{row['predict_time_mean']:.2f}"
+    for model_display, row_values in formatted_rows:
         print(
-            f"{model_display:<{model_col_width}} {acc_str:>18} {auc_str:>18} {ll_str:>18} {ece_str:>18} "
-            f"{fit_str:>14} {pred_str:>14}"
+            f"{model_display:<{model_col_width}}"
+            + "".join(
+                f" {row_values[idx]:>{column_widths[idx]}}"
+                for idx in range(len(row_values))
+            )
         )
     print("=" * len(header))
 

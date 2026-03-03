@@ -222,7 +222,7 @@ def plot_gain_barh(
 ):
     """Horizontal bar plot for reference-based paired gains."""
     import matplotlib.pyplot as plt
-    from matplotlib.ticker import MaxNLocator, FormatStrFormatter
+    from matplotlib.ticker import FuncFormatter, MaxNLocator
 
     if error_bars not in {"std", "ci95"}:
         raise ValueError("error_bars must be 'std' or 'ci95'.")
@@ -250,7 +250,18 @@ def plot_gain_barh(
     ax.set_title(f"Paired gain vs {reference_label} with {error_bar_label}")
     ax.grid(axis="x", alpha=0.25)
     ax.xaxis.set_major_locator(MaxNLocator(nbins=7))
-    ax.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
+    fig.canvas.draw()
+    xticks = ax.get_xticks()
+    step = np.diff(xticks)
+    positive_step = step[np.abs(step) > 0]
+    min_step = float(np.min(np.abs(positive_step))) if positive_step.size else 1e-3
+    decimals = max(3, int(np.ceil(-np.log10(min_step))) + 1)
+
+    def _trimmed_tick_label(x: float, _: object) -> str:
+        label = f"{x:.{decimals}f}".rstrip("0").rstrip(".")
+        return "0" if label in {"-0", "+0", ""} else label
+
+    ax.xaxis.set_major_formatter(FuncFormatter(_trimmed_tick_label))
     ax.tick_params(axis="x", labelsize=11)
     ax.tick_params(axis="y", labelsize=11)
     fig.tight_layout()

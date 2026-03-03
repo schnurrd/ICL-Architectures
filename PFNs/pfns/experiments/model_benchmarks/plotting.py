@@ -73,7 +73,7 @@ def plot_curves_from_df(
     log_x: bool = False,
     log_y: bool = False,
     invert_y: bool = False,
-    figsize: tuple[int, int] = (24, 6),
+    figsize: tuple[float, float] | None = None,
     dpi: int = 400,
 ):
     """Generic plotting function used by notebook-level plot wrappers."""
@@ -83,6 +83,15 @@ def plot_curves_from_df(
 
     display_name_map = resolve_display_name_map(df)
     sns.set_theme(style="whitegrid", font_scale=1.2)
+    if figsize is None:
+        # Scale the figure with the number of panels
+        panel_width = 7.0
+        min_width = 8.0
+        max_width = 24.0
+        figsize = (
+            min(max_width, max(min_width, panel_width * len(specs))),
+            6.0,
+        )
     fig, axes = plt.subplots(nrows=1, ncols=len(specs), figsize=figsize, dpi=dpi)
     fig.subplots_adjust(left=0.06, bottom=0.2, right=0.98, top=0.92, wspace=0.25)
     if len(specs) == 1:
