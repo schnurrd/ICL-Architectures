@@ -559,7 +559,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.classes_ = cls
         return np.asarray(y, dtype=np.int64, order="C")
 
-    def fit(self, X, y, categorical_feats=None, overwrite_warning=False):
+    def fit(self, X, y, categorical_feats=None, overwrite_warning=True):
         """
         Validates the training set and stores it.
 
@@ -585,11 +585,6 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                     "WARNING: The number of features for this classifier is restricted to ",
                     self.max_num_features,
                     " and will be subsampled.",
-                )
-            else:
-                raise ValueError(
-                    "The number of features for this classifier is restricted to ",
-                    self.max_num_features,
                 )
         if len(np.unique(y)) > self.max_num_classes:
             raise ValueError(

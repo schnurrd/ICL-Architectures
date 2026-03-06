@@ -18,7 +18,6 @@ from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
 from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENCHMARK
 from pfns.experiments.model_benchmarks.plotting import resolve_display_name_map
 from pfns.utils import get_default_device
-
 SUMMARY_METRIC_DEFAULTS: dict[str, dict[str, Any]] = {
     "accuracy": {"label": "Accuracy", "direction": "up", "precision": 4, "show_std": True},
     "roc_auc": {"label": "ROC-AUC", "direction": "up", "precision": 4, "show_std": True},
@@ -86,8 +85,10 @@ def run_evaluation(
         dataset_ids = OPENCC_BENCHMARK
     elif benchmark == "test":
         dataset_ids = TEST_BENCHMARK
+    elif benchmark == "openml_large_dataset":
+        dataset_ids = [1461]
     else:
-        raise ValueError("Benchmark must be 'opencc' or 'test'")
+        raise ValueError("Benchmark must be 'opencc', 'test', or 'openml_large_dataset'.")
 
     resolved_runner = runner or model_config.get("runner")
     if resolved_runner is None:
@@ -390,7 +391,7 @@ def main():
     parser.add_argument("--checkpoint_name", type=str, default="checkpoint.pt")
     parser.add_argument("--wandb_run_id", type=str, default=None)
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument("--benchmark", type=str, default="opencc", choices=["opencc", "test"])
+    parser.add_argument("--benchmark", type=str, default="opencc", choices=["opencc", "test", "openml_150"])
     parser.add_argument("--max_samples", type=int, default=1000)
     parser.add_argument("--max_features", type=int, default=20)
     parser.add_argument("--max_classes", type=int, default=10)

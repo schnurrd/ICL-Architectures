@@ -93,7 +93,7 @@ def plot_curves_from_df(
             6.0,
         )
     fig, axes = plt.subplots(nrows=1, ncols=len(specs), figsize=figsize, dpi=dpi)
-    fig.subplots_adjust(left=0.06, bottom=0.2, right=0.98, top=0.92, wspace=0.25)
+    fig.subplots_adjust(left=0.06, bottom=0.12, right=0.98, top=0.92, wspace=0.45)
     if len(specs) == 1:
         axes = [axes]
 
@@ -112,8 +112,7 @@ def plot_curves_from_df(
         ax = axes[idx]
         subset_metric = df[df["metric"] == metric_key]
         present_models = subset_metric["model"].astype(str).unique().tolist()
-        present_model_set = set(present_models)
-        model_names = [name for name in get_all_models() if name in present_model_set]
+        model_names = [name for name in style_map if name in present_models]
         model_names.extend(name for name in present_models if name not in model_names)
         if idx == 0:
             legend_model_count = len(model_names)
@@ -238,8 +237,14 @@ def plot_curves_from_df(
         )
         axes[0].add_artist(range_legend)
 
-    legend_ncol = max(1, (legend_model_count + 1) // 2)
-    axes[0].legend(fontsize=11, loc="upper left", bbox_to_anchor=(0, -0.2), ncol=legend_ncol)
+    axes[0].legend(
+        fontsize=11,
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        ncol=1,
+        borderaxespad=0.0,
+        alignment="left",
+    )
     for i in range(1, len(specs)):
         if axes[i].get_legend():
             axes[i].get_legend().remove()

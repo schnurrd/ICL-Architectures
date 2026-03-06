@@ -229,52 +229,52 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
 
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     "equal_params:Transformer_Comb_ST": { # non-causal version
-        "display_name": "Transformer",
+        "display_name": "Non-Causal Transformer",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
+    },
+    "equal_params:Rebased_Comb_ST": {
+        "display_name": "Linear Attention (Rebased $\\phi$)",
+        "wandb_run_id": "fla_models/runs/ntkpkzf3", 
     },
     "equal_params:Linear_Attention_Comb_ST": {
         "display_name": "Linear Attention",
         "wandb_run_id": "linear_attention/runs/ygawhsm9",
-    },
-    "equal_params:Rebased_Comb_ST": {
-        "display_name": r"Linear Attention (Rebased $\phi$)",
-        "wandb_run_id": "fla_models/runs/ntkpkzf3", 
-    },
-    "equal_params:GLA_Comb_ST": {
-        "display_name": "Gated Linear Attention",
-        "wandb_run_id": "fla_models/runs/4vsqz1ee",
     },
     "equal_params:DeltaNet_Comb_ST": {
         "display_name": "DeltaNet",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "eval_autocast_dtype": "bf16",
     },
+    "equal_params:GLA_Comb_ST": {
+        "display_name": "Gated Linear Attention",
+        "wandb_run_id": "fla_models/runs/4vsqz1ee",
+    },
+    "equal_params:Gated_DeltaNet_Comb_ST": {
+        "display_name": "Gated DeltaNet",
+        "wandb_run_id": "fla_models/runs/g7rh5nv9",  
+    },
     # "equal_params:DeltaNet_Int_MT": {
     #     "display_name": "DeltaNet (Int MT)",
     #     "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
     #     "eval_autocast_dtype": "bf16",
     # },
-    "equal_params:Gated_DeltaNet_Comb_ST": {
-        "display_name": "Gated DeltaNet",
-        "wandb_run_id": "fla_models/runs/g7rh5nv9",  
-    },
     # "equal_params:Gated_DeltaNet_Int_MT": {
     #     "display_name": "Gated DeltaNet (Int MT)",
     #     "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
     # },
-    "equal_params:Mamba2_Comb_ST": {
-        "display_name": "Mamba2",
-        "wandb_run_id": "fla_models/runs/o9e00w17",
-    },
     "equal_params:KDA_Comb_ST": {
         "display_name": "Kimi Delta Attention",
         "wandb_run_id": "fla_models/runs/5jfgan9d", # old run qaskm2mq
+    },
+    "equal_params:Mamba2_Comb_ST": {
+        "display_name": "Mamba2",
+        "wandb_run_id": "fla_models/runs/o9e00w17",
     },
 }
 
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     "Transformer_Non_Causal": {
-        "display_name": "Non-Causal (Default)",
+        "display_name": "Non-Causal", #"Non-Causal (Default)",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
         "eval_mode": "forward",
     },
@@ -292,11 +292,6 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
         "eval_mode": "forward",
     },
-    # "Transformer_Int_ST_with_RoPE_pairwise": { 
-    #     "display_name": "Causal Interleaved Single Target",
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
-    #     "eval_mode": "forward",
-    # },
     # "Transformer_Test_To_Train_Only": {
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
     #     "eval_mode": "forward",
@@ -306,6 +301,11 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
         "eval_mode": "forward",
     },
+    # "Transformer_Int_ST_with_RoPE_pairwise": { 
+    #     "display_name": "Causal Interleaved Single Target",
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
+    #     "eval_mode": "forward",
+    # },
     # "Transformer_Int_MT_with_RoPE_pairwise": { 
     #     "display_name": "Causal Interleaved Multi Target",
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
