@@ -38,12 +38,18 @@ class HiddenStateTrackingConfig:
     name: str = "seq_len_hidden_state_debug"
 
     def __post_init__(self) -> None:
-        assert self.num_classes >= 2, "num_classes must be >= 2"
-        assert self.num_features >= 1, "num_features must be >= 1"
-        assert self.num_test_samples >= 1, "num_test_samples must be >= 1"
-        assert self.num_repetitions >= 1, "num_repetitions must be >= 1"
-        assert self.seqlen_list, "seqlen_list must be non-empty"
-        assert min(self.seqlen_list) >= 1, "All values in seqlen_list must be >= 1"
+        if self.num_classes < 2:
+            raise ValueError("num_classes must be >= 2")
+        if self.num_features < 1:
+            raise ValueError("num_features must be >= 1")
+        if self.num_test_samples < 1:
+            raise ValueError("num_test_samples must be >= 1")
+        if self.num_repetitions < 1:
+            raise ValueError("num_repetitions must be >= 1")
+        if not self.seqlen_list:
+            raise ValueError("seqlen_list must be non-empty")
+        if min(self.seqlen_list) < 1:
+            raise ValueError("All values in seqlen_list must be >= 1")
 
     @property
     def sorted_seqlens(self) -> tuple[int, ...]:
@@ -183,14 +189,24 @@ def _tensor_stats(tensor: torch.Tensor) -> dict[str, Any]:
 
     finite_mask = torch.isfinite(arr)
     finite_count = int(finite_mask.sum().item())
-    arr_sanitized = torch.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    if finite_count > 0:
+        arr_finite = arr[finite_mask]
+        l2_norm = float(torch.linalg.vector_norm(arr_finite).item())
+        abs_max = float(arr_finite.abs().max().item())
+        mean = float(arr_finite.mean().item())
+        std = float(arr_finite.std(unbiased=False).item())
+    else:
+        l2_norm = float("nan")
+        abs_max = float("nan")
+        mean = float("nan")
+        std = float("nan")
     return {
         "shape": shape,
         "numel": numel,
-        "l2_norm": float(torch.linalg.vector_norm(arr_sanitized).item()),
-        "abs_max": float(arr_sanitized.abs().max().item()),
-        "mean": float(arr_sanitized.mean().item()),
-        "std": float(arr_sanitized.std(unbiased=False).item()),
+        "l2_norm": l2_norm,
+        "abs_max": abs_max,
+        "mean": mean,
+        "std": std,
         "finite_frac": float(finite_count / numel),
     }
 
@@ -219,14 +235,20 @@ def _iter_recurrent_state_head_matrices(
 
 
 def _matrix_head_metrics(matrix: torch.Tensor) -> dict[str, float]:
-    finite_matrix = torch.nan_to_num(matrix.detach().float(), nan=0.0, posinf=0.0, neginf=0.0)
-    if finite_matrix.numel() == 0:
+    matrix_f = matrix.detach().float()
+    if matrix_f.numel() == 0:
         return {
             "fro_norm": float("nan"),
             "spectral_norm": float("nan"),
             "cond_proxy": float("nan"),
         }
-    singular_values = torch.linalg.svdvals(finite_matrix)
+    if not bool(torch.isfinite(matrix_f).all()):
+        return {
+            "fro_norm": float("nan"),
+            "spectral_norm": float("nan"),
+            "cond_proxy": float("nan"),
+        }
+    singular_values = torch.linalg.svdvals(matrix_f)
     if singular_values.numel() == 0:
         return {
             "fro_norm": float("nan"),
@@ -237,7 +259,7 @@ def _matrix_head_metrics(matrix: torch.Tensor) -> dict[str, float]:
     min_sv = float(singular_values.min().item())
     eps = 1e-12
     return {
-        "fro_norm": float(torch.linalg.norm(finite_matrix, ord="fro").item()),
+        "fro_norm": float(torch.linalg.norm(matrix_f, ord="fro").item()),
         "spectral_norm": max_sv,
         "cond_proxy": float(max_sv / max(min_sv, eps)),
     }
@@ -368,10 +390,11 @@ def run_hidden_state_tracking(
         for model_name, model_cfg in models_to_compare.items()
         if model_cfg.get("eval_mode", "fit_predict") != "fit_predict"
     }
-    assert not unsupported_eval_modes, (
-        "seq_len_debug_utils only supports fit_predict models. "
-        f"Found unsupported eval_mode entries: {unsupported_eval_modes}"
-    )
+    if unsupported_eval_modes:
+        raise ValueError(
+            "seq_len_debug_utils only supports fit_predict models. "
+            f"Found unsupported eval_mode entries: {unsupported_eval_modes}"
+        )
 
     device_type = torch.device(device).type
     is_cuda = device_type == "cuda"
