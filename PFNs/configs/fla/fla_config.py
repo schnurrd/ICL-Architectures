@@ -176,6 +176,10 @@ def get_config(
     training_setup: str = "high",
     batch_size: int | None = None,
     max_seq_len: int | None = None,
+    seq_len_choices: list[int] | tuple[int, ...] | None = None,
+    seq_len_choice_weights: list[float] | tuple[float, ...] | None = None,
+    seq_len_curriculum_start: int | None = None,
+    seq_len_curriculum_warmup_epochs: int = 0,
     lr: float | None = None,
     steps_per_epoch: int | None = None,
     aggregate_k_gradients: int | None = None,
@@ -217,6 +221,20 @@ def get_config(
     )
     resolved_epochs = int(profile.get("epochs", 200))
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
+    resolved_seq_len_choices = (
+        [int(v) for v in seq_len_choices] if seq_len_choices is not None else None
+    )
+    resolved_seq_len_choice_weights = (
+        [float(v) for v in seq_len_choice_weights]
+        if seq_len_choice_weights is not None
+        else None
+    )
+    resolved_seq_len_curriculum_start = (
+        int(seq_len_curriculum_start)
+        if seq_len_curriculum_start is not None
+        else None
+    )
+    resolved_seq_len_curriculum_warmup_epochs = int(seq_len_curriculum_warmup_epochs)
     if aggregate_k_gradients is not None:
         resolved_aggregate_k = aggregate_k_gradients
     elif is_associative_recall:
@@ -250,6 +268,10 @@ def get_config(
             else 24
         ),
         max_seq_len=resolved_max_seq_len,
+        seq_len_choices=resolved_seq_len_choices,
+        seq_len_choice_weights=resolved_seq_len_choice_weights,
+        seq_len_curriculum_start=resolved_seq_len_curriculum_start,
+        seq_len_curriculum_warmup_epochs=resolved_seq_len_curriculum_warmup_epochs,
         min_num_features=2,
         max_num_features=max_num_features,
         fixed_num_test_instances=None,
@@ -332,6 +354,12 @@ def get_config(
         f"heads{effective_num_heads}" if effective_num_heads is not None else None,
         f"bs{resolved_batch_size}" if batch_size else None,
         f"seq{resolved_max_seq_len}" if max_seq_len else None,
+        f"seqmix{len(resolved_seq_len_choices)}" if resolved_seq_len_choices else None,
+        (
+            f"seqcur{resolved_seq_len_curriculum_start}->{resolved_max_seq_len}_e{resolved_seq_len_curriculum_warmup_epochs}"
+            if resolved_seq_len_curriculum_start is not None
+            else None
+        ),
         f"cache{cache_chunk_size}" if cache_chunk_size else None,
         f"lr{resolved_lr:g}" if lr else None,
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
