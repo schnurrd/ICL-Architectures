@@ -168,6 +168,7 @@ class TabularModel(nn.Module):
 
         assert transformer_layers is not None, "Must provide pre-built transformer_layers for TabularModel."
         self.transformer_layers = transformer_layers
+        self.backbone = transformer_layers
         
         # Register hook for backward compatibility with checkpoint formats.
         # Handles old: transformer_layers.layers.X <-> new: transformer_layers.layer_stack.layers.X

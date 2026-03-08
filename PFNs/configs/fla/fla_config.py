@@ -185,6 +185,7 @@ def get_config(
     aggregate_k_gradients: int | None = None,
     # Model options
     cache_chunk_size: int | None = None,
+    deltanet_state_reg_weight: float = 0.0,
     use_short_conv: bool | None = None,
     feature_positional_embedding: str | None = "subspace",
     config_kwargs_override: dict[str, object] | None = None,
@@ -212,6 +213,9 @@ def get_config(
         raise ValueError(
             f"Unknown training_setup {training_setup!r}. Available: {sorted(TRAINING_PROFILES)}"
         )
+    if model_type != "deltanet":
+        if deltanet_state_reg_weight != 0.0:
+            raise ValueError("deltanet_state_reg_weight is only supported for model_type='deltanet'.")
     profile = TRAINING_PROFILES[training_setup]
     resolved_lr = float(profile["lr"]) if lr is None else float(lr)
     resolved_steps_per_epoch = (
@@ -330,6 +334,7 @@ def get_config(
         "model_type": model_type,
         "config_kwargs": resolved_config_kwargs,
         "sequence_mode": sequence_mode,
+        "deltanet_state_reg_weight": float(deltanet_state_reg_weight),
     }
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
