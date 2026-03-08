@@ -22,6 +22,7 @@ from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 
 from pfns import base_config
+from pfns.tensor_tree_utils import iter_named_tensors
 from pfns.model.fla_patches import (
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
@@ -326,12 +327,15 @@ class FLABackboneConfig(BackboneConfig):
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
+    deltanet_state_reg_weight: float = 0.0
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
             raise ValueError(
                 f"Unknown model_type: {self.model_type}. Available: {list(FLA_MODEL_REGISTRY)}"
             )
+        if self.deltanet_state_reg_weight < 0.0:
+            raise ValueError("deltanet_state_reg_weight must be >= 0.")
         object.__setattr__(
             self,
             "sequence_mode",
@@ -359,6 +363,7 @@ class FLABackboneConfig(BackboneConfig):
             fla_model=fla_model,
             sequence_mode=self.sequence_mode,
             cache_chunk_size=self.cache_chunk_size,
+            deltanet_state_reg_weight=self.deltanet_state_reg_weight,
         )
 
 
@@ -370,11 +375,14 @@ class FLABackbone(Backbone):
         fla_model: nn.Module,
         sequence_mode: str = "Comb_ST",
         cache_chunk_size: int | None = None,
+        deltanet_state_reg_weight: float = 0.0,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
         self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
+        self.deltanet_state_reg_weight = float(deltanet_state_reg_weight)
+        self._last_aux_loss: torch.Tensor | None = None
 
     @staticmethod
     def _summarize_cache(cache_params: tp.Any) -> str:
@@ -444,6 +452,53 @@ class FLABackbone(Backbone):
             return value
 
         return {key: _copy_value(value) for key, value in state.items()}
+
+    @staticmethod
+    def _iter_named_tensors(
+        obj: tp.Any,
+        prefix: str = "",
+        visited: set[int] | None = None,
+    ) -> tp.Iterable[tuple[str, torch.Tensor]]:
+        yield from iter_named_tensors(obj, prefix=prefix, visited=visited)
+
+    def _deltanet_state_regularizer_enabled(self) -> bool:
+        return (
+            isinstance(self.fla, DeltaNetModel)
+            and self.training
+            and self.deltanet_state_reg_weight > 0.0
+        )
+
+    def get_aux_loss(self) -> torch.Tensor | None:
+        return self._last_aux_loss
+
+    def _compute_deltanet_state_regularizer(
+        self,
+        cache_params: tp.Any | None,
+    ) -> torch.Tensor | None:
+        if cache_params is None or not self._deltanet_state_regularizer_enabled():
+            return None
+
+        recurrent_states = [
+            tensor
+            for name, tensor in self._iter_named_tensors(cache_params, prefix="cache")
+            if "recurrent_state" in name
+        ]
+
+        if not recurrent_states:
+            return None
+
+        penalties: list[torch.Tensor] = []
+        for state in recurrent_states:
+            if state.ndim < 2:
+                continue
+            state_f = state.float()
+            state_norm = torch.linalg.matrix_norm(state_f, ord="fro", dim=(-2, -1))
+            penalty = state_norm.pow(2)
+            penalties.append(penalty.mean())
+
+        if not penalties:
+            return None
+        return self.deltanet_state_reg_weight * torch.stack(penalties).mean()
 
     @staticmethod
     def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
@@ -609,7 +664,10 @@ class FLABackbone(Backbone):
                 raise ValueError("Unsupported FLA model type for cache_params.")
         try:
             with ExitStack() as stack:
-                for ctx in self._patch_contexts(use_custom_recurrent, use_custom_shortconv):
+                for ctx in self._patch_contexts(
+                    use_custom_recurrent=use_custom_recurrent,
+                    use_custom_shortconv=use_custom_shortconv,
+                ):
                     stack.enter_context(ctx)
                 out = self.fla(**kwargs)
         except TypeError as exc:
@@ -644,22 +702,30 @@ class FLABackbone(Backbone):
         Get context managers for patching FLA model behavior. 
         If use_custom_recurrent is True, we also patch the shortconv forward.
         """
-        if not use_custom_recurrent:
-            return (_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv),)
-        
         model = self.fla
-        patch_registry: tuple[tuple[type[nn.Module] | tuple[type[nn.Module], ...], tp.Callable[[bool], tp.ContextManager[tp.Any]]], ...] = (
+        contexts: list[tp.ContextManager[tp.Any]] = []
+        contexts.append(_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv or use_custom_recurrent))
+        if not use_custom_recurrent:
+            return contexts
+
+        patch_registry: tuple[
+            tuple[
+                type[nn.Module] | tuple[type[nn.Module], ...],
+                tp.Callable[..., tp.ContextManager[tp.Any]],
+            ],
+            ...,
+        ] = (
             ((GLAModel,), _maybe_patch_gla_with_stateless_recurrent),
             ((KDAModel,), _maybe_patch_kda_with_stateless_recurrent),
-            ((DeltaNetModel), _maybe_patch_deltanet_with_stateless_recurrent),
-            ((GatedDeltaNetModel), _maybe_patch_gated_deltanet_with_stateless_recurrent),
-            ((Mamba2Model), _maybe_patch_mamba2_with_stateless_recurrent),
+            ((DeltaNetModel,), _maybe_patch_deltanet_with_stateless_recurrent),
+            ((GatedDeltaNetModel,), _maybe_patch_gated_deltanet_with_stateless_recurrent),
+            ((Mamba2Model,), _maybe_patch_mamba2_with_stateless_recurrent),
         )
-        contexts: list[tp.ContextManager[tp.Any]] = []
-        contexts.append(_maybe_patch_shortconv_forward_pytorch(True))
         for model_types, ctx_factory in patch_registry:
             if isinstance(model, model_types):
-                contexts.append(ctx_factory(True))
+                contexts.append(
+                    ctx_factory(True)
+                )
         return contexts
 
     def _run_test_with_cache(
@@ -773,6 +839,7 @@ class FLABackbone(Backbone):
             "cache_trainset_representation not supported in FLA backbone"
         )
         assert single_eval_pos is not None, "single_eval_pos must be provided for FLA backbone"
+        self._last_aux_loss = None
 
         batch_size, seq_len, num_tokens, embed_dim = x.shape
         # Input x is usually [Batch, SeqLen, NumTokens, EmSize]
@@ -786,10 +853,20 @@ class FLABackbone(Backbone):
             test_x = x_batched[:, train_len:]
 
             train_out, state = self.incontext_fit(train_x)
+            if self._deltanet_state_regularizer_enabled():
+                cache_params = state.get("cache_params") if isinstance(state, dict) else None
+                self._last_aux_loss = self._compute_deltanet_state_regularizer(
+                    cache_params
+                )
             test_out = self.incontext_predict(test_x, state)
             attn_out = torch.cat([train_out, test_out], dim=1)
         else:
-            attn_out, _ = self._run_fla(x_batched, return_cache=False)
+            return_cache = self._deltanet_state_regularizer_enabled()
+            attn_out, cache_params = self._run_fla(x_batched, return_cache=return_cache)
+            if return_cache:
+                self._last_aux_loss = self._compute_deltanet_state_regularizer(
+                    cache_params
+                )
         
         out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
         return out

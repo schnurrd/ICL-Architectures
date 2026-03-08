@@ -1,7 +1,6 @@
 """Context managers for patching FLA/Gla ops during evaluation."""
 from __future__ import annotations
 
-import os
 import typing as tp
 from contextlib import contextmanager
 
@@ -9,6 +8,7 @@ import torch
 import torch.nn.functional as F
 
 from fla.modules.l2norm import l2norm
+
 
 @contextmanager
 def _maybe_patch_shortconv_forward_pytorch(enabled: bool):
@@ -130,7 +130,9 @@ def _maybe_patch_shortconv_forward_pytorch(enabled: bool):
         conv_module.ShortConvolution.forward = original_forward
 
 @contextmanager
-def _maybe_patch_gla_with_stateless_recurrent(enabled: bool):
+def _maybe_patch_gla_with_stateless_recurrent(
+    enabled: bool,
+):
     if not enabled:
         yield
         return
@@ -357,7 +359,9 @@ def _maybe_patch_gla_with_stateless_recurrent_causal(enabled: bool):
 
 
 @contextmanager
-def _maybe_patch_kda_with_stateless_recurrent(enabled: bool):
+def _maybe_patch_kda_with_stateless_recurrent(
+    enabled: bool,
+):
     if not enabled:
         yield
         return
@@ -476,7 +480,9 @@ def _maybe_patch_kda_with_stateless_recurrent(enabled: bool):
         kda_layer.chunk_kda = original_chunk_kda
 
 @contextmanager
-def _maybe_patch_deltanet_with_stateless_recurrent(enabled: bool):
+def _maybe_patch_deltanet_with_stateless_recurrent(
+    enabled: bool,
+):
     if not enabled:
         yield
         return
@@ -558,7 +564,9 @@ def _maybe_patch_deltanet_with_stateless_recurrent(enabled: bool):
         deltanet_layer.chunk_delta_rule = original_chunk_delta_rule
 
 @contextmanager
-def _maybe_patch_gated_deltanet_with_stateless_recurrent(enabled: bool):
+def _maybe_patch_gated_deltanet_with_stateless_recurrent(
+    enabled: bool,
+):
     if not enabled:
         yield
         return
@@ -591,7 +599,7 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(enabled: bool):
         
         q, k, v, beta = (t.float() for t in (q, k, v, beta))
         g = g.float() if g is not None else None
-        s0 = initial_state.float() 
+        s0 = initial_state.float()
 
         orig_batch = q.shape[0]
         cache_batch = s0.shape[0]
@@ -671,7 +679,9 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(enabled: bool):
 
 
 @contextmanager
-def _maybe_patch_mamba2_with_stateless_recurrent(enabled: bool):
+def _maybe_patch_mamba2_with_stateless_recurrent(
+    enabled: bool,
+):
     """
     Patch Mamba2 forward for stateless parallel evaluation with cached state.
     Computes SSM output directly from initial state without materializing intermediates:
