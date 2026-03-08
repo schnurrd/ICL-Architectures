@@ -93,6 +93,7 @@ class _BatchedIterableDataset(IterableDataset[Batch]):
             # Ensure single_eval_pos is set on the batch object if get_batch_method doesn't handle it
             if b.single_eval_pos is None:
                 b.single_eval_pos = batch_shape.single_eval_pos
+            b.optimizer_step_progress = batch_shape.optimizer_step_progress
             b.step = local_step * num_workers + worker_id + 10000 * self.epoch_count
             yield b
         self.epoch_count += 1

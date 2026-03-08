@@ -120,3 +120,60 @@ def test_raises_if_sampled_seq_len_is_too_small_for_fixed_test_instances():
         match="Sampled seq_len is too small for fixed_num_test_instances",
     ):
         cfg.sample_batch_shape(epoch=1, step=0)
+
+
+def test_epoch_dependent_choice_weighting_shifts_to_longer_sequences():
+    cfg = BatchShapeSamplerConfig(
+        batch_size=8,
+        max_seq_len=256,
+        seq_len_choices=[64, 128, 256],
+        seq_len_curriculum_start=64,
+        seq_len_curriculum_warmup_epochs=8,
+        seq_len_choice_weight_exponent=3.0,
+        seed=11,
+    )
+
+    early = [cfg.sample_batch_shape(epoch=1, step=step).seq_len for step in range(200)]
+    late = [cfg.sample_batch_shape(epoch=10, step=step).seq_len for step in range(200)]
+
+    assert sum(late) / len(late) > sum(early) / len(early)
+
+
+def test_dynamic_batch_size_scales_with_seq_len_linear_and_quadratic():
+    linear_cfg = BatchShapeSamplerConfig(
+        batch_size=64,
+        max_seq_len=256,
+        seq_len_choices=[64, 128, 256],
+        dynamic_batch_size_power=1,
+    )
+    quadratic_cfg = BatchShapeSamplerConfig(
+        batch_size=64,
+        max_seq_len=256,
+        seq_len_choices=[64, 128, 256],
+        dynamic_batch_size_power=2,
+    )
+
+    assert linear_cfg._dynamic_batch_size(64) == 64
+    assert linear_cfg._dynamic_batch_size(128) == 32
+    assert linear_cfg._dynamic_batch_size(256) == 16
+
+    assert quadratic_cfg._dynamic_batch_size(64) == 64
+    assert quadratic_cfg._dynamic_batch_size(128) == 16
+    assert quadratic_cfg._dynamic_batch_size(256) == 4
+
+
+def test_optimizer_step_progress_reflects_dynamic_batch_when_enabled():
+    cfg = BatchShapeSamplerConfig(
+        batch_size=64,
+        max_seq_len=256,
+        seq_len_choices=[64, 256],
+        seq_len_choice_weights=[0.0, 1.0],
+        dynamic_batch_size_power=1,
+        dynamic_batch_size_compensate_grad_accumulation=True,
+        seed=17,
+    )
+
+    shape = cfg.sample_batch_shape(epoch=1, step=0)
+    assert shape.seq_len == 256
+    assert shape.batch_size == 16
+    assert shape.optimizer_step_progress == 0.25

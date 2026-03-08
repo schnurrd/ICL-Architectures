@@ -17,6 +17,7 @@ class BatchShape:
     seq_len: int
     num_features: int
     single_eval_pos: Optional[int] = None
+    optimizer_step_progress: float = 1.0
 
     def as_get_batch_kwargs(self):
         return {
@@ -39,6 +40,9 @@ class BatchShapeSamplerConfig(BaseConfig):
     seq_len_choice_weights: Optional[Sequence[float]] = None
     seq_len_curriculum_start: Optional[int] = None
     seq_len_curriculum_warmup_epochs: int = 0
+    seq_len_choice_weight_exponent: float | None = None
+    dynamic_batch_size_power: int = 0
+    dynamic_batch_size_compensate_grad_accumulation: bool = False
 
     seed: int = 42
 
@@ -52,6 +56,11 @@ class BatchShapeSamplerConfig(BaseConfig):
             if self.seq_len_curriculum_start is None
             else int(self.seq_len_curriculum_start)
         )
+        choice_weight_exponent = (
+            None
+            if self.seq_len_choice_weight_exponent is None
+            else float(self.seq_len_choice_weight_exponent)
+        )
         choices = (
             None
             if self.seq_len_choices is None
@@ -62,8 +71,13 @@ class BatchShapeSamplerConfig(BaseConfig):
             if self.seq_len_choice_weights is None
             else tuple(float(w) for w in self.seq_len_choice_weights)
         )
+        dynamic_batch_size_power = int(self.dynamic_batch_size_power)
+        dynamic_batch_size_compensate_grad_accumulation = bool(
+            self.dynamic_batch_size_compensate_grad_accumulation
+        )
 
         assert max_seq_len >= 2, "max_seq_len must be >= 2."
+        assert self.batch_size >= 1, "batch_size must be >= 1."
         assert self.min_single_eval_pos >= 0, "min_single_eval_pos must be >= 0."
         assert (
             self.fixed_num_test_instances is None or self.fixed_num_test_instances >= 0
@@ -90,6 +104,11 @@ class BatchShapeSamplerConfig(BaseConfig):
 
         if curriculum_start is not None:
             assert curriculum_start >= 2, "seq_len_curriculum_start must be >= 2 when set."
+        if dynamic_batch_size_power not in (0, 1, 2):
+            raise ValueError(
+                "dynamic_batch_size_power must be one of {0, 1, 2}. "
+                "Use 1 for linear-attention-like scaling and 2 for transformer-like scaling."
+            )
 
         for field_name, value in (
             ("max_seq_len", max_seq_len),
@@ -97,20 +116,35 @@ class BatchShapeSamplerConfig(BaseConfig):
             ("seq_len_choice_weights", weights),
             ("seq_len_curriculum_start", curriculum_start),
             ("seq_len_curriculum_warmup_epochs", warmup_epochs),
+            ("seq_len_choice_weight_exponent", choice_weight_exponent),
+            ("dynamic_batch_size_power", dynamic_batch_size_power),
+            (
+                "dynamic_batch_size_compensate_grad_accumulation",
+                dynamic_batch_size_compensate_grad_accumulation,
+            ),
         ):
             object.__setattr__(self, field_name, value)
+
+    def _curriculum_progress(self, epoch: int) -> float:
+        warmup = self.seq_len_curriculum_warmup_epochs
+        if warmup <= 0:
+            return 1.0
+        return min(max(float(epoch - 1), 0.0) / float(warmup), 1.0)
 
     def _effective_max_seq_len(self, epoch: int) -> int:
         start = self.seq_len_curriculum_start
         warmup = self.seq_len_curriculum_warmup_epochs
         if start is None or warmup <= 0 or self.max_seq_len <= start:
             return self.max_seq_len
-        progress = min(max(float(epoch - 1), 0.0) / float(warmup), 1.0)
+        progress = self._curriculum_progress(epoch)
         return int(round(start + progress * (self.max_seq_len - start)))
 
-    def _sample_seq_len_cap(self, rng: random.Random, *, max_seq_len_cap: int) -> int:
+    def _sample_seq_len_cap(
+        self, rng: random.Random, *, max_seq_len_cap: int, epoch: int
+    ) -> int:
         if not self.seq_len_choices:
             return max_seq_len_cap
+        progress = self._curriculum_progress(epoch)
         if self.seq_len_choice_weights is None:
             choices = [value for value in self.seq_len_choices if value <= max_seq_len_cap]
             if not choices:
@@ -118,24 +152,61 @@ class BatchShapeSamplerConfig(BaseConfig):
                     "No valid seq_len_choices found under max_seq_len_cap. "
                     f"max_seq_len_cap={max_seq_len_cap}, seq_len_choices={list(self.seq_len_choices)}."
                 )
-            return rng.choice(choices)
+            base_weights = [1.0] * len(choices)
+        else:
+            choices, base_weights = [], []
+            for value, weight in zip(self.seq_len_choices, self.seq_len_choice_weights):
+                if value <= max_seq_len_cap:
+                    choices.append(value)
+                    base_weights.append(weight)
+            if not choices:
+                raise ValueError(
+                    "No valid seq_len_choices found under max_seq_len_cap. "
+                    f"max_seq_len_cap={max_seq_len_cap}, seq_len_choices={list(self.seq_len_choices)}."
+                )
 
-        choices, weights = [], []
-        for value, weight in zip(self.seq_len_choices, self.seq_len_choice_weights):
-            if value <= max_seq_len_cap:
-                choices.append(value)
-                weights.append(weight)
-        if not choices:
-            raise ValueError(
-                "No valid seq_len_choices found under max_seq_len_cap. "
-                f"max_seq_len_cap={max_seq_len_cap}, seq_len_choices={list(self.seq_len_choices)}."
-            )
+        if self.seq_len_choice_weight_exponent is not None:
+            exponent = progress * self.seq_len_choice_weight_exponent
+            min_choice = float(min(choices))
+            weights = [
+                base_weight * ((float(value) / min_choice) ** exponent)
+                for value, base_weight in zip(choices, base_weights)
+            ]
+        else:
+            weights = base_weights
 
         return (
             rng.choice(choices)
             if sum(weights) <= 0.0
             else rng.choices(choices, weights=weights, k=1)[0]
         )
+
+    def _dynamic_batch_size(self, seq_len: int) -> int:
+        if self.dynamic_batch_size_power <= 0:
+            return self.batch_size
+
+        reference_seq_len = (
+            self.seq_len_curriculum_start
+            if self.seq_len_curriculum_start is not None
+            else (
+                min(self.seq_len_choices)
+                if self.seq_len_choices is not None
+                else self.max_seq_len
+            )
+        )
+        # Keep nominal memory at the reference sequence length.
+        memory_budget = float(self.batch_size) * (
+            float(reference_seq_len) ** self.dynamic_batch_size_power
+        )
+        raw_batch_size = int(
+            memory_budget / (float(seq_len) ** self.dynamic_batch_size_power)
+        )
+        return max(1, min(self.batch_size, raw_batch_size))
+
+    def _optimizer_step_progress(self, dynamic_batch_size: int) -> float:
+        if not self.dynamic_batch_size_compensate_grad_accumulation:
+            return 1.0
+        return float(dynamic_batch_size) / float(self.batch_size)
 
     def sample_batch_shape(self, epoch: int, step: int) -> BatchShape:
         # Create deterministic seed based on epoch and step
@@ -146,7 +217,9 @@ class BatchShapeSamplerConfig(BaseConfig):
         num_features = rng.randint(self.min_num_features, self.max_num_features)
 
         max_seq_len_cap = self._effective_max_seq_len(epoch)
-        seq_len_cap = self._sample_seq_len_cap(rng, max_seq_len_cap=max_seq_len_cap)
+        seq_len_cap = self._sample_seq_len_cap(
+            rng, max_seq_len_cap=max_seq_len_cap, epoch=epoch
+        )
         max_single_eval_pos = (
             seq_len_cap
             - 1
@@ -176,10 +249,11 @@ class BatchShapeSamplerConfig(BaseConfig):
         if self.fixed_num_test_instances is not None:
             seq_len = self.fixed_num_test_instances + single_eval_pos
 
-        # future todo: adapt batch_size and num_features based on seq_len -> shrinking them for large seq_lens
+        dynamic_batch_size = self._dynamic_batch_size(seq_len)
         return BatchShape(
-            batch_size=self.batch_size,
+            batch_size=dynamic_batch_size,
             seq_len=seq_len,
             num_features=num_features,
             single_eval_pos=single_eval_pos,
+            optimizer_step_progress=self._optimizer_step_progress(dynamic_batch_size),
         )

@@ -180,6 +180,9 @@ def get_config(
     seq_len_choice_weights: list[float] | tuple[float, ...] | None = None,
     seq_len_curriculum_start: int | None = None,
     seq_len_curriculum_warmup_epochs: int = 0,
+    seq_len_choice_weight_exponent: float | None = None,
+    dynamic_batch_size_power: int = 0,
+    dynamic_batch_size_compensate_grad_accumulation: bool = False,
     lr: float | None = None,
     steps_per_epoch: int | None = None,
     aggregate_k_gradients: int | None = None,
@@ -257,6 +260,15 @@ def get_config(
         else None
     )
     resolved_seq_len_curriculum_warmup_epochs = int(seq_len_curriculum_warmup_epochs)
+    resolved_seq_len_choice_weight_exponent = (
+        float(seq_len_choice_weight_exponent)
+        if seq_len_choice_weight_exponent is not None
+        else None
+    )
+    resolved_dynamic_batch_size_power = int(dynamic_batch_size_power)
+    resolved_dynamic_batch_size_compensate_grad_accumulation = bool(
+        dynamic_batch_size_compensate_grad_accumulation
+    )
     if aggregate_k_gradients is not None:
         resolved_aggregate_k = aggregate_k_gradients
     elif is_associative_recall:
@@ -294,6 +306,9 @@ def get_config(
         seq_len_choice_weights=resolved_seq_len_choice_weights,
         seq_len_curriculum_start=resolved_seq_len_curriculum_start,
         seq_len_curriculum_warmup_epochs=resolved_seq_len_curriculum_warmup_epochs,
+        seq_len_choice_weight_exponent=resolved_seq_len_choice_weight_exponent,
+        dynamic_batch_size_power=resolved_dynamic_batch_size_power,
+        dynamic_batch_size_compensate_grad_accumulation=resolved_dynamic_batch_size_compensate_grad_accumulation,
         min_num_features=2,
         max_num_features=max_num_features,
         fixed_num_test_instances=None,
@@ -381,6 +396,22 @@ def get_config(
         (
             f"seqcur{resolved_seq_len_curriculum_start}->{resolved_max_seq_len}_e{resolved_seq_len_curriculum_warmup_epochs}"
             if resolved_seq_len_curriculum_start is not None
+            else None
+        ),
+        (
+            f"seqexp{resolved_seq_len_choice_weight_exponent:g}"
+            if resolved_seq_len_choice_weight_exponent is not None
+            else None
+        ),
+        (
+            f"dynbs_p{resolved_dynamic_batch_size_power}"
+            if resolved_dynamic_batch_size_power > 0
+            else None
+        ),
+        (
+            "dynbs_compagg"
+            if resolved_dynamic_batch_size_power > 0
+            and resolved_dynamic_batch_size_compensate_grad_accumulation
             else None
         ),
         f"cache{cache_chunk_size}" if cache_chunk_size else None,

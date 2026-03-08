@@ -485,11 +485,9 @@ def train_or_evaluate_epoch(
     grad_norm_ema = 0.0 if last_epoch_result is None else last_epoch_result.grad_norm_ema_mean
     spike_save_count = 0 # only used if debug_spike_enabled
     autocast_dtype = resolve_autocast_dtype(device, c.train_mixed_precision_dtype) if c.train_mixed_precision else torch.float32
+    optimizer_step_progress = 0.0
     
     before_get_batch = time.time()
-    assert (
-        len(dl) % c.aggregate_k_gradients == 0
-    ), "Please set the number of steps per epoch s.t. `aggregate_k_gradients` divides it."
 
     tqdm_iter = (
         tqdm(range(len(dl)), desc="Training Epoch")
@@ -514,14 +512,32 @@ def train_or_evaluate_epoch(
             )
         targets = batch.target_y.to(device)
         single_eval_pos = batch.single_eval_pos
+        batch_optimizer_step_progress = (
+            1.0 / float(c.aggregate_k_gradients)
+        )
+        if training:
+            batch_optimizer_step_progress *= float(
+                getattr(batch, "optimizer_step_progress", 1.0)
+            )
+            if batch_optimizer_step_progress <= 0.0:
+                raise ValueError(
+                    "optimizer_step_progress must be > 0 for training batches."
+                )
+            # Keep one optimizer step at most for a single micro-batch.
+            batch_optimizer_step_progress = min(batch_optimizer_step_progress, 1.0)
+        next_optimizer_step_progress = (
+            optimizer_step_progress + batch_optimizer_step_progress
+        )
+        is_last_batch = batch_index == len(dl) - 1
+        should_step_after_batch = training and (
+            next_optimizer_step_progress >= 1.0 - 1e-12 or is_last_batch
+        )
 
         if tqdm_iter is not None:
             tqdm_iter.update()
 
         # only synch gradients once every aggregate_k_gradients steps
-        if using_dist and not (
-            batch_index % c.aggregate_k_gradients == c.aggregate_k_gradients - 1
-        ):
+        if using_dist and training and not should_step_after_batch:
             potentially_no_sync_context = model.no_sync()
         else:
             potentially_no_sync_context = nullcontext()
@@ -600,7 +616,7 @@ def train_or_evaluate_epoch(
                             batch_index=batch_index,
                             device=device,
                         )
-                    loss_scaled = loss / c.aggregate_k_gradients
+                    loss_scaled = loss * batch_optimizer_step_progress
 
                 if scaler:
                     loss_scaled = scaler.scale(loss_scaled)
@@ -608,7 +624,7 @@ def train_or_evaluate_epoch(
                 if training:
                     loss_scaled.backward()
 
-                if batch_index % c.aggregate_k_gradients == c.aggregate_k_gradients - 1:
+                if training and should_step_after_batch:
                     if scaler:
                         # we unscale s.t. we can clip grads right
                         scaler.unscale_(optimizer)
@@ -679,6 +695,11 @@ def train_or_evaluate_epoch(
                             if scaler:
                                 scaler.update()
                             optimizer.zero_grad()
+                    optimizer_step_progress = max(
+                        0.0, next_optimizer_step_progress - 1.0
+                    )
+                elif training:
+                    optimizer_step_progress = next_optimizer_step_progress
 
                 step_time = time.time() - before_forward
 

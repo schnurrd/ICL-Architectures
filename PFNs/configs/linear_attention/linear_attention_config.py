@@ -68,6 +68,13 @@ def get_config(
     task_variant: str = "tabular_prior",
     batch_size: int | None = None,
     max_seq_len: int | None = None,
+    seq_len_choices: list[int] | tuple[int, ...] | None = None,
+    seq_len_choice_weights: list[float] | tuple[float, ...] | None = None,
+    seq_len_curriculum_start: int | None = None,
+    seq_len_curriculum_warmup_epochs: int = 0,
+    seq_len_choice_weight_exponent: float | None = None,
+    dynamic_batch_size_power: int = 0,
+    dynamic_batch_size_compensate_grad_accumulation: bool = False,
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
@@ -95,6 +102,29 @@ def get_config(
     resolved_lr = float(profile["lr"]) if lr is None else float(lr)
     resolved_batch_size = batch_size or DEFAULT_BATCH_SIZE
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
+    resolved_seq_len_choices = (
+        [int(v) for v in seq_len_choices] if seq_len_choices is not None else None
+    )
+    resolved_seq_len_choice_weights = (
+        [float(v) for v in seq_len_choice_weights]
+        if seq_len_choice_weights is not None
+        else None
+    )
+    resolved_seq_len_curriculum_start = (
+        int(seq_len_curriculum_start)
+        if seq_len_curriculum_start is not None
+        else None
+    )
+    resolved_seq_len_curriculum_warmup_epochs = int(seq_len_curriculum_warmup_epochs)
+    resolved_seq_len_choice_weight_exponent = (
+        float(seq_len_choice_weight_exponent)
+        if seq_len_choice_weight_exponent is not None
+        else None
+    )
+    resolved_dynamic_batch_size_power = int(dynamic_batch_size_power)
+    resolved_dynamic_batch_size_compensate_grad_accumulation = bool(
+        dynamic_batch_size_compensate_grad_accumulation
+    )
     resolved_epochs = profile.get("epochs", 200)
     resolved_steps_per_epoch = profile["steps_per_epoch"]
     resolved_aggregate_k = (
@@ -120,6 +150,13 @@ def get_config(
             else 64
         ),
         max_seq_len=resolved_max_seq_len,
+        seq_len_choices=resolved_seq_len_choices,
+        seq_len_choice_weights=resolved_seq_len_choice_weights,
+        seq_len_curriculum_start=resolved_seq_len_curriculum_start,
+        seq_len_curriculum_warmup_epochs=resolved_seq_len_curriculum_warmup_epochs,
+        seq_len_choice_weight_exponent=resolved_seq_len_choice_weight_exponent,
+        dynamic_batch_size_power=resolved_dynamic_batch_size_power,
+        dynamic_batch_size_compensate_grad_accumulation=resolved_dynamic_batch_size_compensate_grad_accumulation,
         min_num_features=2,
         max_num_features=MAX_NUM_FEATURES,
         fixed_num_test_instances=None,
