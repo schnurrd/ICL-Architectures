@@ -383,9 +383,6 @@ class FLABackbone(Backbone):
         self.deltanet_state_reg_weight = float(deltanet_state_reg_weight)
         self._last_aux_loss: torch.Tensor | None = None
 
-        if self.deltanet_state_reg_weight < 0.0:
-            raise ValueError("deltanet_state_reg_weight must be >= 0.")
-
     @staticmethod
     def _summarize_cache(cache_params: tp.Any) -> str:
         tensor_count = 0
@@ -456,24 +453,48 @@ class FLABackbone(Backbone):
         return {key: _copy_value(value) for key, value in state.items()}
 
     @staticmethod
-    def _iter_named_tensors(obj: tp.Any, prefix: str = "") -> tp.Iterable[tuple[str, torch.Tensor]]:
+    def _iter_named_tensors(
+        obj: tp.Any,
+        prefix: str = "",
+        visited: set[int] | None = None,
+    ) -> tp.Iterable[tuple[str, torch.Tensor]]:
+        if visited is None:
+            visited = set()
+
+        oid = id(obj)
+        if oid in visited:
+            return
+        visited.add(oid)
+
         if torch.is_tensor(obj):
             yield prefix, obj
             return
         if isinstance(obj, dict):
             for key, value in obj.items():
                 next_prefix = f"{prefix}.{key}" if prefix else str(key)
-                yield from FLABackbone._iter_named_tensors(value, next_prefix)
+                yield from FLABackbone._iter_named_tensors(
+                    value,
+                    next_prefix,
+                    visited=visited,
+                )
             return
         if isinstance(obj, (list, tuple)):
             for idx, value in enumerate(obj):
                 next_prefix = f"{prefix}[{idx}]"
-                yield from FLABackbone._iter_named_tensors(value, next_prefix)
+                yield from FLABackbone._iter_named_tensors(
+                    value,
+                    next_prefix,
+                    visited=visited,
+                )
             return
         if hasattr(obj, "__dict__"):
             for key, value in obj.__dict__.items():
                 next_prefix = f"{prefix}.{key}" if prefix else key
-                yield from FLABackbone._iter_named_tensors(value, next_prefix)
+                yield from FLABackbone._iter_named_tensors(
+                    value,
+                    next_prefix,
+                    visited=visited,
+                )
 
     def _deltanet_state_regularizer_enabled(self) -> bool:
         return (
@@ -492,15 +513,11 @@ class FLABackbone(Backbone):
         if cache_params is None or not self._deltanet_state_regularizer_enabled():
             return None
 
-        seen_ids: set[int] = set()
-        recurrent_states: list[torch.Tensor] = []
-        for name, tensor in self._iter_named_tensors(cache_params, prefix="cache"):
-            if "recurrent_state" not in name:
-                continue
-            if id(tensor) in seen_ids:
-                continue
-            seen_ids.add(id(tensor))
-            recurrent_states.append(tensor)
+        recurrent_states = [
+            tensor
+            for name, tensor in self._iter_named_tensors(cache_params, prefix="cache")
+            if "recurrent_state" in name
+        ]
 
         if not recurrent_states:
             return None
