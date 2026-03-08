@@ -229,6 +229,24 @@ def get_config(
         if seq_len_choice_weights is not None
         else None
     )
+    if (
+        resolved_seq_len_choice_weights is not None
+        and resolved_seq_len_choices is None
+    ):
+        raise ValueError(
+            "seq_len_choice_weights were provided without seq_len_choices. "
+            "Please specify seq_len_choices or omit seq_len_choice_weights."
+        )
+    if (
+        resolved_seq_len_choice_weights is not None
+        and resolved_seq_len_choices is not None
+        and len(resolved_seq_len_choice_weights) != len(resolved_seq_len_choices)
+    ):
+        raise ValueError(
+            "seq_len_choices and seq_len_choice_weights must have the same length; "
+            f"got {len(resolved_seq_len_choices)} choices and "
+            f"{len(resolved_seq_len_choice_weights)} weights."
+        )
     resolved_seq_len_curriculum_start = (
         int(seq_len_curriculum_start)
         if seq_len_curriculum_start is not None

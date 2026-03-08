@@ -68,11 +68,15 @@ class BatchShapeSamplerConfig(BaseConfig):
         assert (
             self.fixed_num_test_instances is None or self.fixed_num_test_instances >= 0
         ), "fixed_num_test_instances must be >= 0 when set."
+        if warmup_epochs < 0:
+            raise ValueError("seq_len_curriculum_warmup_epochs must be >= 0.")
 
         assert choices is not None or weights is None, (
             "seq_len_choice_weights requires seq_len_choices to be set."
         )
         if choices is not None:
+            if not choices:
+                raise ValueError("seq_len_choices must be non-empty when set.")
             assert all(seq_len >= 2 for seq_len in choices), (
                 "All seq_len_choices values must be >= 2."
             )
@@ -105,21 +109,32 @@ class BatchShapeSamplerConfig(BaseConfig):
         return int(round(start + progress * (self.max_seq_len - start)))
 
     def _sample_seq_len_cap(self, rng: random.Random, *, max_seq_len_cap: int) -> int:
-        choices = [value for value in (self.seq_len_choices or ()) if value <= max_seq_len_cap]
-        if not choices:
+        if not self.seq_len_choices:
             return max_seq_len_cap
         if self.seq_len_choice_weights is None:
+            choices = [value for value in self.seq_len_choices if value <= max_seq_len_cap]
+            if not choices:
+                raise ValueError(
+                    "No valid seq_len_choices found under max_seq_len_cap. "
+                    f"max_seq_len_cap={max_seq_len_cap}, seq_len_choices={list(self.seq_len_choices)}."
+                )
             return rng.choice(choices)
 
-        filtered_weights = [
-            weight
-            for value, weight in zip(self.seq_len_choices, self.seq_len_choice_weights)
-            if value <= max_seq_len_cap
-        ]
+        choices, weights = [], []
+        for value, weight in zip(self.seq_len_choices, self.seq_len_choice_weights):
+            if value <= max_seq_len_cap:
+                choices.append(value)
+                weights.append(weight)
+        if not choices:
+            raise ValueError(
+                "No valid seq_len_choices found under max_seq_len_cap. "
+                f"max_seq_len_cap={max_seq_len_cap}, seq_len_choices={list(self.seq_len_choices)}."
+            )
+
         return (
             rng.choice(choices)
-            if sum(filtered_weights) <= 0.0
-            else rng.choices(choices, weights=filtered_weights, k=1)[0]
+            if sum(weights) <= 0.0
+            else rng.choices(choices, weights=weights, k=1)[0]
         )
 
     def sample_batch_shape(self, epoch: int, step: int) -> BatchShape:
@@ -146,7 +161,15 @@ class BatchShapeSamplerConfig(BaseConfig):
                 "Sampled seq_len is too small for fixed_num_test_instances. "
                 f"Got seq_len={seq_len_cap}, fixed_num_test_instances={self.fixed_num_test_instances}."
             )
-        min_single_eval_pos = min(int(self.min_single_eval_pos), int(max_single_eval_pos))
+        configured_min_single_eval_pos = int(self.min_single_eval_pos)
+        if configured_min_single_eval_pos > max_single_eval_pos:
+            raise ValueError(
+                "Configured min_single_eval_pos exceeds the maximum allowed single_eval_pos. "
+                f"Got min_single_eval_pos={configured_min_single_eval_pos}, "
+                f"max_single_eval_pos={max_single_eval_pos}, seq_len_cap={seq_len_cap}, "
+                f"fixed_num_test_instances={self.fixed_num_test_instances}."
+            )
+        min_single_eval_pos = configured_min_single_eval_pos
         single_eval_pos = rng.randint(min_single_eval_pos, max_single_eval_pos)
 
         seq_len = seq_len_cap
