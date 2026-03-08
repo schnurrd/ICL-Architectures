@@ -22,6 +22,7 @@ from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 
 from pfns import base_config
+from pfns.tensor_tree_utils import iter_named_tensors
 from pfns.model.fla_patches import (
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
@@ -458,43 +459,7 @@ class FLABackbone(Backbone):
         prefix: str = "",
         visited: set[int] | None = None,
     ) -> tp.Iterable[tuple[str, torch.Tensor]]:
-        if visited is None:
-            visited = set()
-
-        oid = id(obj)
-        if oid in visited:
-            return
-        visited.add(oid)
-
-        if torch.is_tensor(obj):
-            yield prefix, obj
-            return
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                next_prefix = f"{prefix}.{key}" if prefix else str(key)
-                yield from FLABackbone._iter_named_tensors(
-                    value,
-                    next_prefix,
-                    visited=visited,
-                )
-            return
-        if isinstance(obj, (list, tuple)):
-            for idx, value in enumerate(obj):
-                next_prefix = f"{prefix}[{idx}]"
-                yield from FLABackbone._iter_named_tensors(
-                    value,
-                    next_prefix,
-                    visited=visited,
-                )
-            return
-        if hasattr(obj, "__dict__"):
-            for key, value in obj.__dict__.items():
-                next_prefix = f"{prefix}.{key}" if prefix else key
-                yield from FLABackbone._iter_named_tensors(
-                    value,
-                    next_prefix,
-                    visited=visited,
-                )
+        yield from iter_named_tensors(obj, prefix=prefix, visited=visited)
 
     def _deltanet_state_regularizer_enabled(self) -> bool:
         return (

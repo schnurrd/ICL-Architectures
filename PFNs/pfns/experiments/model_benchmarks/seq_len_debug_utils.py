@@ -17,6 +17,7 @@ from pfns.experiments.model_benchmarks.model_registry import (
     get_autocast_models_from_registry,
 )
 from pfns.experiments.model_benchmarks.models import load_models_for_benchmark
+from pfns.tensor_tree_utils import iter_named_tensors
 from pfns.training_utils import (
     categorical_mask_to_inds,
     move_style_and_check_shape,
@@ -110,39 +111,7 @@ def _iter_named_tensors(
     prefix: str = "state",
     visited: set[int] | None = None,
 ) -> list[tuple[str, torch.Tensor]]:
-    if visited is None:
-        visited = set()
-
-    if torch.is_tensor(obj):
-        oid = id(obj)
-        if oid in visited:
-            return []
-        visited.add(oid)
-        return [(prefix, obj)]
-
-    oid = id(obj)
-    if oid in visited:
-        return []
-    visited.add(oid)
-
-    out: list[tuple[str, torch.Tensor]] = []
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            child = f"{prefix}.{key}" if prefix else str(key)
-            out.extend(_iter_named_tensors(value, prefix=child, visited=visited))
-        return out
-
-    if isinstance(obj, (list, tuple)):
-        for idx, value in enumerate(obj):
-            child = f"{prefix}[{idx}]"
-            out.extend(_iter_named_tensors(value, prefix=child, visited=visited))
-        return out
-
-    if hasattr(obj, "__dict__"):
-        for key, value in vars(obj).items():
-            child = f"{prefix}.{key}" if prefix else str(key)
-            out.extend(_iter_named_tensors(value, prefix=child, visited=visited))
-    return out
+    return list(iter_named_tensors(obj, prefix=prefix, visited=visited))
 
 
 def _looks_like_hidden_state(name: str) -> bool:

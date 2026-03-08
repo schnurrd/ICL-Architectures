@@ -440,10 +440,12 @@ def train(
 
 def _get_backbone_aux_loss(model: torch.nn.Module) -> torch.Tensor | None:
     model_ref = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
-    transformer_layers = getattr(model_ref, "transformer_layers", None)
-    if transformer_layers is None or not hasattr(transformer_layers, "get_aux_loss"):
+    backbone = getattr(model_ref, "backbone", None)
+    if backbone is None:
+        backbone = getattr(model_ref, "transformer_layers", None)
+    if backbone is None or not hasattr(backbone, "get_aux_loss"):
         return None
-    aux_loss = transformer_layers.get_aux_loss()
+    aux_loss = backbone.get_aux_loss()
     if aux_loss is None or not torch.is_tensor(aux_loss):
         return None
     return aux_loss
