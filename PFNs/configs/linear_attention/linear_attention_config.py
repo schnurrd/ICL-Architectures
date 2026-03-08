@@ -71,7 +71,7 @@ def get_config(
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
-    feature_positional_embedding: str | None = "subspace",
+    feature_positional_embedding: str | None = None,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -117,7 +117,7 @@ def get_config(
         min_single_eval_pos=(
             ASSOCIATIVE_RECALL_SETTINGS["min_single_eval_pos"]
             if is_associative_recall
-            else 24
+            else 64
         ),
         max_seq_len=resolved_max_seq_len,
         min_num_features=2,

@@ -82,7 +82,7 @@ def get_config(
     
     batch_shape = BatchShapeSamplerConfig(
         batch_size=8,
-        min_single_eval_pos=24,
+        min_single_eval_pos=64,
         max_seq_len=resolved_max_seq_len,
         min_num_features=2,
         max_num_features=max_num_features,
@@ -119,7 +119,7 @@ def get_config(
         ),
         features_per_group=20,
         attention_between_features=False,
-        feature_positional_embedding="subspace",
+        feature_positional_embedding=None,
         interleave_x_y_pairs=resolved_interleave_x_y_pairs,
     )
 
