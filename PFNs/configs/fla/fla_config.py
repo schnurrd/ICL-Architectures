@@ -187,7 +187,7 @@ def get_config(
     cache_chunk_size: int | None = None,
     deltanet_state_reg_weight: float = 0.0,
     use_short_conv: bool | None = None,
-    feature_positional_embedding: str | None = "subspace",
+    feature_positional_embedding: str | None = None,
     config_kwargs_override: dict[str, object] | None = None,
 ) -> MainConfig:
     """Build a MainConfig for FLA backbone training."""
@@ -287,7 +287,7 @@ def get_config(
         min_single_eval_pos=(
             ASSOCIATIVE_RECALL_SETTINGS["min_single_eval_pos"]
             if is_associative_recall
-            else 24
+            else 64
         ),
         max_seq_len=resolved_max_seq_len,
         seq_len_choices=resolved_seq_len_choices,
