@@ -92,7 +92,11 @@ class BaseConfig:
         return cls.from_dict(data)
 
     @staticmethod
-    def from_dict(data: dict):
+    def from_dict(
+        data: dict,
+        *,
+        allow_unknown_fields: bool = False,
+    ):
         """Build a config object from a nested dictionary structure.
         The dictionary should match what to_dict() produces, handling both nested dicts and lists.
         """
@@ -102,13 +106,26 @@ class BaseConfig:
 
         # Handle sequences (lists/tuples)
         if isinstance(data, Sequence):
-            return [BaseConfig.from_dict(item) for item in data]
+            return [
+                BaseConfig.from_dict(
+                    item,
+                    allow_unknown_fields=allow_unknown_fields,
+                )
+                for item in data
+            ]
 
         # it is a dict
         if "__config_type__" not in data:
-            return {k: BaseConfig.from_dict(v) for k, v in data.items()}
+            return {
+                k: BaseConfig.from_dict(
+                    v,
+                    allow_unknown_fields=allow_unknown_fields,
+                )
+                for k, v in data.items()
+            }
 
         # This is a config object
+        data = dict(data)
         module_name, class_name = data.pop("__config_type__").split(":")
         mod = importlib.import_module(module_name)
         cls = getattr(mod, class_name)
@@ -116,6 +133,26 @@ class BaseConfig:
         # Recursively build nested configs
         processed_data = {}
         for k, v in data.items():
-            processed_data[k] = BaseConfig.from_dict(v)
+            processed_data[k] = BaseConfig.from_dict(
+                v,
+                allow_unknown_fields=allow_unknown_fields,
+            )
+
+        if is_dataclass(cls):
+            allowed_fields = {field.name for field in fields(cls)}
+            unknown_fields = sorted(set(processed_data).difference(allowed_fields))
+            if unknown_fields:
+                if not allow_unknown_fields:
+                    raise TypeError(
+                        f"{cls.__name__} got unexpected config field(s): {unknown_fields}"
+                    )
+                print(
+                    f"Ignoring unknown config field(s) for {cls.__name__}: {unknown_fields}"
+                )
+                processed_data = {
+                    key: value
+                    for key, value in processed_data.items()
+                    if key in allowed_fields
+                }
 
         return cls(**processed_data)

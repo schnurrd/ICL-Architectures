@@ -829,7 +829,10 @@ def load_config(train_state_dict_load_path, load_function: tp.Callable | None = 
     if load_function is None:
         load_function = torch.load
     checkpoint = load_function(train_state_dict_load_path, map_location="cpu")
-    return MainConfig.from_dict(checkpoint["config"])
+    return MainConfig.from_dict(
+        checkpoint["config"],
+        allow_unknown_fields=True,
+    )
 
 
 def save_checkpoint(
