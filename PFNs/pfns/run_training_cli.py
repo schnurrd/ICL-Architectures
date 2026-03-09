@@ -30,7 +30,6 @@ def _looks_like_wandb_run_path(path: str) -> bool:
     # Typical forms:
     # - project/runs/run_id
     # We intentionally keep this strict to avoid mistaking arbitrary local paths
-    # like "foo/bar/baz" for wandb run references.
     return parts[1] == "runs"
 
 

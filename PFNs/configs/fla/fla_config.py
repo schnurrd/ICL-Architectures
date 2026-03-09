@@ -299,18 +299,12 @@ def get_config(
     finetune_checkpoint_feature_positional_embedding: str | None = None
 
     if finetune_from_checkpoint is not None:
-        if finetune_epochs is None:
-            raise ValueError(
-                "finetune_epochs must be set when finetune_from_checkpoint is provided."
-            )
-        resolved_epochs = int(finetune_epochs)
-        if resolved_epochs <= 0:
-            raise ValueError("finetune_epochs must be > 0.")
-        resolved_lr = (
-            float(finetune_lr)
-            if finetune_lr is not None
-            else float(resolved_lr) * 0.1
-        )
+        if finetune_epochs is not None:
+            resolved_epochs = int(finetune_epochs)
+            if resolved_epochs <= 0:
+                raise ValueError("finetune_epochs must be > 0.")
+        if finetune_lr is not None:
+            resolved_lr = float(finetune_lr)
         resolved_warmup_epochs = int(finetune_warmup_epochs)
         if resolved_warmup_epochs < 0:
             raise ValueError("finetune_warmup_epochs must be >= 0.")
