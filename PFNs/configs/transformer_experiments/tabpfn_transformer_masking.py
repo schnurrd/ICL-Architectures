@@ -6,8 +6,7 @@ training loop with a TabPFN-v1 style transformer backbone.
 
 from __future__ import annotations
 
-import torch
-
+from configs.config_utils import normalize_optional_none_string, resolve_prior_device
 from pfns.model.backbones import TransformerBackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
@@ -40,8 +39,7 @@ def get_config(
     max_num_classes = 10
     max_num_features = 20
 
-    if masking == "None":
-        masking = None
+    masking = normalize_optional_none_string(masking)
 
     # for backward compatibility with older config versions
     if masking in {"causal_train_only", "causal_all"}:
@@ -68,7 +66,7 @@ def get_config(
 
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
     
-    resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences
+    resolved_prior_device = resolve_prior_device(max_seq_len=resolved_max_seq_len)
 
     prior = TabPFNPriorConfig(
         prior_type="mlp",       

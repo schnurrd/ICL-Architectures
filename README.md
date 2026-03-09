@@ -169,33 +169,45 @@ The Python configuration file must define a `config`or a `get_config(config_inde
 ## Curriculum Learning Parameters
 
 Curriculum learning is configured via `get_config(...)` arguments in files like `PFNs/configs/fla/fla_config.py`.  
-From the CLI, pass these through `--config-arg KEY=VALUE` (for example `--config-arg seq_len_curriculum_start=128`).
+From the CLI, pass these through `--config-arg KEY=VALUE`.
 
-### Sequence length and curriculum schedule
+### Sequence-length stages
 
 - `max_seq_len` (default: `1000`): Upper bound for sampled sequence length.
-- `seq_len_choices` (default: `None`): Optional discrete sequence lengths to sample from. If unset, sequence length follows the current curriculum cap directly.
-- `seq_len_choice_weights` (default: `None`): Optional base sampling weights for `seq_len_choices`. Must match list length and be non-negative.
-- `seq_len_curriculum_start` (default: `None`): Initial sequence-length cap at the beginning of training. If unset, curriculum capping is disabled and `max_seq_len` is used immediately.
-- `seq_len_curriculum_warmup_epochs` (default: `0`): Number of epochs for linear ramp from `seq_len_curriculum_start` to `max_seq_len`.
-- `seq_len_choice_weight_exponent` (default: `None`): Optional epoch-dependent reweighting toward larger sequence lengths. The effect grows with curriculum progress.
+- `seq_len_stages` (default: `None`): Optional staged caps by epoch. Entries are applied in order, then fallback to `max_seq_len`.
+  - `(end_epoch, stage_max_seq_len)`
+  - `(end_epoch, stage_max_seq_len, eval_pos_split_pct)`
+  - `(end_epoch, stage_max_seq_len, eval_pos_split_pct_min, eval_pos_split_pct_max)`
 
-### Batch-size adaptation for long sequences
+Examples:
+- `--config-arg seq_len_stages='[(5, 2048), (20, 8192), (60, 16000)]'`
+- `--config-arg seq_len_stages='[(10, 4000, 80), (30, 12000, 30, 90)]'`
+  - First stage: fixed eval split at 80%.
+  - Second stage: eval split sampled from 30%-90%.
 
-- `dynamic_batch_size_power` (default: `0`): Enables dynamic batch sizing to keep memory use roughly stable as sequence length grows.
-  - `0`: disabled
-  - `1`: linear scaling (useful for linear-attention-like memory growth)
-  - `2`: quadratic scaling (useful for transformer-like memory growth)
-- `dynamic_batch_size_compensate_grad_accumulation` (default: `False`): If `True`, each batch contributes a fractional optimizer-step progress proportional to `dynamic_batch_size / base_batch_size`. This helps keep optimizer update semantics stable when batch size shrinks.
-- `batch_size` (default depends on config, often `8`): Base batch size used as the reference before dynamic scaling.
-- `aggregate_k_gradients` (default depends on config profile): Gradient accumulation factor in the training loop. Effective optimizer step timing combines this with the optional dynamic-batch compensation above.
+### Eval-position split (global)
+
+- `eval_pos_split_pct` (default: `None`): Global eval split in percent for `single_eval_pos`.
+  - Scalar: fixed split, e.g. `80` means always 80% of sequence length.
+  - Pair: range, e.g. `(30, 90)` means sampled uniformly between 30% and 90%.
+- Stage-level split values in `seq_len_stages` override the global `eval_pos_split_pct` for those epochs.
+
+### Dynamic batch-size by sequence length
+
+- `batch_size_stages` (default: `None`): Optional sequence-length thresholds for batch size.
+  - Format: `[(seq_len_threshold, batch_size), ...]` with increasing thresholds.
+  - The first threshold `>= sampled_seq_len` is used.
+  - Example: `[(4096, 16), (16000, 8), (64000, 4)]`.
+- `dynamic_batch_size_compensate_grad_accumulation` (default: `False`):
+  - If enabled, each micro-batch contributes optimizer-step progress proportional to
+    `dynamic_batch_size / base_batch_size`.
+  - This keeps effective batch size approximately stable when dynamic batch sizing is active.
 
 ### Related sampler controls
 
 These are part of `BatchShapeSamplerConfig` and influence the same sampling process:
 
 - `min_single_eval_pos`: Minimum position where evaluation targets start (`single_eval_pos` lower bound).
-- `single_eval_pos_tail_window`: If set, additionally constrains `single_eval_pos` to the last `N` valid positions of each sampled sequence (e.g. `N=1000` gives approximately `[seq_len-1000, seq_len)`).
 - `fixed_num_test_instances`: If set, enforces a fixed number of test items and derives final `seq_len` from `single_eval_pos + fixed_num_test_instances`.
 - `min_num_features`, `max_num_features`: Feature-count sampling range per batch.
 - `seed` (default: `42`): Seed used with `(epoch, step)` for deterministic batch-shape sampling.

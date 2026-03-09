@@ -7,6 +7,12 @@ from __future__ import annotations
 
 import torch
 
+from configs.config_utils import (
+    normalize_optional_none_string,
+    resolve_batch_size_stages,
+    resolve_eval_pos_split_pct,
+    resolve_prior_device,
+)
 from pfns.prior_defaults import (
     ASSOCIATIVE_RECALL_SETTINGS,
     TABPFN_PRIOR_DEFAULTS,
@@ -33,6 +39,7 @@ GLOBAL_TRAIN_MIXED_PRECISION = (
 GLOBAL_TRAIN_MIXED_PRECISION_DTYPE = "bf16" if GLOBAL_TRAIN_MIXED_PRECISION else "fp32"
 MAX_NUM_CLASSES = int(TABPFN_PRIOR_DEFAULTS["max_num_classes"])
 MAX_NUM_FEATURES = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
+
 
 # Training speed on different gpus:
 # -> In this model compiled is faster than non compiled (feature dim 32)
@@ -73,13 +80,10 @@ def get_config(
     task_variant: str = "tabular_prior",
     batch_size: int | None = None,
     max_seq_len: int | None = None,
-    seq_len_choices: list[int] | tuple[int, ...] | None = None,
-    seq_len_choice_weights: list[float] | tuple[float, ...] | None = None,
-    seq_len_curriculum_start: int | None = None,
-    seq_len_curriculum_warmup_epochs: int = 0,
-    seq_len_choice_weight_exponent: float | None = None,
-    dynamic_batch_size_power: int = 0,
+    batch_size_stages: list[tuple[int, int]] | tuple[tuple[int, int], ...] | None = None,
     dynamic_batch_size_compensate_grad_accumulation: bool = False,
+    eval_pos_split_pct: float | tuple[float, float] | list[float] | None = None,
+    seq_len_stages: list[tuple[int | float, ...]] | tuple[tuple[int | float, ...], ...] | None = None,
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
@@ -96,8 +100,9 @@ def get_config(
     tabpfn_prior data using a Rebased backbone.
     """
 
-    if feature_positional_embedding == "None":
-        feature_positional_embedding = None
+    feature_positional_embedding = normalize_optional_none_string(
+        feature_positional_embedding
+    )
 
     training_setup = training_setup.strip().lower()
     training_setup, is_associative_recall = resolve_training_setup_for_task(
@@ -113,29 +118,14 @@ def get_config(
     resolved_lr = float(profile["lr"]) if lr is None else float(lr)
     resolved_batch_size = batch_size or DEFAULT_BATCH_SIZE
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
-    resolved_seq_len_choices = (
-        [int(v) for v in seq_len_choices] if seq_len_choices is not None else None
-    )
-    resolved_seq_len_choice_weights = (
-        [float(v) for v in seq_len_choice_weights]
-        if seq_len_choice_weights is not None
-        else None
-    )
-    resolved_seq_len_curriculum_start = (
-        int(seq_len_curriculum_start)
-        if seq_len_curriculum_start is not None
-        else None
-    )
-    resolved_seq_len_curriculum_warmup_epochs = int(seq_len_curriculum_warmup_epochs)
-    resolved_seq_len_choice_weight_exponent = (
-        float(seq_len_choice_weight_exponent)
-        if seq_len_choice_weight_exponent is not None
-        else None
-    )
-    resolved_dynamic_batch_size_power = int(dynamic_batch_size_power)
+    resolved_batch_size_stages = resolve_batch_size_stages(batch_size_stages)
     resolved_dynamic_batch_size_compensate_grad_accumulation = bool(
         dynamic_batch_size_compensate_grad_accumulation
     )
+    resolved_eval_pos_split_pct_min, resolved_eval_pos_split_pct_max = (
+        resolve_eval_pos_split_pct(eval_pos_split_pct)
+    )
+    resolved_seq_len_stages = seq_len_stages
     resolved_epochs = profile.get("epochs", 200)
     resolved_steps_per_epoch = profile["steps_per_epoch"]
     resolved_aggregate_k = (
@@ -157,7 +147,7 @@ def get_config(
         None if recompute_every_n_layers is None else int(recompute_every_n_layers)
     )
 
-    resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences
+    resolved_prior_device = resolve_prior_device(max_seq_len=resolved_max_seq_len)
 
     prior = build_prior_for_task(
         task_variant=task_variant,
@@ -174,13 +164,11 @@ def get_config(
             else 64
         ),
         max_seq_len=resolved_max_seq_len,
-        seq_len_choices=resolved_seq_len_choices,
-        seq_len_choice_weights=resolved_seq_len_choice_weights,
-        seq_len_curriculum_start=resolved_seq_len_curriculum_start,
-        seq_len_curriculum_warmup_epochs=resolved_seq_len_curriculum_warmup_epochs,
-        seq_len_choice_weight_exponent=resolved_seq_len_choice_weight_exponent,
-        dynamic_batch_size_power=resolved_dynamic_batch_size_power,
+        batch_size_stages=resolved_batch_size_stages,
         dynamic_batch_size_compensate_grad_accumulation=resolved_dynamic_batch_size_compensate_grad_accumulation,
+        eval_pos_split_pct_min=resolved_eval_pos_split_pct_min,
+        eval_pos_split_pct_max=resolved_eval_pos_split_pct_max,
+        seq_len_stages=resolved_seq_len_stages,
         min_num_features=2,
         max_num_features=MAX_NUM_FEATURES,
         fixed_num_test_instances=None,
@@ -239,6 +227,14 @@ def get_config(
         wandb_extras.append(f"bs{resolved_batch_size}")
     if max_seq_len is not None:
         wandb_extras.append(f"seq{resolved_max_seq_len}")
+    if resolved_batch_size_stages:
+        wandb_extras.append(f"bsstages{len(resolved_batch_size_stages)}")
+    if resolved_dynamic_batch_size_compensate_grad_accumulation:
+        wandb_extras.append("dynbs_compagg")
+    if eval_pos_split_pct is not None:
+        wandb_extras.append("evalsplit")
+    if resolved_seq_len_stages:
+        wandb_extras.append(f"stages{len(resolved_seq_len_stages)}")
     if lr is not None:
         wandb_extras.append(f"lr{resolved_lr:g}")
     if aggregate_k_gradients is not None:

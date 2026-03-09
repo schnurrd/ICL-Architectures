@@ -234,8 +234,13 @@ DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Finetuned_40K": {
-        "display_name": "DeltaNet Finetuned 6 ep 40K seq len",
+        "display_name": "DeltaNet Finetuned 10 ep 40K seq len", 
         "wandb_run_id": "fla_models/runs/2wjxn5ge",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Comb_ST_Finetuned_64K": {
+        "display_name": "DeltaNet Finetuned 6 ep 64K seq len",
+        "wandb_run_id": "fla_models/runs/xnbyqyr1",
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Reference": {
