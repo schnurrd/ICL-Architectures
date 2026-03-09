@@ -712,6 +712,10 @@ class TabularModel(nn.Module):
         Int_MT_mode = int_mt_mode
         should_interleave = Int_MT_mode or self.interleave_x_y_pairs
 
+        if comb_shifted_mt_mode and self.attention_between_features:
+            raise ValueError(
+                "Comb_Shifted_MT requires attention_between_features=False."
+            )
         if should_interleave and self.attention_between_features:
             raise ValueError(
                 "Teacher forcing or interleaved x/y pairs requires attention_between_features=False."
@@ -776,8 +780,6 @@ class TabularModel(nn.Module):
                             shifted_embedded_y[:, current_context_len:] = (
                                 last_train_y_embedding.unsqueeze(1)
                             )
-                        elif shifted_embedded_y.shape[1] > 0:
-                            shifted_embedded_y[:, 1:] = embedded_y[:, :-1]
                     embedded_input = embedded_x + shifted_embedded_y.unsqueeze(2)
                 else:
                     # add them together in this case, like for the original PFNs
