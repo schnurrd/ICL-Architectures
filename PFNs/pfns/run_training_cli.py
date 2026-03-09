@@ -23,14 +23,27 @@ from pfns.run_logger import WandbConfig, create_run_manager, download_model_from
 import wandb
 
 
-def _looks_like_wandb_run_path(path: str) -> bool:
+def _normalize_wandb_run_path(path: str) -> str | None:
+    """
+    Accept common wandb run path formats and return a normalized path string:
+    - entity/project/run_id
+    - project/runs/run_id
+    """
     parts = [p for p in path.strip("/").split("/") if p]
     if len(parts) != 3:
-        return False
-    # Typical forms:
-    # - project/runs/run_id
-    # We intentionally keep this strict to avoid mistaking arbitrary local paths
-    return parts[1] == "runs"
+        return None
+    if any(p in {".", ".."} for p in parts):
+        return None
+    if parts[1] == "runs":
+        project, _, run_id = parts
+        if not project or not run_id:
+            return None
+        return f"{project}/runs/{run_id}"
+
+    entity, project, run_id = parts
+    if project == "runs" or not entity or not project or not run_id:
+        return None
+    return f"{entity}/{project}/{run_id}"
 
 
 def _resolve_finetune_checkpoint_source(config_kwargs: dict[str, object]) -> None:
@@ -50,8 +63,9 @@ def _resolve_finetune_checkpoint_source(config_kwargs: dict[str, object]) -> Non
             return
 
     # If it looks like a wandb run path and is not an existing local file, download it.
-    if _looks_like_wandb_run_path(candidate) and not os.path.exists(candidate):
-        checkpoint_path = download_model_from_wandb(candidate)
+    normalized_run_path = _normalize_wandb_run_path(candidate)
+    if normalized_run_path is not None and not os.path.exists(candidate):
+        checkpoint_path = download_model_from_wandb(normalized_run_path)
         config_kwargs["finetune_from_checkpoint"] = checkpoint_path
         print(
             f"Resolved finetune_from_checkpoint wandb run path {candidate} "
@@ -127,6 +141,7 @@ def parse_args():
         help=(
             "Download a checkpoint from a wandb run and pass it as "
             "finetune_from_checkpoint to get_config. "
+            "Accepted formats: 'entity/project/run_id' or 'project/runs/run_id'. "
             "Use this for weights-only fine-tuning with fresh optimizer settings."
         ),
     )
@@ -357,11 +372,17 @@ def main():
                 "Do not pass both --finetune-from-wandb and "
                 "--config-arg finetune_from_checkpoint=...; choose one source."
             )
-        finetune_checkpoint_path = download_model_from_wandb(args.finetune_from_wandb)
+        normalized_run_path = _normalize_wandb_run_path(args.finetune_from_wandb)
+        if normalized_run_path is None:
+            raise ValueError(
+                "Invalid --finetune-from-wandb path. "
+                "Expected 'entity/project/run_id' or 'project/runs/run_id'."
+            )
+        finetune_checkpoint_path = download_model_from_wandb(normalized_run_path)
         config_kwargs["finetune_from_checkpoint"] = finetune_checkpoint_path
         print(
             f"Using finetune checkpoint downloaded from wandb run "
-            f"{args.finetune_from_wandb}: {finetune_checkpoint_path}"
+            f"{normalized_run_path}: {finetune_checkpoint_path}"
         )
     else:
         _resolve_finetune_checkpoint_source(config_kwargs)
@@ -371,16 +392,24 @@ def main():
     # --- Handle continuation from wandb ---
     if args.continue_from_wandb is not None:
         assert args.checkpoint_save_load_prefix, "--checkpoint-save-load-prefix required with --continue-from-wandb"
-        
-        run_id = args.continue_from_wandb.rstrip("/").split("/")[-1]
-        
-        checkpoint_path = download_model_from_wandb(args.continue_from_wandb)
+
+        normalized_run_path = _normalize_wandb_run_path(args.continue_from_wandb)
+        if normalized_run_path is None:
+            raise ValueError(
+                "Invalid --continue-from-wandb path. "
+                "Expected 'entity/project/run_id' or 'project/runs/run_id'."
+            )
+        run_id = normalized_run_path.rstrip("/").split("/")[-1]
+
+        checkpoint_path = download_model_from_wandb(normalized_run_path)
         
         config = pfns.train.load_config(checkpoint_path)
-        # overwrite save/load path to local path to avoid backwards compatibility issues
+        # Continue mode should always restore optimizer/scheduler/epoch state.
+        # Overwrite save/load path to local path to avoid backwards compatibility issues.
         config = _update_config(config, 
             train_state_dict_load_path=checkpoint_path,
             train_state_dict_save_path=checkpoint_path,
+            checkpoint_load_mode="resume",
         )
         print(f"Continuing from wandb run: {run_id}")
 
