@@ -20,6 +20,7 @@ def load_models_for_benchmark(
     for model_name, model_config in models_to_compare.items():
         base_path = model_config.get("base_path", ".")
         checkpoint_name = model_config.get("checkpoint_name", "checkpoint.pt")
+        weights_only = bool(model_config.get("weights_only", False))
 
         if model_config.get("wandb_run_id"):
             target_path = download_model_from_wandb(
@@ -33,6 +34,7 @@ def load_models_for_benchmark(
             name=checkpoint_name,
             base_path=base_path,
             device=resolved_device,
+            weights_only=weights_only,
         )
         model.eval()
         models[model_name] = model

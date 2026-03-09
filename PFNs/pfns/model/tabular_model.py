@@ -217,25 +217,42 @@ class TabularModel(nn.Module):
         error_msgs,
     ):
         """Pre-hook to remap checkpoint keys for backward compatibility."""
-        old_prefix = prefix + "transformer_layers.layers."
-        new_prefix = prefix + "transformer_layers.layer_stack.layers."
-
-        has_old = any(k.startswith(old_prefix) for k in state_dict.keys())
-        has_new = any(k.startswith(new_prefix) for k in state_dict.keys())
-
         expects_new = hasattr(self.transformer_layers, "layer_stack")
         expects_old = hasattr(self.transformer_layers, "layers") and not expects_new
 
-        if has_old and expects_new:
-            keys_to_remap = [k for k in state_dict.keys() if k.startswith(old_prefix)]
-            for old_key in keys_to_remap:
-                new_key = old_key.replace(old_prefix, new_prefix, 1)
-                state_dict[new_key] = state_dict.pop(old_key)
-        elif has_new and expects_old:
-            keys_to_remap = [k for k in state_dict.keys() if k.startswith(new_prefix)]
-            for new_key in keys_to_remap:
-                old_key = new_key.replace(new_prefix, old_prefix, 1)
-                state_dict[old_key] = state_dict.pop(new_key)
+        # Support both legacy LayerStack naming conventions on both module aliases.
+        for module_name in ("transformer_layers", "backbone"):
+            old_prefix = prefix + f"{module_name}.layers."
+            new_prefix = prefix + f"{module_name}.layer_stack.layers."
+
+            has_old = any(k.startswith(old_prefix) for k in state_dict.keys())
+            has_new = any(k.startswith(new_prefix) for k in state_dict.keys())
+
+            if has_old and expects_new:
+                keys_to_remap = [k for k in state_dict.keys() if k.startswith(old_prefix)]
+                for old_key in keys_to_remap:
+                    new_key = old_key.replace(old_prefix, new_prefix, 1)
+                    state_dict[new_key] = state_dict.pop(old_key)
+            elif has_new and expects_old:
+                keys_to_remap = [k for k in state_dict.keys() if k.startswith(new_prefix)]
+                for new_key in keys_to_remap:
+                    old_key = new_key.replace(new_prefix, old_prefix, 1)
+                    state_dict[old_key] = state_dict.pop(new_key)
+
+        # Keep transformer/backbone alias checkpoints interoperable.
+        transformer_prefix = prefix + "transformer_layers."
+        backbone_prefix = prefix + "backbone."
+        has_transformer = any(k.startswith(transformer_prefix) for k in state_dict.keys())
+        has_backbone = any(k.startswith(backbone_prefix) for k in state_dict.keys())
+
+        if has_transformer and not has_backbone:
+            for key in [k for k in state_dict.keys() if k.startswith(transformer_prefix)]:
+                alias_key = key.replace(transformer_prefix, backbone_prefix, 1)
+                state_dict[alias_key] = state_dict[key]
+        elif has_backbone and not has_transformer:
+            for key in [k for k in state_dict.keys() if k.startswith(backbone_prefix)]:
+                alias_key = key.replace(backbone_prefix, transformer_prefix, 1)
+                state_dict[alias_key] = state_dict[key]
 
     def _prepare_batch_first_inputs(
         self,

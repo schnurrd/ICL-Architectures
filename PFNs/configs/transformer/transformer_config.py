@@ -7,6 +7,11 @@ from __future__ import annotations
 
 import torch
 
+from configs.config_utils import (
+    resolve_batch_size_stages,
+    resolve_eval_pos_split_pct,
+    resolve_prior_device,
+)
 from pfns.prior_defaults import (
     ASSOCIATIVE_RECALL_SETTINGS,
     TABPFN_PRIOR_DEFAULTS,
@@ -33,6 +38,7 @@ GLOBAL_TRAIN_MIXED_PRECISION_DTYPE = "bf16" if GLOBAL_TRAIN_MIXED_PRECISION else
 
 MAX_NUM_CLASSES = int(TABPFN_PRIOR_DEFAULTS["max_num_classes"])
 MAX_NUM_FEATURES = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
+
 
 BASE_PROFILE = {
     "nhead": 8,
@@ -127,7 +133,12 @@ TRAINING_PROFILES = {
 def get_config(
     config_index: int = 0,
     training_setup: str = "low",
+    batch_size: int | None = None,
     max_seq_len: int | None = None,
+    batch_size_stages: list[tuple[int, int]] | tuple[tuple[int, int], ...] | None = None,
+    dynamic_batch_size_compensate_grad_accumulation: bool = False,
+    eval_pos_split_pct: float | tuple[float, float] | list[float] | None = None,
+    seq_len_stages: list[tuple[int | float, ...]] | tuple[tuple[int | float, ...], ...] | None = None,
     task_variant: str = "tabular_prior",
     interleave_x_y_pairs: bool = False,
     item_attention_use_rope: bool = False,
@@ -159,10 +170,19 @@ def get_config(
     resolved_layer_kwargs = resolved_layer_kwargs or None
 
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
+    resolved_batch_size = batch_size or 8
+    resolved_batch_size_stages = resolve_batch_size_stages(batch_size_stages)
+    resolved_dynamic_batch_size_compensate_grad_accumulation = bool(
+        dynamic_batch_size_compensate_grad_accumulation
+    )
+    resolved_eval_pos_split_pct_min, resolved_eval_pos_split_pct_max = (
+        resolve_eval_pos_split_pct(eval_pos_split_pct)
+    )
+    resolved_seq_len_stages = seq_len_stages
     resolved_epochs = profile.get("epochs", 200)
     resolved_steps_per_epoch = profile["steps_per_epoch"]
 
-    resolved_prior_device = "cuda" if torch.cuda.is_available() and resolved_max_seq_len > 2000 else "cpu" # use cuda only for very long sequences 
+    resolved_prior_device = resolve_prior_device(max_seq_len=resolved_max_seq_len)
 
     prior = build_prior_for_task(
         task_variant=task_variant,
@@ -170,8 +190,6 @@ def get_config(
         max_num_classes=MAX_NUM_CLASSES,
         max_num_features=MAX_NUM_FEATURES,
     )
-
-    resolved_batch_size = 8
 
     batch_shape = BatchShapeSamplerConfig(
         batch_size=resolved_batch_size,
@@ -181,6 +199,11 @@ def get_config(
             else 64
         ),
         max_seq_len=resolved_max_seq_len,
+        batch_size_stages=resolved_batch_size_stages,
+        dynamic_batch_size_compensate_grad_accumulation=resolved_dynamic_batch_size_compensate_grad_accumulation,
+        eval_pos_split_pct_min=resolved_eval_pos_split_pct_min,
+        eval_pos_split_pct_max=resolved_eval_pos_split_pct_max,
+        seq_len_stages=resolved_seq_len_stages,
         min_num_features=2,
         max_num_features=MAX_NUM_FEATURES,
         fixed_num_test_instances=None,
@@ -224,6 +247,14 @@ def get_config(
         wandb_name += "_interleaved"
     if max_seq_len is not None:
         wandb_name += f"_seq{resolved_max_seq_len}"
+    if resolved_batch_size_stages:
+        wandb_name += f"_bsstages{len(resolved_batch_size_stages)}"
+    if resolved_dynamic_batch_size_compensate_grad_accumulation:
+        wandb_name += "_dynbs_compagg"
+    if eval_pos_split_pct is not None:
+        wandb_name += "_evalsplit"
+    if resolved_seq_len_stages:
+        wandb_name += f"_stages{len(resolved_seq_len_stages)}"
     if item_attention_use_rope:
         wandb_name += "_item_rope"
         if item_attention_rope_pairwise_positions:

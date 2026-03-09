@@ -18,17 +18,24 @@ def get_cosine_schedule_with_warmup(
     optimizer,
     num_warmup_steps,
     num_training_steps,
+    min_lr=0.0,
     num_cycles=0.5,
     last_epoch=-1,
 ):
     """Create a schedule with a learning rate that decreases following the
     values of the cosine function between 0 and `pi * cycles` after a warmup
     period during which it increases linearly between 0 and 1.
+    The first warmup step is strictly positive (no exact zero-LR step), and
+    cosine decay approaches `min_lr`.
     """
+
+    if min_lr < 0.0:
+        raise ValueError("min_lr must be >= 0.")
 
     def lr_lambda(current_step):
         if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
+            # Start warmup at a non-zero multiplier on the first step.
+            return float(current_step + 1) / float(max(1, num_warmup_steps))
         progress = float(current_step - num_warmup_steps) / float(
             max(1, num_training_steps - num_warmup_steps)
         )
@@ -37,7 +44,24 @@ def get_cosine_schedule_with_warmup(
             0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)),
         )
 
-    return LambdaLR(optimizer, lr_lambda, last_epoch)
+    if min_lr == 0.0:
+        return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+    lr_lambdas = []
+    for param_group in optimizer.param_groups:
+        base_lr = float(param_group["lr"])
+        if base_lr <= 0.0:
+            min_lr_ratio = 0.0
+        else:
+            min_lr_ratio = min(1.0, max(0.0, float(min_lr) / base_lr))
+
+        def scaled_lr_lambda(current_step, min_lr_ratio=min_lr_ratio):
+            base_multiplier = lr_lambda(current_step)
+            return min_lr_ratio + (1.0 - min_lr_ratio) * base_multiplier
+
+        lr_lambdas.append(scaled_lr_lambda)
+
+    return LambdaLR(optimizer, lr_lambdas, last_epoch)
 
 
 # copied from huggingface
@@ -46,14 +70,17 @@ def get_restarting_cosine_schedule_with_warmup(
     num_warmup_steps,
     num_training_steps,
     steps_per_restart,
+    min_lr=0.0,
     num_cycles=0.5,
     last_epoch=-1,
 ):
     assert num_training_steps % steps_per_restart == 0
+    if min_lr < 0.0:
+        raise ValueError("min_lr must be >= 0.")
 
     def inner_lr_lambda(current_step, num_warmup_steps, num_training_steps):
         if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
+            return float(current_step + 1) / float(max(1, num_warmup_steps))
         progress = float(current_step - num_warmup_steps) / float(
             max(1, num_training_steps - num_warmup_steps)
         )
@@ -70,7 +97,24 @@ def get_restarting_cosine_schedule_with_warmup(
             steps_per_restart,
         )
 
-    return LambdaLR(optimizer, lr_lambda, last_epoch)
+    if min_lr == 0.0:
+        return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+    lr_lambdas = []
+    for param_group in optimizer.param_groups:
+        base_lr = float(param_group["lr"])
+        if base_lr <= 0.0:
+            min_lr_ratio = 0.0
+        else:
+            min_lr_ratio = min(1.0, max(0.0, float(min_lr) / base_lr))
+
+        def scaled_lr_lambda(current_step, min_lr_ratio=min_lr_ratio):
+            base_multiplier = lr_lambda(current_step)
+            return min_lr_ratio + (1.0 - min_lr_ratio) * base_multiplier
+
+        lr_lambdas.append(scaled_lr_lambda)
+
+    return LambdaLR(optimizer, lr_lambdas, last_epoch)
 
 
 # copied from huggingface

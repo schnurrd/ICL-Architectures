@@ -57,10 +57,12 @@ class MainConfig(base_config.BaseConfig):
     # LR Scheduler
     scheduler: str = "cosine_decay"
     warmup_epochs: int = 10
+    min_lr: float = 5e-6
 
     # Checkpointing
     train_state_dict_save_path: tp.Optional[str] = None
     train_state_dict_load_path: tp.Optional[str] = None
+    checkpoint_load_mode: tp.Literal["resume", "weights_only"] = "resume"
 
     # Validation
     test_priors: tp.List[prior.PriorConfig] | None = None
@@ -225,6 +227,7 @@ def train(
             optimizer,
             c.warmup_epochs,
             c.epochs if c.epochs is not None else 100,
+            min_lr=c.min_lr,
         )
 
     start_epoch = 1  # Default start epoch
@@ -237,6 +240,9 @@ def train(
             scheduler,
             c.train_state_dict_load_path,
             device,
+            load_optimizer_state=(c.checkpoint_load_mode == "resume"),
+            resume_epoch=(c.checkpoint_load_mode == "resume"),
+            fast_forward_scheduler=(c.checkpoint_load_mode == "resume"),
             load_function=load_object_function,
         )
     else:
@@ -485,11 +491,9 @@ def train_or_evaluate_epoch(
     grad_norm_ema = 0.0 if last_epoch_result is None else last_epoch_result.grad_norm_ema_mean
     spike_save_count = 0 # only used if debug_spike_enabled
     autocast_dtype = resolve_autocast_dtype(device, c.train_mixed_precision_dtype) if c.train_mixed_precision else torch.float32
+    optimizer_step_progress = 0.0
     
     before_get_batch = time.time()
-    assert (
-        len(dl) % c.aggregate_k_gradients == 0
-    ), "Please set the number of steps per epoch s.t. `aggregate_k_gradients` divides it."
 
     tqdm_iter = (
         tqdm(range(len(dl)), desc="Training Epoch")
@@ -514,14 +518,31 @@ def train_or_evaluate_epoch(
             )
         targets = batch.target_y.to(device)
         single_eval_pos = batch.single_eval_pos
+        batch_optimizer_step_progress = (
+            1.0 / float(c.aggregate_k_gradients)
+        )
+        if training:
+            batch_optimizer_step_progress *= float(
+                getattr(batch, "optimizer_step_progress", 1.0)
+            )
+            if batch_optimizer_step_progress <= 0.0:
+                raise ValueError(
+                    "optimizer_step_progress must be > 0 for training batches."
+                )
+            batch_optimizer_step_progress = min(batch_optimizer_step_progress, 1.0)
+        next_optimizer_step_progress = (
+            optimizer_step_progress + batch_optimizer_step_progress
+        )
+        is_last_batch = batch_index == len(dl) - 1
+        should_step_after_batch = training and (
+            next_optimizer_step_progress >= 1.0 - 1e-12 or is_last_batch
+        )
 
         if tqdm_iter is not None:
             tqdm_iter.update()
 
         # only synch gradients once every aggregate_k_gradients steps
-        if using_dist and not (
-            batch_index % c.aggregate_k_gradients == c.aggregate_k_gradients - 1
-        ):
+        if using_dist and training and not should_step_after_batch:
             potentially_no_sync_context = model.no_sync()
         else:
             potentially_no_sync_context = nullcontext()
@@ -600,7 +621,7 @@ def train_or_evaluate_epoch(
                             batch_index=batch_index,
                             device=device,
                         )
-                    loss_scaled = loss / c.aggregate_k_gradients
+                    loss_scaled = loss * batch_optimizer_step_progress
 
                 if scaler:
                     loss_scaled = scaler.scale(loss_scaled)
@@ -608,7 +629,7 @@ def train_or_evaluate_epoch(
                 if training:
                     loss_scaled.backward()
 
-                if batch_index % c.aggregate_k_gradients == c.aggregate_k_gradients - 1:
+                if training and should_step_after_batch:
                     if scaler:
                         # we unscale s.t. we can clip grads right
                         scaler.unscale_(optimizer)
@@ -679,6 +700,11 @@ def train_or_evaluate_epoch(
                             if scaler:
                                 scaler.update()
                             optimizer.zero_grad()
+                    optimizer_step_progress = max(
+                        0.0, next_optimizer_step_progress - 1.0
+                    )
+                elif training:
+                    optimizer_step_progress = next_optimizer_step_progress
 
                 step_time = time.time() - before_forward
 
@@ -751,6 +777,9 @@ def load_checkpoint(
     scheduler,
     train_state_dict_load_path,
     device,
+    load_optimizer_state: bool = True,
+    resume_epoch: bool = True,
+    fast_forward_scheduler: bool = True,
     load_function: tp.Callable | None = None,
 ):
     print(f"Loading checkpoint from {train_state_dict_load_path}")
@@ -774,11 +803,16 @@ def load_checkpoint(
                     f"Stripping '{prefix}' from state_dict keys."
                 )
                 model.load_state_dict(stripped_state_dict, strict=True)
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            start_epoch = checkpoint["epoch"] + 1
-            print(f"Resuming from epoch {start_epoch}")
-            # Fast-forward the scheduler to the correct epoch
-            if scheduler is not None:
+            if load_optimizer_state:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if resume_epoch:
+                start_epoch = checkpoint["epoch"] + 1
+                print(f"Resuming from epoch {start_epoch}")
+            else:
+                start_epoch = 1
+                print("Loaded model weights only; starting from epoch 1 with a fresh optimizer schedule.")
+            # Fast-forward the scheduler to the correct epoch when resuming fully.
+            if scheduler is not None and fast_forward_scheduler:
                 for _ in range(start_epoch - 1):
                     scheduler.step()
             return start_epoch

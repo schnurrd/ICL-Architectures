@@ -227,6 +227,29 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
     }
 }
 
+DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
+    "DeltaNet_Comb_ST_Finetuned_16K": {
+        "display_name": "DeltaNet Finetuned 10 ep 16K seq len",
+        "wandb_run_id": "fla_models/runs/s2top3cx",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Comb_ST_Finetuned_40K": {
+        "display_name": "DeltaNet Finetuned 10 ep 40K seq len", 
+        "wandb_run_id": "fla_models/runs/2wjxn5ge",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Comb_ST_Finetuned_64K": {
+        "display_name": "DeltaNet Finetuned 6 ep 64K seq len",
+        "wandb_run_id": "fla_models/runs/xnbyqyr1",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Comb_ST_Reference": {
+        "display_name": "DeltaNet Reference",
+        "wandb_run_id": "fla_models/runs/ob2m9rth",
+        "eval_autocast_dtype": "bf16",
+    }
+}
+
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     "equal_params:Transformer_Comb_ST": { # non-causal version
         "display_name": "Non-Causal Transformer",
@@ -338,6 +361,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "based": BASED_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
     "transformer_masked": TRANSFORMER_MASKED_MODELS,
+    "deltanet_finetuned": DELTANET_FINETUNED_MODELS,
     "fla_models": {
         **KDA_MODELS,
         **GLA_MODELS,
