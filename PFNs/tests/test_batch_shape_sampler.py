@@ -217,3 +217,36 @@ def test_uniform_seq_len_sampling_cannot_be_combined_with_choices():
             seq_len_choices=[10, 20],
             uniform_seq_len_min=10,
         )
+
+
+def test_single_eval_pos_tail_window_restricts_sampling_to_sequence_end():
+    cfg = BatchShapeSamplerConfig(
+        batch_size=4,
+        max_seq_len=30_000,
+        seq_len_choices=[30_000],
+        min_single_eval_pos=64,
+        single_eval_pos_tail_window=1_000,
+        seed=19,
+    )
+
+    sampled = [
+        cfg.sample_batch_shape(epoch=1, step=step).single_eval_pos for step in range(200)
+    ]
+    assert all(29_000 <= value <= 29_999 for value in sampled)
+    assert len(set(sampled)) > 1
+
+
+def test_single_eval_pos_tail_window_respects_configured_min_bound():
+    cfg = BatchShapeSamplerConfig(
+        batch_size=4,
+        max_seq_len=500,
+        seq_len_choices=[500],
+        min_single_eval_pos=450,
+        single_eval_pos_tail_window=100,
+        seed=29,
+    )
+
+    sampled = [
+        cfg.sample_batch_shape(epoch=1, step=step).single_eval_pos for step in range(100)
+    ]
+    assert all(450 <= value <= 499 for value in sampled)

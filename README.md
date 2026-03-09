@@ -12,6 +12,7 @@ Unified framework for comparing model architectures in in-context learning acros
     - [Command Line Arguments](#command-line-arguments-1)
   - [wandb support](#wandb-support)
   - [Configuration Files](#configuration-files)
+  - [Curriculum Learning Parameters](#curriculum-learning-parameters)
 - [Currently known issues / TODOs](#currently-known-issues--todos)
 - [Repository (PFNs) explanation](#repository-pfns-explanation)
   - [Steps of execution in the pre-training pipeline](#steps-of-execution-in-the-pre-training-pipeline)
@@ -164,6 +165,41 @@ For restricted environments, set `mode="offline"` in the config file (or `WANDB_
 ## Configuration Files  
 
 The Python configuration file must define a `config`or a `get_config(config_index: int = 0)` function, which when called returns a `MainConfig` object. An example configuration file can be found at `PFNs/tabpfn_prior_config.py`.
+
+## Curriculum Learning Parameters
+
+Curriculum learning is configured via `get_config(...)` arguments in files like `PFNs/configs/fla/fla_config.py`.  
+From the CLI, pass these through `--config-arg KEY=VALUE` (for example `--config-arg seq_len_curriculum_start=128`).
+
+### Sequence length and curriculum schedule
+
+- `max_seq_len` (default: `1000`): Upper bound for sampled sequence length.
+- `seq_len_choices` (default: `None`): Optional discrete sequence lengths to sample from. If unset, sequence length follows the current curriculum cap directly.
+- `seq_len_choice_weights` (default: `None`): Optional base sampling weights for `seq_len_choices`. Must match list length and be non-negative.
+- `seq_len_curriculum_start` (default: `None`): Initial sequence-length cap at the beginning of training. If unset, curriculum capping is disabled and `max_seq_len` is used immediately.
+- `seq_len_curriculum_warmup_epochs` (default: `0`): Number of epochs for linear ramp from `seq_len_curriculum_start` to `max_seq_len`.
+- `seq_len_choice_weight_exponent` (default: `None`): Optional epoch-dependent reweighting toward larger sequence lengths. The effect grows with curriculum progress.
+
+### Batch-size adaptation for long sequences
+
+- `dynamic_batch_size_power` (default: `0`): Enables dynamic batch sizing to keep memory use roughly stable as sequence length grows.
+  - `0`: disabled
+  - `1`: linear scaling (useful for linear-attention-like memory growth)
+  - `2`: quadratic scaling (useful for transformer-like memory growth)
+- `dynamic_batch_size_compensate_grad_accumulation` (default: `False`): If `True`, each batch contributes a fractional optimizer-step progress proportional to `dynamic_batch_size / base_batch_size`. This helps keep optimizer update semantics stable when batch size shrinks.
+- `batch_size` (default depends on config, often `8`): Base batch size used as the reference before dynamic scaling.
+- `aggregate_k_gradients` (default depends on config profile): Gradient accumulation factor in the training loop. Effective optimizer step timing combines this with the optional dynamic-batch compensation above.
+
+### Related sampler controls
+
+These are part of `BatchShapeSamplerConfig` and influence the same sampling process:
+
+- `min_single_eval_pos`: Minimum position where evaluation targets start (`single_eval_pos` lower bound).
+- `single_eval_pos_tail_window`: If set, additionally constrains `single_eval_pos` to the last `N` valid positions of each sampled sequence (e.g. `N=1000` gives approximately `[seq_len-1000, seq_len)`).
+- `fixed_num_test_instances`: If set, enforces a fixed number of test items and derives final `seq_len` from `single_eval_pos + fixed_num_test_instances`.
+- `min_num_features`, `max_num_features`: Feature-count sampling range per batch.
+- `seed` (default: `42`): Seed used with `(epoch, step)` for deterministic batch-shape sampling.
+
 
 # Currently known issues / TODOs
 

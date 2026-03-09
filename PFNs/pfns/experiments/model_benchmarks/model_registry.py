@@ -228,9 +228,14 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
 }
 
 DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
-    "DeltaNet_Comb_ST_Finetuned": {
+    "DeltaNet_Comb_ST_Finetuned_16K": {
         "display_name": "DeltaNet Finetuned 10 ep 16K seq len",
         "wandb_run_id": "fla_models/runs/s2top3cx",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Comb_ST_Finetuned_40K": {
+        "display_name": "DeltaNet Finetuned 6 ep 40K seq len",
+        "wandb_run_id": "fla_models/runs/2wjxn5ge",
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Reference": {
