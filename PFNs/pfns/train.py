@@ -61,6 +61,7 @@ class MainConfig(base_config.BaseConfig):
     # Checkpointing
     train_state_dict_save_path: tp.Optional[str] = None
     train_state_dict_load_path: tp.Optional[str] = None
+    checkpoint_load_mode: tp.Literal["resume", "weights_only"] = "resume"
 
     # Validation
     test_priors: tp.List[prior.PriorConfig] | None = None
@@ -237,6 +238,9 @@ def train(
             scheduler,
             c.train_state_dict_load_path,
             device,
+            load_optimizer_state=(c.checkpoint_load_mode == "resume"),
+            resume_epoch=(c.checkpoint_load_mode == "resume"),
+            fast_forward_scheduler=(c.checkpoint_load_mode == "resume"),
             load_function=load_object_function,
         )
     else:
@@ -772,6 +776,9 @@ def load_checkpoint(
     scheduler,
     train_state_dict_load_path,
     device,
+    load_optimizer_state: bool = True,
+    resume_epoch: bool = True,
+    fast_forward_scheduler: bool = True,
     load_function: tp.Callable | None = None,
 ):
     print(f"Loading checkpoint from {train_state_dict_load_path}")
@@ -795,11 +802,16 @@ def load_checkpoint(
                     f"Stripping '{prefix}' from state_dict keys."
                 )
                 model.load_state_dict(stripped_state_dict, strict=True)
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            start_epoch = checkpoint["epoch"] + 1
-            print(f"Resuming from epoch {start_epoch}")
-            # Fast-forward the scheduler to the correct epoch
-            if scheduler is not None:
+            if load_optimizer_state:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if resume_epoch:
+                start_epoch = checkpoint["epoch"] + 1
+                print(f"Resuming from epoch {start_epoch}")
+            else:
+                start_epoch = 1
+                print("Loaded model weights only; starting from epoch 1 with a fresh optimizer schedule.")
+            # Fast-forward the scheduler to the correct epoch when resuming fully.
+            if scheduler is not None and fast_forward_scheduler:
                 for _ in range(start_epoch - 1):
                     scheduler.step()
             return start_epoch

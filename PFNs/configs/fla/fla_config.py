@@ -5,6 +5,7 @@ Config selector for FLA backbones using CLI-provided axes.
 
 from __future__ import annotations
 
+import os
 import torch
 
 from pfns.prior_defaults import (
@@ -38,6 +39,7 @@ GLOBAL_AGGREGATE_K_GRADIENTS = 2
 SUPPORTED_SEQUENCE_MODES = CANONICAL_SEQUENCE_MODES
 
 TRAINING_PROFILES = {
+    "debug": {"lr": 6.0e-5, "steps_per_epoch": 10, "epochs": 200},
     "low": {"lr": 6.0e-5, "steps_per_epoch": 1000, "epochs": 200},
     "high": {"lr": 3.0e-5, "steps_per_epoch": 4000, "epochs": 200},
     "ar": {"lr": 3.0e-5, "steps_per_epoch": 500, "epochs": 200},
@@ -165,6 +167,47 @@ def _resolve_sequence_mode(sequence_mode: str) -> str:
     return resolve_sequence_mode(sequence_mode)
 
 
+def _default_finetune_save_path(load_path: str) -> str:
+    root, ext = os.path.splitext(load_path)
+    if ext:
+        return f"{root}_finetune{ext}"
+    return f"{load_path}_finetune.pt"
+
+
+def _load_finetune_checkpoint_metadata(
+    checkpoint_path: str,
+) -> tuple[dict[str, object] | None, str | None]:
+    """Extract architecture-relevant metadata from a saved training checkpoint."""
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    except Exception as exc:
+        print(
+            f"Warning: Could not read finetune checkpoint metadata from {checkpoint_path}: {exc}"
+        )
+        return None, None
+
+    if not isinstance(checkpoint, dict):
+        return None, None
+    config_dict = checkpoint.get("config")
+    if not isinstance(config_dict, dict):
+        return None, None
+    model_dict = config_dict.get("model")
+    if not isinstance(model_dict, dict):
+        return None, None
+
+    backbone_dict = model_dict.get("backbone")
+    backbone_config_kwargs: dict[str, object] | None = None
+    if isinstance(backbone_dict, dict):
+        raw_kwargs = backbone_dict.get("config_kwargs")
+        if isinstance(raw_kwargs, dict):
+            backbone_config_kwargs = dict(raw_kwargs)
+
+    checkpoint_fpe = model_dict.get("feature_positional_embedding")
+    if checkpoint_fpe is not None and not isinstance(checkpoint_fpe, str):
+        checkpoint_fpe = None
+    return backbone_config_kwargs, checkpoint_fpe
+
+
 def get_config(
     config_index: int = 0,
     # Architecture
@@ -186,6 +229,12 @@ def get_config(
     lr: float | None = None,
     steps_per_epoch: int | None = None,
     aggregate_k_gradients: int | None = None,
+    finetune_from_checkpoint: str | None = None,
+    finetune_save_checkpoint: str | None = None,
+    finetune_epochs: int | None = None,
+    finetune_lr: float | None = None,
+    finetune_warmup_epochs: int = 2,
+    finetune_uniform_seq_len_min: int = 1000,
     # Model options
     cache_chunk_size: int | None = None,
     deltanet_state_reg_weight: float = 0.0,
@@ -265,6 +314,7 @@ def get_config(
         if seq_len_choice_weight_exponent is not None
         else None
     )
+    resolved_uniform_seq_len_min: int | None = None
     resolved_dynamic_batch_size_power = int(dynamic_batch_size_power)
     resolved_dynamic_batch_size_compensate_grad_accumulation = bool(
         dynamic_batch_size_compensate_grad_accumulation
@@ -276,6 +326,62 @@ def get_config(
     else:
         resolved_aggregate_k = GLOBAL_AGGREGATE_K_GRADIENTS
     resolved_batch_size = batch_size or DEFAULT_BATCH_SIZE
+    resolved_warmup_epochs = 10
+    resolved_checkpoint_load_mode: str = "resume"
+    resolved_train_state_dict_load_path: str | None = None
+    resolved_train_state_dict_save_path: str | None = None
+    finetune_checkpoint_backbone_kwargs: dict[str, object] | None = None
+    finetune_checkpoint_feature_positional_embedding: str | None = None
+
+    if finetune_from_checkpoint is not None:
+        if finetune_epochs is None:
+            raise ValueError(
+                "finetune_epochs must be set when finetune_from_checkpoint is provided."
+            )
+        resolved_epochs = int(finetune_epochs)
+        if resolved_epochs <= 0:
+            raise ValueError("finetune_epochs must be > 0.")
+        resolved_lr = (
+            float(finetune_lr)
+            if finetune_lr is not None
+            else float(resolved_lr) * 0.1
+        )
+        resolved_warmup_epochs = int(finetune_warmup_epochs)
+        if resolved_warmup_epochs < 0:
+            raise ValueError("finetune_warmup_epochs must be >= 0.")
+        resolved_checkpoint_load_mode = "weights_only"
+        resolved_train_state_dict_load_path = finetune_from_checkpoint
+        resolved_train_state_dict_save_path = (
+            finetune_save_checkpoint
+            if finetune_save_checkpoint is not None
+            else _default_finetune_save_path(finetune_from_checkpoint)
+        )
+        if os.path.isfile(finetune_from_checkpoint):
+            (
+                finetune_checkpoint_backbone_kwargs,
+                finetune_checkpoint_feature_positional_embedding,
+            ) = _load_finetune_checkpoint_metadata(finetune_from_checkpoint)
+            if finetune_checkpoint_backbone_kwargs is not None:
+                print(
+                    "Finetune mode: aligning backbone config kwargs from checkpoint "
+                    f"({finetune_from_checkpoint})."
+                )
+        else:
+            print(
+                "Warning: finetune_from_checkpoint does not point to an existing file. "
+                "Skipping metadata alignment."
+            )
+
+        # Finetuning uses uniform integer seq_len sampling over available lengths.
+        if resolved_seq_len_choices is None:
+            resolved_uniform_seq_len_min = int(finetune_uniform_seq_len_min)
+            resolved_seq_len_choice_weights = None
+        else:
+            resolved_uniform_seq_len_min = None
+        resolved_seq_len_curriculum_start = None
+        resolved_seq_len_curriculum_warmup_epochs = 0
+        resolved_seq_len_choice_weight_exponent = None
+
     train_mixed_precision = GLOBAL_TRAIN_MIXED_PRECISION
     train_mixed_precision_dtype = GLOBAL_TRAIN_MIXED_PRECISION_DTYPE
     if model_type in {"deltanet"} and train_mixed_precision_dtype == "fp32":
@@ -304,6 +410,7 @@ def get_config(
         max_seq_len=resolved_max_seq_len,
         seq_len_choices=resolved_seq_len_choices,
         seq_len_choice_weights=resolved_seq_len_choice_weights,
+        uniform_seq_len_min=resolved_uniform_seq_len_min,
         seq_len_curriculum_start=resolved_seq_len_curriculum_start,
         seq_len_curriculum_warmup_epochs=resolved_seq_len_curriculum_warmup_epochs,
         seq_len_choice_weight_exponent=resolved_seq_len_choice_weight_exponent,
@@ -315,6 +422,8 @@ def get_config(
     )
 
     resolved_config_kwargs = dict(MODEL_SETTINGS[model_type]["config_kwargs"])
+    if finetune_checkpoint_backbone_kwargs is not None:
+        resolved_config_kwargs.update(finetune_checkpoint_backbone_kwargs)
     if use_short_conv is not None:
         if "use_short_conv" not in resolved_config_kwargs:
             raise ValueError(
@@ -354,6 +463,12 @@ def get_config(
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
 
+    resolved_feature_positional_embedding = (
+        feature_positional_embedding
+        if feature_positional_embedding is not None
+        else finetune_checkpoint_feature_positional_embedding
+    )
+
     model = ModelConfig(
         criterion=CrossEntropyConfig(num_classes=max_num_classes),
         encoder=EncoderConfig(
@@ -370,7 +485,7 @@ def get_config(
         backbone=FLABackboneConfig(**backbone_kwargs),
         features_per_group=20,
         attention_between_features=False,
-        feature_positional_embedding=feature_positional_embedding,
+        feature_positional_embedding=resolved_feature_positional_embedding,
         interleave_x_y_pairs=sequence_mode.startswith("Int"),
     )
 
@@ -404,6 +519,11 @@ def get_config(
             else None
         ),
         (
+            f"uniformseq{resolved_uniform_seq_len_min}->{resolved_max_seq_len}"
+            if resolved_uniform_seq_len_min is not None
+            else None
+        ),
+        (
             f"dynbs_p{resolved_dynamic_batch_size_power}"
             if resolved_dynamic_batch_size_power > 0
             else None
@@ -418,8 +538,9 @@ def get_config(
         f"lr{resolved_lr:g}" if lr else None,
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
+        f"ft{resolved_epochs}e" if finetune_from_checkpoint is not None else None,
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
-        f"fpe_{feature_positional_embedding}",
+        f"fpe_{resolved_feature_positional_embedding}",
     ]
     extras_str = "_".join(e for e in extras if e)
     wandb_name = (
@@ -451,16 +572,19 @@ def get_config(
         model=model,
         batch_shape_sampler=batch_shape,
         epochs=resolved_epochs,
-        warmup_epochs=10,
+        warmup_epochs=resolved_warmup_epochs,
         steps_per_epoch=resolved_steps_per_epoch,
         n_targets_per_input=1,
         train_mixed_precision=train_mixed_precision,
         train_mixed_precision_dtype=train_mixed_precision_dtype,
         scheduler="cosine_decay",
+        train_state_dict_load_path=resolved_train_state_dict_load_path,
+        train_state_dict_save_path=resolved_train_state_dict_save_path,
+        checkpoint_load_mode=resolved_checkpoint_load_mode,
         progress_bar=True,
         wandb=wandb_config,
         num_workers=8 if resolved_prior_device == "cpu" else 0,
         aggregate_k_gradients=resolved_aggregate_k,
-        validation_period=10,
+        validation_period=None,
         test_steps_per_epoch=500
     )

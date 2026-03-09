@@ -38,6 +38,7 @@ class BatchShapeSamplerConfig(BaseConfig):
     fixed_num_test_instances: Optional[int] = None
     seq_len_choices: Optional[Sequence[int]] = None
     seq_len_choice_weights: Optional[Sequence[float]] = None
+    uniform_seq_len_min: Optional[int] = None
     seq_len_curriculum_start: Optional[int] = None
     seq_len_curriculum_warmup_epochs: int = 0
     seq_len_choice_weight_exponent: float | None = None
@@ -52,24 +53,29 @@ class BatchShapeSamplerConfig(BaseConfig):
         max_seq_len = int(self.max_seq_len)
         warmup_epochs = int(self.seq_len_curriculum_warmup_epochs)
         curriculum_start = (
-            None
-            if self.seq_len_curriculum_start is None
-            else int(self.seq_len_curriculum_start)
+            int(self.seq_len_curriculum_start)
+            if self.seq_len_curriculum_start is not None
+            else None
         )
         choice_weight_exponent = (
-            None
-            if self.seq_len_choice_weight_exponent is None
-            else float(self.seq_len_choice_weight_exponent)
+            float(self.seq_len_choice_weight_exponent)
+            if self.seq_len_choice_weight_exponent is not None
+            else None
         )
         choices = (
-            None
-            if self.seq_len_choices is None
-            else tuple(int(v) for v in self.seq_len_choices)
+            tuple(int(v) for v in self.seq_len_choices)
+            if self.seq_len_choices is not None
+            else None
         )
         weights = (
-            None
-            if self.seq_len_choice_weights is None
-            else tuple(float(w) for w in self.seq_len_choice_weights)
+            tuple(float(w) for w in self.seq_len_choice_weights)
+            if self.seq_len_choice_weights is not None
+            else None
+        )
+        uniform_seq_len_min = (
+            int(self.uniform_seq_len_min)
+            if self.uniform_seq_len_min is not None
+            else None
         )
         dynamic_batch_size_power = int(self.dynamic_batch_size_power)
         dynamic_batch_size_compensate_grad_accumulation = bool(
@@ -82,24 +88,27 @@ class BatchShapeSamplerConfig(BaseConfig):
         assert (
             self.fixed_num_test_instances is None or self.fixed_num_test_instances >= 0
         ), "fixed_num_test_instances must be >= 0 when set."
-        if warmup_epochs < 0:
-            raise ValueError("seq_len_curriculum_warmup_epochs must be >= 0.")
+        assert warmup_epochs >= 0, "seq_len_curriculum_warmup_epochs must be >= 0."
 
         assert choices is not None or weights is None, (
             "seq_len_choice_weights requires seq_len_choices to be set."
         )
+        assert not (choices is not None and uniform_seq_len_min is not None), (
+            "uniform_seq_len_min cannot be used together with seq_len_choices."
+        )
         if choices is not None:
-            if not choices:
-                raise ValueError("seq_len_choices must be non-empty when set.")
-            assert all(seq_len >= 2 for seq_len in choices), (
-                "All seq_len_choices values must be >= 2."
+            assert all(seq_len >= 2 for seq_len in choices) and len(choices) > 0, (
+                "All seq_len_choices values must be >= 2 and there must be at least one choice." 
+            )
+        if uniform_seq_len_min is not None:
+            assert uniform_seq_len_min >= 2, "uniform_seq_len_min must be >= 2 when set."
+            assert uniform_seq_len_min <= max_seq_len, (
+                "uniform_seq_len_min must be <= max_seq_len. "
+                f"Got uniform_seq_len_min={uniform_seq_len_min}, max_seq_len={max_seq_len}."
             )
         if weights is not None:
-            assert len(weights) == len(choices), (
-                "seq_len_choice_weights must have the same length as seq_len_choices."
-            )
-            assert all(weight >= 0.0 for weight in weights), (
-                "seq_len_choice_weights must be >= 0."
+            assert len(weights) == len(choices) and all(weight >= 0.0 for weight in weights), (
+                "seq_len_choice_weights must be >= 0 and have the same length as seq_len_choices."
             )
 
         if curriculum_start is not None:
@@ -114,6 +123,7 @@ class BatchShapeSamplerConfig(BaseConfig):
             ("max_seq_len", max_seq_len),
             ("seq_len_choices", choices),
             ("seq_len_choice_weights", weights),
+            ("uniform_seq_len_min", uniform_seq_len_min),
             ("seq_len_curriculum_start", curriculum_start),
             ("seq_len_curriculum_warmup_epochs", warmup_epochs),
             ("seq_len_choice_weight_exponent", choice_weight_exponent),
@@ -132,6 +142,7 @@ class BatchShapeSamplerConfig(BaseConfig):
         return min(max(float(epoch - 1), 0.0) / float(warmup), 1.0)
 
     def _effective_max_seq_len(self, epoch: int) -> int:
+        """Determine the effective maximum sequence length for the current epoch based on curriculum learning settings."""
         start = self.seq_len_curriculum_start
         warmup = self.seq_len_curriculum_warmup_epochs
         if start is None or warmup <= 0 or self.max_seq_len <= start:
@@ -142,28 +153,32 @@ class BatchShapeSamplerConfig(BaseConfig):
     def _sample_seq_len_cap(
         self, rng: random.Random, *, max_seq_len_cap: int, epoch: int
     ) -> int:
+        """ """
         if not self.seq_len_choices:
+            if self.uniform_seq_len_min is not None:
+                if self.uniform_seq_len_min > max_seq_len_cap:
+                    raise ValueError(
+                        "uniform_seq_len_min exceeds the current max_seq_len_cap. "
+                        f"Got uniform_seq_len_min={self.uniform_seq_len_min}, "
+                        f"max_seq_len_cap={max_seq_len_cap}."
+                    )
+                return rng.randint(self.uniform_seq_len_min, max_seq_len_cap)
             return max_seq_len_cap
         progress = self._curriculum_progress(epoch)
-        if self.seq_len_choice_weights is None:
-            choices = [value for value in self.seq_len_choices if value <= max_seq_len_cap]
-            if not choices:
-                raise ValueError(
-                    "No valid seq_len_choices found under max_seq_len_cap. "
-                    f"max_seq_len_cap={max_seq_len_cap}, seq_len_choices={list(self.seq_len_choices)}."
-                )
-            base_weights = [1.0] * len(choices)
-        else:
-            choices, base_weights = [], []
-            for value, weight in zip(self.seq_len_choices, self.seq_len_choice_weights):
-                if value <= max_seq_len_cap:
-                    choices.append(value)
-                    base_weights.append(weight)
-            if not choices:
-                raise ValueError(
-                    "No valid seq_len_choices found under max_seq_len_cap. "
-                    f"max_seq_len_cap={max_seq_len_cap}, seq_len_choices={list(self.seq_len_choices)}."
-                )
+        source_weights = self.seq_len_choice_weights
+        if source_weights is None:
+            source_weights = [1.0] * len(self.seq_len_choices)
+
+        choices, base_weights = [], []
+        for value, weight in zip(self.seq_len_choices, source_weights):
+            if value <= max_seq_len_cap:
+                choices.append(value)
+                base_weights.append(weight)
+        if not choices:
+            raise ValueError(
+                "No valid seq_len_choices found under max_seq_len_cap. "
+                f"max_seq_len_cap={max_seq_len_cap}, seq_len_choices={list(self.seq_len_choices)}."
+            )
 
         if self.seq_len_choice_weight_exponent is not None:
             exponent = progress * self.seq_len_choice_weight_exponent
@@ -185,15 +200,16 @@ class BatchShapeSamplerConfig(BaseConfig):
         if self.dynamic_batch_size_power <= 0:
             return self.batch_size
 
-        reference_seq_len = (
-            self.seq_len_curriculum_start
-            if self.seq_len_curriculum_start is not None
-            else (
-                min(self.seq_len_choices)
-                if self.seq_len_choices is not None
-                else self.max_seq_len
-            )
-        )
+        # Calibrate memory budget at the smallest sequence length the sampler can emit.
+        # This ensures batch size shrinks as seq_len grows in curriculum/uniform settings.
+        reference_seq_len = self.max_seq_len
+        if self.seq_len_curriculum_start is not None:
+            reference_seq_len = self.seq_len_curriculum_start
+        elif self.uniform_seq_len_min is not None:
+            reference_seq_len = self.uniform_seq_len_min
+        elif self.seq_len_choices is not None:
+            reference_seq_len = min(self.seq_len_choices)
+
         # Keep nominal memory at the reference sequence length.
         memory_budget = float(self.batch_size) * (
             float(reference_seq_len) ** self.dynamic_batch_size_power
@@ -220,6 +236,9 @@ class BatchShapeSamplerConfig(BaseConfig):
         seq_len_cap = self._sample_seq_len_cap(
             rng, max_seq_len_cap=max_seq_len_cap, epoch=epoch
         )
+        # print(
+        #     f"Epoch {epoch}, Step {step}: Sampled seq_len_cap={seq_len_cap} (effective_max_seq_len={max_seq_len_cap}) based on curriculum progress."
+        # )
         max_single_eval_pos = (
             seq_len_cap
             - 1
@@ -250,6 +269,11 @@ class BatchShapeSamplerConfig(BaseConfig):
             seq_len = self.fixed_num_test_instances + single_eval_pos
 
         dynamic_batch_size = self._dynamic_batch_size(seq_len)
+        # print(
+        #     f"Epoch {epoch}, Step {step}: Sampled batch shape - batch_size={dynamic_batch_size}, "
+        #     f"seq_len={seq_len}, num_features={num_features}, single_eval_pos={single_eval_pos}, "
+        #     f"optimizer_step_progress={self._optimizer_step_progress(dynamic_batch_size):.4f}"
+        # )
         return BatchShape(
             batch_size=dynamic_batch_size,
             seq_len=seq_len,

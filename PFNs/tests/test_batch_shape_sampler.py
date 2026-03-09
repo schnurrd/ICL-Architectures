@@ -162,6 +162,21 @@ def test_dynamic_batch_size_scales_with_seq_len_linear_and_quadratic():
     assert quadratic_cfg._dynamic_batch_size(256) == 4
 
 
+def test_dynamic_batch_size_uses_uniform_seq_len_min_as_reference():
+    cfg = BatchShapeSamplerConfig(
+        batch_size=8,
+        max_seq_len=160_000,
+        uniform_seq_len_min=1_000,
+        dynamic_batch_size_power=1,
+    )
+
+    assert cfg._dynamic_batch_size(1_000) == 8
+    assert cfg._dynamic_batch_size(2_000) == 4
+    assert cfg._dynamic_batch_size(4_000) == 2
+    assert cfg._dynamic_batch_size(8_000) == 1
+    assert cfg._dynamic_batch_size(160_000) == 1
+
+
 def test_optimizer_step_progress_reflects_dynamic_batch_when_enabled():
     cfg = BatchShapeSamplerConfig(
         batch_size=64,
@@ -177,3 +192,28 @@ def test_optimizer_step_progress_reflects_dynamic_batch_when_enabled():
     assert shape.seq_len == 256
     assert shape.batch_size == 16
     assert shape.optimizer_step_progress == 0.25
+
+
+def test_uniform_seq_len_sampling_uses_integer_range_when_enabled():
+    cfg = BatchShapeSamplerConfig(
+        batch_size=4,
+        max_seq_len=20,
+        uniform_seq_len_min=10,
+        seed=3,
+    )
+    sampled = [cfg.sample_batch_shape(epoch=1, step=step).seq_len for step in range(100)]
+    assert all(10 <= value <= 20 for value in sampled)
+    assert len(set(sampled)) > 1
+
+
+def test_uniform_seq_len_sampling_cannot_be_combined_with_choices():
+    with pytest.raises(
+        AssertionError,
+        match="uniform_seq_len_min cannot be used together with seq_len_choices",
+    ):
+        BatchShapeSamplerConfig(
+            batch_size=4,
+            max_seq_len=20,
+            seq_len_choices=[10, 20],
+            uniform_seq_len_min=10,
+        )
