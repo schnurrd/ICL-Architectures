@@ -57,6 +57,7 @@ class MainConfig(base_config.BaseConfig):
     # LR Scheduler
     scheduler: str = "cosine_decay"
     warmup_epochs: int = 10
+    min_lr: float = 5e-6
 
     # Checkpointing
     train_state_dict_save_path: tp.Optional[str] = None
@@ -226,6 +227,7 @@ def train(
             optimizer,
             c.warmup_epochs,
             c.epochs if c.epochs is not None else 100,
+            min_lr=c.min_lr,
         )
 
     start_epoch = 1  # Default start epoch
@@ -527,7 +529,6 @@ def train_or_evaluate_epoch(
                 raise ValueError(
                     "optimizer_step_progress must be > 0 for training batches."
                 )
-            # Keep one optimizer step at most for a single micro-batch.
             batch_optimizer_step_progress = min(batch_optimizer_step_progress, 1.0)
         next_optimizer_step_progress = (
             optimizer_step_progress + batch_optimizer_step_progress

@@ -4,6 +4,7 @@
 
 # It includes batch_size, seq_len, num_features, and single_eval_pos.
 
+import math
 import random
 from dataclasses import dataclass
 from typing import Optional, Sequence
@@ -32,19 +33,21 @@ class BatchShape:
 class BatchShapeSamplerConfig(BaseConfig):
     batch_size: int = 32
     min_single_eval_pos: int = 0
-    single_eval_pos_tail_window: Optional[int] = None
     max_seq_len: int = 1000
-    min_num_features: int = 1
-    max_num_features: int = 16
-    fixed_num_test_instances: Optional[int] = None
-    seq_len_choices: Optional[Sequence[int]] = None
-    seq_len_choice_weights: Optional[Sequence[float]] = None
-    uniform_seq_len_min: Optional[int] = None
-    seq_len_curriculum_start: Optional[int] = None
-    seq_len_curriculum_warmup_epochs: int = 0
-    seq_len_choice_weight_exponent: float | None = None
-    dynamic_batch_size_power: int = 0
+    batch_size_stages: Optional[Sequence[tuple[int, int]]] = None
     dynamic_batch_size_compensate_grad_accumulation: bool = False
+    min_num_features: int = 1
+    max_num_features: int = 20
+    fixed_num_test_instances: Optional[int] = None
+    eval_pos_split_pct_min: float | None = None
+    eval_pos_split_pct_max: float | None = None
+    seq_len_stages: Optional[
+        Sequence[
+            tuple[int, int]
+            | tuple[int, int, float]
+            | tuple[int, int, float, float]
+        ]
+    ] = None
 
     seed: int = 42
 
@@ -52,182 +55,243 @@ class BatchShapeSamplerConfig(BaseConfig):
         super().__post_init__()
 
         max_seq_len = int(self.max_seq_len)
-        warmup_epochs = int(self.seq_len_curriculum_warmup_epochs)
-        curriculum_start = (
-            int(self.seq_len_curriculum_start)
-            if self.seq_len_curriculum_start is not None
-            else None
-        )
-        choice_weight_exponent = (
-            float(self.seq_len_choice_weight_exponent)
-            if self.seq_len_choice_weight_exponent is not None
-            else None
-        )
-        choices = (
-            tuple(int(v) for v in self.seq_len_choices)
-            if self.seq_len_choices is not None
-            else None
-        )
-        weights = (
-            tuple(float(w) for w in self.seq_len_choice_weights)
-            if self.seq_len_choice_weights is not None
-            else None
-        )
-        uniform_seq_len_min = (
-            int(self.uniform_seq_len_min)
-            if self.uniform_seq_len_min is not None
-            else None
-        )
-        single_eval_pos_tail_window = (
-            int(self.single_eval_pos_tail_window)
-            if self.single_eval_pos_tail_window is not None
-            else None
-        )
-        dynamic_batch_size_power = int(self.dynamic_batch_size_power)
+        batch_size = int(self.batch_size)
+        min_single_eval_pos = int(self.min_single_eval_pos)
+        min_num_features = int(self.min_num_features)
+        max_num_features = int(self.max_num_features)
         dynamic_batch_size_compensate_grad_accumulation = bool(
             self.dynamic_batch_size_compensate_grad_accumulation
         )
+        fixed_num_test_instances = (
+            None
+            if self.fixed_num_test_instances is None
+            else int(self.fixed_num_test_instances)
+        )
+        seed = int(self.seed)
+        eval_pos_split_pct_min, eval_pos_split_pct_max = self._normalize_eval_pos_pct_range(
+            self.eval_pos_split_pct_min,
+            self.eval_pos_split_pct_max,
+            source="global eval_pos_split_pct range",
+        )
 
         assert max_seq_len >= 2, "max_seq_len must be >= 2."
-        assert self.batch_size >= 1, "batch_size must be >= 1."
-        assert self.min_single_eval_pos >= 0, "min_single_eval_pos must be >= 0."
-        assert single_eval_pos_tail_window is None or single_eval_pos_tail_window >= 1, (
-            "single_eval_pos_tail_window must be >= 1 when set."
+        assert batch_size >= 1, "batch_size must be >= 1."
+        assert min_single_eval_pos >= 0, "min_single_eval_pos must be >= 0."
+        assert min_num_features >= 1, "min_num_features must be >= 1."
+        assert max_num_features >= min_num_features, (
+            "max_num_features must be >= min_num_features."
         )
         assert (
-            self.fixed_num_test_instances is None or self.fixed_num_test_instances >= 0
+            fixed_num_test_instances is None or fixed_num_test_instances >= 0
         ), "fixed_num_test_instances must be >= 0 when set."
-        assert warmup_epochs >= 0, "seq_len_curriculum_warmup_epochs must be >= 0."
 
-        assert choices is not None or weights is None, (
-            "seq_len_choice_weights requires seq_len_choices to be set."
-        )
-        assert not (choices is not None and uniform_seq_len_min is not None), (
-            "uniform_seq_len_min cannot be used together with seq_len_choices."
-        )
-        if choices is not None:
-            assert all(seq_len >= 2 for seq_len in choices) and len(choices) > 0, (
-                "All seq_len_choices values must be >= 2 and there must be at least one choice." 
-            )
-        if uniform_seq_len_min is not None:
-            assert uniform_seq_len_min >= 2, "uniform_seq_len_min must be >= 2 when set."
-            assert uniform_seq_len_min <= max_seq_len, (
-                "uniform_seq_len_min must be <= max_seq_len. "
-                f"Got uniform_seq_len_min={uniform_seq_len_min}, max_seq_len={max_seq_len}."
-            )
-        if weights is not None:
-            assert len(weights) == len(choices) and all(weight >= 0.0 for weight in weights), (
-                "seq_len_choice_weights must be >= 0 and have the same length as seq_len_choices."
-            )
-
-        if curriculum_start is not None:
-            assert curriculum_start >= 2, "seq_len_curriculum_start must be >= 2 when set."
-        if dynamic_batch_size_power not in (0, 1, 2):
-            raise ValueError(
-                "dynamic_batch_size_power must be one of {0, 1, 2}. "
-                "Use 1 for linear-attention-like scaling and 2 for transformer-like scaling."
-            )
+        resolved_batch_size_stages = self._resolve_batch_size_stages()
+        resolved_seq_len_stages = self._resolve_seq_len_stages(max_seq_len)
 
         for field_name, value in (
+            ("batch_size", batch_size),
+            ("min_single_eval_pos", min_single_eval_pos),
             ("max_seq_len", max_seq_len),
-            ("seq_len_choices", choices),
-            ("seq_len_choice_weights", weights),
-            ("uniform_seq_len_min", uniform_seq_len_min),
-            ("single_eval_pos_tail_window", single_eval_pos_tail_window),
-            ("seq_len_curriculum_start", curriculum_start),
-            ("seq_len_curriculum_warmup_epochs", warmup_epochs),
-            ("seq_len_choice_weight_exponent", choice_weight_exponent),
-            ("dynamic_batch_size_power", dynamic_batch_size_power),
+            ("batch_size_stages", resolved_batch_size_stages),
             (
                 "dynamic_batch_size_compensate_grad_accumulation",
                 dynamic_batch_size_compensate_grad_accumulation,
             ),
+            ("min_num_features", min_num_features),
+            ("max_num_features", max_num_features),
+            ("fixed_num_test_instances", fixed_num_test_instances),
+            ("eval_pos_split_pct_min", eval_pos_split_pct_min),
+            ("eval_pos_split_pct_max", eval_pos_split_pct_max),
+            ("seq_len_stages", resolved_seq_len_stages),
+            ("seed", seed),
         ):
             object.__setattr__(self, field_name, value)
 
-    def _curriculum_progress(self, epoch: int) -> float:
-        warmup = self.seq_len_curriculum_warmup_epochs
-        if warmup <= 0:
-            return 1.0
-        return min(max(float(epoch - 1), 0.0) / float(warmup), 1.0)
+    def _resolve_batch_size_stages(self) -> tuple[tuple[int, int], ...] | None:
+        """
+        Converts sequence of tuples of (seq_len_threshold, batch_size) into a 
+        validated and sorted tuple of the same, or returns None if not set.
+        """
+        if self.batch_size_stages is None:
+            return None
 
-    def _effective_max_seq_len(self, epoch: int) -> int:
-        """Determine the effective maximum sequence length for the current epoch based on curriculum learning settings."""
-        start = self.seq_len_curriculum_start
-        warmup = self.seq_len_curriculum_warmup_epochs
-        if start is None or warmup <= 0 or self.max_seq_len <= start:
-            return self.max_seq_len
-        progress = self._curriculum_progress(epoch)
-        return int(round(start + progress * (self.max_seq_len - start)))
+        parsed_batch_size_stages: list[tuple[int, int]] = []
+        for stage_index, stage in enumerate(self.batch_size_stages):
+            try:
+                stage_seq_len_threshold_raw, stage_batch_size_raw = stage
+            except Exception as exc:
+                raise ValueError(
+                    "Each batch_size_stages entry must be a pair "
+                    "(seq_len_threshold, batch_size). "
+                    f"Invalid entry at index {stage_index}: {stage!r}"
+                ) from exc
+            stage_seq_len_threshold = int(stage_seq_len_threshold_raw)
+            stage_batch_size = int(stage_batch_size_raw)
+            if stage_seq_len_threshold < 2:
+                raise ValueError(
+                    "batch_size_stages seq_len_threshold must be >= 2. "
+                    f"Got {stage_seq_len_threshold} at index {stage_index}."
+                )
+            if stage_batch_size < 1:
+                raise ValueError(
+                    "batch_size_stages batch_size must be >= 1. "
+                    f"Got {stage_batch_size} at index {stage_index}."
+                )
+            if (
+                parsed_batch_size_stages
+                and stage_seq_len_threshold <= parsed_batch_size_stages[-1][0]
+            ):
+                raise ValueError(
+                    "batch_size_stages seq_len_threshold values must be strictly increasing."
+                )
+            parsed_batch_size_stages.append((stage_seq_len_threshold, stage_batch_size))
+        return tuple(parsed_batch_size_stages)
 
-    def _sample_seq_len_cap(
-        self, rng: random.Random, *, max_seq_len_cap: int, epoch: int
-    ) -> int:
-        """ """
-        if not self.seq_len_choices:
-            if self.uniform_seq_len_min is not None:
-                if self.uniform_seq_len_min > max_seq_len_cap:
-                    raise ValueError(
-                        "uniform_seq_len_min exceeds the current max_seq_len_cap. "
-                        f"Got uniform_seq_len_min={self.uniform_seq_len_min}, "
-                        f"max_seq_len_cap={max_seq_len_cap}."
-                    )
-                return rng.randint(self.uniform_seq_len_min, max_seq_len_cap)
-            return max_seq_len_cap
-        progress = self._curriculum_progress(epoch)
-        source_weights = self.seq_len_choice_weights
-        if source_weights is None:
-            source_weights = [1.0] * len(self.seq_len_choices)
+    def _resolve_seq_len_stages(
+        self,
+        max_seq_len: int,
+    ) -> tuple[tuple[int, int, float | None, float | None], ...] | None:
+        """validates and normalizes seq_len_stages
+        """
+        if self.seq_len_stages is None:
+            return None
 
-        choices, base_weights = [], []
-        for value, weight in zip(self.seq_len_choices, source_weights):
-            if value <= max_seq_len_cap:
-                choices.append(value)
-                base_weights.append(weight)
-        if not choices:
+        parsed_stages: list[tuple[int, int, float | None, float | None]] = []
+        for stage_index, stage in enumerate(self.seq_len_stages):
+            (
+                end_epoch,
+                stage_max_seq_len,
+                stage_pct_min,
+                stage_pct_max,
+            ) = self._parse_seq_len_stage(stage=stage, stage_index=stage_index)
+
+            if end_epoch <= 0:
+                raise ValueError(
+                    "seq_len_stages end_epoch values must be >= 1. "
+                    f"Got {end_epoch} at index {stage_index}."
+                )
+            if stage_max_seq_len < 2:
+                raise ValueError(
+                    "seq_len_stages max_seq_len_cap values must be >= 2. "
+                    f"Got {stage_max_seq_len} at index {stage_index}."
+                )
+            if stage_max_seq_len > max_seq_len:
+                raise ValueError(
+                    "seq_len_stages max_seq_len_cap values must be <= max_seq_len. "
+                    f"Got {stage_max_seq_len} > {max_seq_len} at index {stage_index}."
+                )
+            if parsed_stages and end_epoch <= parsed_stages[-1][0]:
+                raise ValueError(
+                    "seq_len_stages end_epoch values must be strictly increasing."
+                )
+            parsed_stages.append(
+                (end_epoch, stage_max_seq_len, stage_pct_min, stage_pct_max)
+            )
+        return tuple(parsed_stages)
+
+    def _parse_seq_len_stage(
+        self,
+        *,
+        stage: tuple[int, int]
+        | tuple[int, int, float]
+        | tuple[int, int, float, float],
+        stage_index: int,
+    ) -> tuple[int, int, float | None, float | None]:
+        stage_len = len(stage)
+        if stage_len == 2:
+            end_epoch_raw, stage_max_seq_len_raw = stage
+            stage_pct_min_raw, stage_pct_max_raw = None, None
+        elif stage_len == 3:
+            end_epoch_raw, stage_max_seq_len_raw, stage_pct_raw = stage
+            stage_pct_min_raw, stage_pct_max_raw = stage_pct_raw, stage_pct_raw
+        elif stage_len == 4:
+            (
+                end_epoch_raw,
+                stage_max_seq_len_raw,
+                stage_pct_min_raw,
+                stage_pct_max_raw,
+            ) = stage
+        else:
             raise ValueError(
-                "No valid seq_len_choices found under max_seq_len_cap. "
-                f"max_seq_len_cap={max_seq_len_cap}, seq_len_choices={list(self.seq_len_choices)}."
+                "Each seq_len_stages entry must be one of: "
+                "(end_epoch, max_seq_len), "
+                "(end_epoch, max_seq_len, eval_pos_split_pct), or "
+                "(end_epoch, max_seq_len, eval_pos_split_pct_min, eval_pos_split_pct_max). "
+                f"Invalid entry at index {stage_index}: {stage!r}"
             )
 
-        if self.seq_len_choice_weight_exponent is not None:
-            exponent = progress * self.seq_len_choice_weight_exponent
-            min_choice = float(min(choices))
-            weights = [
-                base_weight * ((float(value) / min_choice) ** exponent)
-                for value, base_weight in zip(choices, base_weights)
-            ]
-        else:
-            weights = base_weights
+        end_epoch = int(end_epoch_raw)
+        stage_max_seq_len = int(stage_max_seq_len_raw)
+        stage_pct_min, stage_pct_max = self._normalize_eval_pos_pct_range(
+            stage_pct_min_raw,
+            stage_pct_max_raw,
+            source=f"seq_len_stages[{stage_index}] eval_pos_split_pct range",
+        )
+        return end_epoch, stage_max_seq_len, stage_pct_min, stage_pct_max
 
+    @staticmethod
+    def _normalize_eval_pos_pct_range(
+        pct_min: float | None,
+        pct_max: float | None,
+        *,
+        source: str,
+    ) -> tuple[float | None, float | None]:
+        if pct_min is None and pct_max is None:
+            return None, None
+        if pct_min is None:
+            pct_min = pct_max
+        if pct_max is None:
+            pct_max = pct_min
+
+        resolved_min = float(pct_min)
+        resolved_max = float(pct_max)
+        if resolved_min < 0.0 or resolved_max < 0.0:
+            raise ValueError(f"{source} values must be >= 0.")
+        if resolved_min > 100.0 or resolved_max > 100.0:
+            raise ValueError(f"{source} values must be <= 100.")
+        if resolved_min > resolved_max:
+            raise ValueError(
+                f"{source} min value must be <= max value; got {resolved_min} > {resolved_max}."
+            )
+        return resolved_min, resolved_max
+
+    def _effective_stage_settings(
+        self, epoch: int
+    ) -> tuple[int, float | None, float | None]:
+        if not self.seq_len_stages:
+            return (
+                self.max_seq_len,
+                self.eval_pos_split_pct_min,
+                self.eval_pos_split_pct_max,
+            )
+        for (
+            end_epoch,
+            stage_max_seq_len,
+            stage_eval_pct_min,
+            stage_eval_pct_max,
+        ) in self.seq_len_stages:
+            if epoch <= end_epoch:
+                if stage_eval_pct_min is not None or stage_eval_pct_max is not None:
+                    return stage_max_seq_len, stage_eval_pct_min, stage_eval_pct_max
+                return (
+                    stage_max_seq_len,
+                    self.eval_pos_split_pct_min,
+                    self.eval_pos_split_pct_max,
+                )
         return (
-            rng.choice(choices)
-            if sum(weights) <= 0.0
-            else rng.choices(choices, weights=weights, k=1)[0]
+            self.max_seq_len,
+            self.eval_pos_split_pct_min,
+            self.eval_pos_split_pct_max,
         )
 
     def _dynamic_batch_size(self, seq_len: int) -> int:
-        if self.dynamic_batch_size_power <= 0:
+        if not self.batch_size_stages:
             return self.batch_size
-
-        # Calibrate memory budget at the smallest sequence length the sampler can emit.
-        # This ensures batch size shrinks as seq_len grows in curriculum/uniform settings.
-        reference_seq_len = self.max_seq_len
-        if self.seq_len_curriculum_start is not None:
-            reference_seq_len = self.seq_len_curriculum_start
-        elif self.uniform_seq_len_min is not None:
-            reference_seq_len = self.uniform_seq_len_min
-        elif self.seq_len_choices is not None:
-            reference_seq_len = min(self.seq_len_choices)
-
-        # Keep nominal memory at the reference sequence length.
-        memory_budget = float(self.batch_size) * (
-            float(reference_seq_len) ** self.dynamic_batch_size_power
-        )
-        raw_batch_size = int(
-            memory_budget / (float(seq_len) ** self.dynamic_batch_size_power)
-        )
-        return max(1, min(self.batch_size, raw_batch_size))
+        for seq_len_threshold, stage_batch_size in self.batch_size_stages:
+            if seq_len <= seq_len_threshold:
+                return stage_batch_size
+        # If seq_len exceeds the largest threshold, keep the smallest configured stage batch size.
+        return self.batch_size_stages[-1][1]
 
     def _optimizer_step_progress(self, dynamic_batch_size: int) -> float:
         if not self.dynamic_batch_size_compensate_grad_accumulation:
@@ -242,13 +306,7 @@ class BatchShapeSamplerConfig(BaseConfig):
         # it seems to be beneficial to oversample small numbers of features
         num_features = rng.randint(self.min_num_features, self.max_num_features)
 
-        max_seq_len_cap = self._effective_max_seq_len(epoch)
-        seq_len_cap = self._sample_seq_len_cap(
-            rng, max_seq_len_cap=max_seq_len_cap, epoch=epoch
-        )
-        # print(
-        #     f"Epoch {epoch}, Step {step}: Sampled seq_len_cap={seq_len_cap} (effective_max_seq_len={max_seq_len_cap}) based on curriculum progress."
-        # )
+        seq_len_cap, eval_pct_min, eval_pct_max = self._effective_stage_settings(epoch)
         max_single_eval_pos = (
             seq_len_cap
             - 1
@@ -263,21 +321,23 @@ class BatchShapeSamplerConfig(BaseConfig):
                 "Sampled seq_len is too small for fixed_num_test_instances. "
                 f"Got seq_len={seq_len_cap}, fixed_num_test_instances={self.fixed_num_test_instances}."
             )
-        configured_min_single_eval_pos = int(self.min_single_eval_pos)
-        min_single_eval_pos = configured_min_single_eval_pos
-        if self.single_eval_pos_tail_window is not None:
-            min_single_eval_pos = max(
-                min_single_eval_pos,
-                max_single_eval_pos - self.single_eval_pos_tail_window + 1,
-            )
+
+        min_single_eval_pos = self.min_single_eval_pos
+        if eval_pct_min is not None and eval_pct_max is not None:
+            eval_min = int(math.ceil(float(seq_len_cap) * (eval_pct_min / 100.0)))
+            eval_max = int(math.floor(float(seq_len_cap) * (eval_pct_max / 100.0)))
+            min_single_eval_pos = max(min_single_eval_pos, eval_min)
+            max_single_eval_pos = min(max_single_eval_pos, eval_max)
 
         if min_single_eval_pos > max_single_eval_pos:
             raise ValueError(
-                "Configured single_eval_pos bounds exceed the maximum allowed single_eval_pos. "
-                f"Got configured_min_single_eval_pos={configured_min_single_eval_pos}, "
-                f"single_eval_pos_tail_window={self.single_eval_pos_tail_window}, "
+                "Configured eval split bounds exceed the maximum allowed "
+                "single_eval_pos for the sampled sequence length. "
+                f"Got min_single_eval_pos={self.min_single_eval_pos}, "
                 f"effective_min_single_eval_pos={min_single_eval_pos}, "
                 f"max_single_eval_pos={max_single_eval_pos}, seq_len_cap={seq_len_cap}, "
+                f"eval_pos_split_pct_min={eval_pct_min}, "
+                f"eval_pos_split_pct_max={eval_pct_max}, "
                 f"fixed_num_test_instances={self.fixed_num_test_instances}."
             )
         single_eval_pos = rng.randint(min_single_eval_pos, max_single_eval_pos)
@@ -287,11 +347,6 @@ class BatchShapeSamplerConfig(BaseConfig):
             seq_len = self.fixed_num_test_instances + single_eval_pos
 
         dynamic_batch_size = self._dynamic_batch_size(seq_len)
-        # print(
-        #     f"Epoch {epoch}, Step {step}: Sampled batch shape - batch_size={dynamic_batch_size}, "
-        #     f"seq_len={seq_len}, num_features={num_features}, single_eval_pos={single_eval_pos}, "
-        #     f"optimizer_step_progress={self._optimizer_step_progress(dynamic_batch_size):.4f}"
-        # )
         return BatchShape(
             batch_size=dynamic_batch_size,
             seq_len=seq_len,
