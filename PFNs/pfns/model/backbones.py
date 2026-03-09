@@ -325,7 +325,13 @@ class FLABackboneConfig(BackboneConfig):
 
     model_type: tp.Literal["gla", "mamba2", "kda", "deltanet", "gated_deltanet"] = "gla"
     config_kwargs: dict[str, tp.Any] | None = None
-    sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
+    sequence_mode: tp.Literal[
+        "Comb_ST",
+        "Int_ST",
+        "Comb_MT",
+        "Int_MT",
+        "Comb_Shifted_MT",
+    ] = "Comb_ST"
     cache_chunk_size: int | None = None
     deltanet_state_reg_weight: float = 0.0
 

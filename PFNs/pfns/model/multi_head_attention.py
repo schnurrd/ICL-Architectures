@@ -670,7 +670,12 @@ class MultiHeadAttention(torch.nn.Module):
             device=x.device,
             dtype=torch.long,
         )
-        if mask_name is None or mask_name not in {"Comb_MT", "Int_MT", "causal_all"}:
+        if mask_name is None or mask_name not in {
+            "Comb_MT",
+            "Int_MT",
+            "Comb_Shifted_MT",
+            "causal_all",
+        }:
             freeze_after = int(eval_pos) if eval_pos is not None and eval_pos > 0 else None
             if freeze_after is None and use_cached_kv:
                 freeze_after = int(position_offset) if position_offset > 0 else None

@@ -21,6 +21,37 @@ class SimpleStyleEncoder(nn.Module):
             return self.linear(x).sum(dim=1)
 
 
+class IdentityXEncoder(nn.Module):
+    def forward(self, x, **kwargs):
+        return x["main"]
+
+
+class IdentityYEncoder(nn.Module):
+    def forward(self, y, **kwargs):
+        return y["main"]
+
+
+def _build_identity_tabular_model_with_mask_mode(mask_mode: str) -> TabularModel:
+    backbone = TransformerBackboneConfig(
+        nhead=1,
+        nhid=4,
+        nlayers=1,
+        layer_kwargs={"item_attention_mask_mode": mask_mode},
+    ).create_backbone(ninp=1, attention_between_features=False)
+    model = TabularModel(
+        transformer_layers=backbone,
+        encoder=IdentityXEncoder(),
+        y_encoder=IdentityYEncoder(),
+        ninp=1,
+        nhid=4,
+        attention_between_features=False,
+        features_per_group=1,
+        batch_first=True,
+    )
+    model.train()
+    return model
+
+
 @pytest.fixture(params=[True, False], ids=["batch_first_True", "batch_first_False"])
 def batch_first_setting(request):
     """Provides True for batch_first=True and False for batch_first=False."""
@@ -696,3 +727,66 @@ def test_transformer_overfit(attention_between_features):
                     print("Successfully overfit the data!")
                     return
     raise Exception("Failed to overfit the data.")
+
+
+def test_comb_mt_keeps_current_target_combination():
+    model = _build_identity_tabular_model_with_mask_mode("Comb_MT")
+    x = torch.tensor([[[1.0], [2.0], [3.0], [4.0]]])
+    y = torch.tensor([[[10.0], [20.0], [30.0], [40.0]]])
+
+    embedded_input, current_context_len, should_interleave, _ = model._build_embedded_input(
+        x,
+        y,
+        single_eval_pos=4,
+        style=None,
+        y_style=None,
+        categorical_inds=None,
+        cache_trainset_representation=False,
+    )
+
+    expected = torch.tensor([[[[11.0]], [[22.0]], [[33.0]], [[44.0]]]])
+    torch.testing.assert_close(embedded_input, expected)
+    assert current_context_len == 4
+    assert should_interleave is False
+
+
+def test_comb_shifted_mt_combines_x_with_previous_target():
+    model = _build_identity_tabular_model_with_mask_mode("Comb_Shifted_MT")
+    x = torch.tensor([[[1.0], [2.0], [3.0], [4.0]]])
+    y = torch.tensor([[[10.0], [20.0], [30.0], [40.0]]])
+
+    embedded_input, current_context_len, should_interleave, _ = model._build_embedded_input(
+        x,
+        y,
+        single_eval_pos=4,
+        style=None,
+        y_style=None,
+        categorical_inds=None,
+        cache_trainset_representation=False,
+    )
+
+    expected = torch.tensor([[[[1.0]], [[12.0]], [[23.0]], [[34.0]]]])
+    torch.testing.assert_close(embedded_input, expected)
+    assert current_context_len == 4
+    assert should_interleave is False
+
+
+def test_comb_shifted_mt_training_does_not_mask_targets_after_eval_pos():
+    model = _build_identity_tabular_model_with_mask_mode("Comb_Shifted_MT")
+    x = torch.tensor([[[1.0], [2.0], [3.0], [4.0]]])
+    y = torch.tensor([[[10.0], [20.0], [30.0], [40.0]]])
+
+    embedded_input, current_context_len, should_interleave, _ = model._build_embedded_input(
+        x,
+        y,
+        single_eval_pos=2,
+        style=None,
+        y_style=None,
+        categorical_inds=None,
+        cache_trainset_representation=False,
+    )
+
+    expected = torch.tensor([[[[1.0]], [[12.0]], [[23.0]], [[34.0]]]])
+    torch.testing.assert_close(embedded_input, expected)
+    assert current_context_len == 2
+    assert should_interleave is False

@@ -56,6 +56,7 @@ def get_config(
         "Int_ST",
         "Comb_MT",
         "Int_MT",
+        "Comb_Shifted_MT",
         None,
     ], f"Invalid masking mode: {masking}"
 

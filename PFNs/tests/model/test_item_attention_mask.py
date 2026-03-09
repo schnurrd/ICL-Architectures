@@ -46,7 +46,10 @@ def test_item_attention_mask_test_to_train_only():
     torch.testing.assert_close(mask, expected)
 
 
-@pytest.mark.parametrize("mode", ["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"])
+@pytest.mark.parametrize(
+    "mode",
+    ["Comb_ST", "Int_ST", "Comb_MT", "Int_MT", "Comb_Shifted_MT"],
+)
 def test_item_attention_mask_builder_rejects_causal_modes(mode: str):
     layer = _build_layer_with_mask_mode(mode)
     with pytest.raises(ValueError, match="Explicit dense masks are only supported"):
@@ -102,3 +105,40 @@ def test_causal_all_remaps_to_causal_train_only_in_eval_with_cache():
         cache_trainset_representation=True,
     )
     torch.testing.assert_close(out_comb_mt_cached, out_comb_st_cached)
+
+
+@torch.inference_mode()
+def test_comb_shifted_mt_remaps_to_causal_train_only_in_eval_with_cache():
+    layer_comb_shifted_mt = _build_layer_with_mask_mode("Comb_Shifted_MT")
+    layer_comb_st = _build_layer_with_mask_mode("Comb_ST")
+    layer_comb_st.load_state_dict(layer_comb_shifted_mt.state_dict())
+    layer_comb_shifted_mt.eval()
+    layer_comb_st.eval()
+
+    state = torch.randn(2, 10, 1, 4)
+    train_len = 6
+
+    out_shifted = layer_comb_shifted_mt(
+        state,
+        single_eval_pos=train_len,
+        cache_trainset_representation=True,
+    )
+    out_comb_st = layer_comb_st(
+        state,
+        single_eval_pos=train_len,
+        cache_trainset_representation=True,
+    )
+    torch.testing.assert_close(out_shifted, out_comb_st)
+
+    test_state = state[:, train_len:]
+    out_shifted_cached = layer_comb_shifted_mt(
+        test_state,
+        single_eval_pos=0,
+        cache_trainset_representation=True,
+    )
+    out_comb_st_cached = layer_comb_st(
+        test_state,
+        single_eval_pos=0,
+        cache_trainset_representation=True,
+    )
+    torch.testing.assert_close(out_shifted_cached, out_comb_st_cached)

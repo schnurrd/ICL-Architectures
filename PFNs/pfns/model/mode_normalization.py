@@ -1,9 +1,19 @@
 from __future__ import annotations
 
-CANONICAL_SEQUENCE_MODES = ("Comb_ST", "Int_ST", "Comb_MT", "Int_MT")
+CANONICAL_SEQUENCE_MODES = (
+    "Comb_ST",
+    "Int_ST",
+    "Comb_MT",
+    "Int_MT",
+    "Comb_Shifted_MT",
+)
 CANONICAL_ITEM_ATTENTION_MASK_MODES = (
     "test_to_train_only",
-    "Comb_ST", "Int_ST", "Comb_MT", "Int_MT",
+    "Comb_ST",
+    "Int_ST",
+    "Comb_MT",
+    "Int_MT",
+    "Comb_Shifted_MT",
 )
 
 SEQUENCE_MODE_ALIASES = {
@@ -12,6 +22,7 @@ SEQUENCE_MODE_ALIASES = {
     "cached_interleaved": "Int_ST",
     "causal": "Comb_MT",
     "teacher_forcing": "Int_MT",
+    "causal_shifted": "Comb_Shifted_MT",
 }
 
 ITEM_ATTENTION_MASK_MODE_ALIASES = {

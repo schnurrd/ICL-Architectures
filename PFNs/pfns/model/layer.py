@@ -87,8 +87,8 @@ class PerFeatureLayer(Module):
             precomputed_kv: Precomputed key-value pairs for attention.
             item_attention_mask_mode:
                 Optional mask mode applied to attention between items.
-                Supported: "test_to_train_only", "Comb_ST", "Int_ST", "Comb_MT", 
-                "Int_MT", "None"
+                Supported: "test_to_train_only", "Comb_ST", "Int_ST", "Comb_MT",
+                "Int_MT", "Comb_Shifted_MT", "None"
             item_attention_use_rope:
                 Whether to apply rotary positional embedding (RoPE) to item attention.
                 This affects only attention between items, not between features.
@@ -112,7 +112,7 @@ class PerFeatureLayer(Module):
             item_attention_mask_mode
         )
         if (
-            item_attention_mask_mode in {"Comb_MT", "Int_MT"}
+            item_attention_mask_mode in {"Comb_MT", "Int_MT", "Comb_Shifted_MT"}
             and multiquery_item_attention_for_test_set
         ):
             raise ValueError(
@@ -273,7 +273,7 @@ class PerFeatureLayer(Module):
         if q_offset != k_offset:
             return False
 
-        if mode in {"Comb_MT", "Int_MT"}:
+        if mode in {"Comb_MT", "Int_MT", "Comb_Shifted_MT"}:
             return True
 
         if mode in {"Comb_ST", "Int_ST"}:
@@ -337,14 +337,16 @@ class PerFeatureLayer(Module):
         effective_mask_mode = self.item_attention_mask_mode
         if (
             not self.training
-            and isinstance(effective_mask_mode, str)
-            and effective_mask_mode.endswith("MT")
+            and effective_mask_mode in {"Comb_MT", "Int_MT", "Comb_Shifted_MT"}
         ):
             # In inference, avoid test-to-test leakage by falling back to the
             # standard train-only causal masking behavior.
-            effective_mask_mode = effective_mask_mode.replace("MT", "ST")
+            effective_mask_mode = "Int_ST" if effective_mask_mode == "Int_MT" else "Comb_ST"
 
-        if effective_mask_mode in {"Comb_MT", "Int_MT"} and cache_trainset_representation:
+        if (
+            effective_mask_mode in {"Comb_MT", "Int_MT", "Comb_Shifted_MT"}
+            and cache_trainset_representation
+        ):
             raise ValueError(
                 f"item_attention_mask_mode='{effective_mask_mode}' is not supported with "
                 "cache_trainset_representation=True. Use a single forward pass "
@@ -406,7 +408,13 @@ class PerFeatureLayer(Module):
                 ):
                     return None, True
 
-                if effective_mask_mode in {"Comb_MT", "Int_MT", "Comb_ST", "Int_ST"}:
+                if effective_mask_mode in {
+                    "Comb_MT",
+                    "Int_MT",
+                    "Comb_Shifted_MT",
+                    "Comb_ST",
+                    "Int_ST",
+                }:
                     if seq_len_kv > 0 and (k_offset + seq_len_kv - 1) <= q_offset:
                         return None, False
                     raise ValueError(
@@ -501,7 +509,11 @@ class PerFeatureLayer(Module):
             attention_src_x = None
             if att_src is not None:
                 attention_src_x = att_src.transpose(1, 2)
-            elif single_eval_pos and effective_mask_mode not in {"Comb_MT", "Int_MT"}:
+            elif single_eval_pos and effective_mask_mode not in {
+                "Comb_MT",
+                "Int_MT",
+                "Comb_Shifted_MT",
+            }:
                 attention_src_x = x[:, :single_eval_pos].transpose(1, 2)
 
             seq_len_q = x.shape[1]

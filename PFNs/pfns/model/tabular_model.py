@@ -621,10 +621,35 @@ class TabularModel(nn.Module):
 
         # Making sure no label leakage ever happens for y["main"] (batch-first indexing)
         # current_context_len is the length of the training data part
+        sequence_mode = getattr(self.transformer_layers, "sequence_mode", None)
+        if not isinstance(sequence_mode, str):
+            layers = None
+            if isinstance(self.transformer_layers, LayerStack):
+                layers = self.transformer_layers.layers
+            else:
+                layer_stack = getattr(self.transformer_layers, "layer_stack", None)
+                if layer_stack is not None:
+                    layers = getattr(layer_stack, "layers", None)
+                if layers is None:
+                    layers = getattr(self.transformer_layers, "layers", None)
+            if isinstance(layers, (nn.ModuleList, list, tuple)):
+                mask_modes = {
+                    getattr(layer, "item_attention_mask_mode", None)
+                    for layer in layers
+                    if isinstance(layer, PerFeatureLayer)
+                }
+                if len(mask_modes) == 1:
+                    (mask_mode,) = tuple(mask_modes)
+                    if isinstance(mask_mode, str):
+                        sequence_mode = mask_mode
+
+        int_mt_mode = sequence_mode == "Int_MT"
+        comb_shifted_mt_mode = sequence_mode == "Comb_Shifted_MT"
+
         if "main" in y and y["main"].shape[1] > current_context_len:
             if not (
-                (getattr(self.transformer_layers, "sequence_mode", None) == "Int_MT"
-                and self.transformer_layers.training)
+                (int_mt_mode and self.transformer_layers.training)
+                or (comb_shifted_mt_mode and self.transformer_layers.training)
             ):
                 y["main"][:, current_context_len:] = torch.nan
 
@@ -677,9 +702,7 @@ class TabularModel(nn.Module):
             use_cached_embeddings=(cache_trainset_representation and single_eval_pos is None),
         )
 
-        Int_MT_mode = (
-            getattr(self.transformer_layers, "sequence_mode", None) == "Int_MT"
-        )
+        Int_MT_mode = int_mt_mode
         should_interleave = Int_MT_mode or self.interleave_x_y_pairs
 
         if should_interleave and self.attention_between_features:
@@ -716,9 +739,14 @@ class TabularModel(nn.Module):
                     )
                 current_context_len *= 2  # Each x token is followed by a y token
             else:
-                # add them together in this case, like for the original PFNs
-                # b s 1 e + b s 1 e -> b s 1 e
-                embedded_input = embedded_x + embedded_y.unsqueeze(2)
+                if comb_shifted_mt_mode:
+                    shifted_embedded_y = torch.zeros_like(embedded_y)
+                    shifted_embedded_y[:, 1:] = embedded_y[:, :-1]
+                    embedded_input = embedded_x + shifted_embedded_y.unsqueeze(2)
+                else:
+                    # add them together in this case, like for the original PFNs
+                    # b s 1 e + b s 1 e -> b s 1 e
+                    embedded_input = embedded_x + embedded_y.unsqueeze(2)
 
         if style is not None:
             embedded_style = self.style_encoder(
