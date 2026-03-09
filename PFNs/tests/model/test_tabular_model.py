@@ -31,6 +31,11 @@ class IdentityYEncoder(nn.Module):
         return y["main"]
 
 
+class NanSafeIdentityYEncoder(nn.Module):
+    def forward(self, y, **kwargs):
+        return torch.nan_to_num(y["main"], nan=0.0)
+
+
 def _build_identity_tabular_model_with_mask_mode(mask_mode: str) -> TabularModel:
     backbone = TransformerBackboneConfig(
         nhead=1,
@@ -348,6 +353,41 @@ def test_cache_trainset_representation(sample_data):
     )
 
     assert torch.allclose(output1, output3, atol=1e-7)  # Should be deterministic
+
+
+@torch.inference_mode()
+def test_comb_shifted_mt_cache_trainset_representation_matches_single_pass():
+    torch.manual_seed(0)
+    num_features = 3
+    backbone = TransformerBackboneConfig(
+        nhead=2,
+        nhid=64,
+        nlayers=2,
+        layer_kwargs={"item_attention_mask_mode": "Comb_Shifted_MT"},
+    ).create_backbone(ninp=32, attention_between_features=False)
+    transformer_model = TabularModel(
+        transformer_layers=backbone,
+        ninp=32,
+        nhid=64,
+        cache_trainset_representation=True,
+        batch_first=True,
+        attention_between_features=False,
+        features_per_group=num_features,
+    )
+    transformer_model.eval()
+
+    train_x = torch.randn(2, 8, num_features)
+    train_y = torch.randn(2, 8, 1)
+    test_x = torch.randn(2, 5, num_features)
+
+    output_single_pass = transformer_model(
+        x=train_x,
+        y=train_y,
+        test_x=test_x,
+    )
+    output_cached = transformer_model(x=None, y=None, test_x=test_x)
+
+    torch.testing.assert_close(output_single_pass, output_cached, atol=1e-7, rtol=1e-6)
 
 
 def test_decoder_dict(sample_data):
@@ -789,4 +829,62 @@ def test_comb_shifted_mt_training_does_not_mask_targets_after_eval_pos():
     expected = torch.tensor([[[[1.0]], [[12.0]], [[23.0]], [[34.0]]]])
     torch.testing.assert_close(embedded_input, expected)
     assert current_context_len == 2
+    assert should_interleave is False
+
+
+def test_comb_shifted_mt_eval_reuses_last_train_y_for_all_test_tokens():
+    model = _build_identity_tabular_model_with_mask_mode("Comb_Shifted_MT")
+    model.y_encoder = NanSafeIdentityYEncoder()
+    model.eval()
+    x = torch.tensor([[[1.0], [2.0], [3.0], [4.0]]])
+    y = torch.tensor([[[10.0], [20.0], [30.0], [40.0]]])
+
+    embedded_input, current_context_len, should_interleave, _ = model._build_embedded_input(
+        x,
+        y,
+        single_eval_pos=2,
+        style=None,
+        y_style=None,
+        categorical_inds=None,
+        cache_trainset_representation=False,
+    )
+
+    expected = torch.tensor([[[[1.0]], [[12.0]], [[23.0]], [[24.0]]]])
+    torch.testing.assert_close(embedded_input, expected)
+    assert current_context_len == 2
+    assert should_interleave is False
+
+
+def test_comb_shifted_mt_cached_eval_reuses_last_train_y_for_all_test_tokens():
+    model = _build_identity_tabular_model_with_mask_mode("Comb_Shifted_MT")
+    model.y_encoder = NanSafeIdentityYEncoder()
+    model.eval()
+
+    train_x = torch.tensor([[[1.0], [2.0]]])
+    train_y = torch.tensor([[[10.0], [20.0]]])
+    test_x = torch.tensor([[[3.0], [4.0]]])
+
+    model._build_embedded_input(
+        train_x,
+        train_y,
+        single_eval_pos=2,
+        style=None,
+        y_style=None,
+        categorical_inds=None,
+        cache_trainset_representation=True,
+    )
+
+    embedded_input, current_context_len, should_interleave, _ = model._build_embedded_input(
+        test_x,
+        None,
+        single_eval_pos=None,
+        style=None,
+        y_style=None,
+        categorical_inds=None,
+        cache_trainset_representation=True,
+    )
+
+    expected = torch.tensor([[[[23.0]], [[24.0]]]])
+    torch.testing.assert_close(embedded_input, expected)
+    assert current_context_len == 0
     assert should_interleave is False

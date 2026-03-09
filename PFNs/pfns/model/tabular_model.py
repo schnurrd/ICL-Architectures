@@ -162,6 +162,7 @@ class TabularModel(nn.Module):
         self.features_per_group = features_per_group
         self.cache_trainset_representation = cache_trainset_representation
         self.cached_embeddings: torch.Tensor | None = None
+        self.cached_last_train_y_embedding: torch.Tensor | None = None
         self.attention_between_features = attention_between_features
         self.batch_first = batch_first
         self.interleave_x_y_pairs = interleave_x_y_pairs
@@ -701,6 +702,12 @@ class TabularModel(nn.Module):
             cache_embeddings=(cache_trainset_representation and single_eval_pos is not None),
             use_cached_embeddings=(cache_trainset_representation and single_eval_pos is None),
         )
+        if cache_trainset_representation and single_eval_pos is not None:
+            self.cached_last_train_y_embedding = (
+                embedded_y[:, current_context_len - 1].detach()
+                if current_context_len > 0
+                else None
+            )
 
         Int_MT_mode = int_mt_mode
         should_interleave = Int_MT_mode or self.interleave_x_y_pairs
@@ -741,7 +748,36 @@ class TabularModel(nn.Module):
             else:
                 if comb_shifted_mt_mode:
                     shifted_embedded_y = torch.zeros_like(embedded_y)
-                    shifted_embedded_y[:, 1:] = embedded_y[:, :-1]
+                    if self.transformer_layers.training:
+                        shifted_embedded_y[:, 1:] = embedded_y[:, :-1]
+                    else:
+                        if current_context_len > 0:
+                            shifted_embedded_y[:, 1:current_context_len] = embedded_y[
+                                :, : current_context_len - 1
+                            ]
+
+                        last_train_y_embedding = None
+                        if current_context_len > 0:
+                            last_train_y_embedding = embedded_y[:, current_context_len - 1]
+                        elif (
+                            cache_trainset_representation
+                            and single_eval_pos is None
+                            and self.cached_last_train_y_embedding is not None
+                        ):
+                            last_train_y_embedding = self.cached_last_train_y_embedding.to(
+                                device=embedded_y.device,
+                                dtype=embedded_y.dtype,
+                            )
+
+                        if (
+                            last_train_y_embedding is not None
+                            and shifted_embedded_y.shape[1] > current_context_len
+                        ):
+                            shifted_embedded_y[:, current_context_len:] = (
+                                last_train_y_embedding.unsqueeze(1)
+                            )
+                        elif shifted_embedded_y.shape[1] > 0:
+                            shifted_embedded_y[:, 1:] = embedded_y[:, :-1]
                     embedded_input = embedded_x + shifted_embedded_y.unsqueeze(2)
                 else:
                     # add them together in this case, like for the original PFNs
@@ -983,6 +1019,7 @@ class TabularModel(nn.Module):
         return x, y
 
     def empty_trainset_representation_cache(self) -> None:
+        self.cached_last_train_y_embedding = None
         for layer in self.transformer_layers.layers:
             layer.empty_trainset_representation_cache()
 
