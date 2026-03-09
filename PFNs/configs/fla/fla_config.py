@@ -235,6 +235,7 @@ def get_config(
     finetune_lr: float | None = None,
     finetune_warmup_epochs: int = 2,
     finetune_uniform_seq_len_min: int = 1000,
+    finetune_single_eval_pos_tail_window: int = 1000,
     # Model options
     cache_chunk_size: int | None = None,
     deltanet_state_reg_weight: float = 0.0,
@@ -315,6 +316,7 @@ def get_config(
         else None
     )
     resolved_uniform_seq_len_min: int | None = None
+    resolved_single_eval_pos_tail_window: int | None = None
     resolved_dynamic_batch_size_power = int(dynamic_batch_size_power)
     resolved_dynamic_batch_size_compensate_grad_accumulation = bool(
         dynamic_batch_size_compensate_grad_accumulation
@@ -378,6 +380,9 @@ def get_config(
             resolved_seq_len_choice_weights = None
         else:
             resolved_uniform_seq_len_min = None
+        resolved_single_eval_pos_tail_window = int(
+            finetune_single_eval_pos_tail_window
+        )
         resolved_seq_len_curriculum_start = None
         resolved_seq_len_curriculum_warmup_epochs = 0
         resolved_seq_len_choice_weight_exponent = None
@@ -411,6 +416,7 @@ def get_config(
         seq_len_choices=resolved_seq_len_choices,
         seq_len_choice_weights=resolved_seq_len_choice_weights,
         uniform_seq_len_min=resolved_uniform_seq_len_min,
+        single_eval_pos_tail_window=resolved_single_eval_pos_tail_window,
         seq_len_curriculum_start=resolved_seq_len_curriculum_start,
         seq_len_curriculum_warmup_epochs=resolved_seq_len_curriculum_warmup_epochs,
         seq_len_choice_weight_exponent=resolved_seq_len_choice_weight_exponent,

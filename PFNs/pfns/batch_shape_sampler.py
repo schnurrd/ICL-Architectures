@@ -32,6 +32,7 @@ class BatchShape:
 class BatchShapeSamplerConfig(BaseConfig):
     batch_size: int = 32
     min_single_eval_pos: int = 0
+    single_eval_pos_tail_window: Optional[int] = None
     max_seq_len: int = 1000
     min_num_features: int = 1
     max_num_features: int = 16
@@ -77,6 +78,11 @@ class BatchShapeSamplerConfig(BaseConfig):
             if self.uniform_seq_len_min is not None
             else None
         )
+        single_eval_pos_tail_window = (
+            int(self.single_eval_pos_tail_window)
+            if self.single_eval_pos_tail_window is not None
+            else None
+        )
         dynamic_batch_size_power = int(self.dynamic_batch_size_power)
         dynamic_batch_size_compensate_grad_accumulation = bool(
             self.dynamic_batch_size_compensate_grad_accumulation
@@ -85,6 +91,9 @@ class BatchShapeSamplerConfig(BaseConfig):
         assert max_seq_len >= 2, "max_seq_len must be >= 2."
         assert self.batch_size >= 1, "batch_size must be >= 1."
         assert self.min_single_eval_pos >= 0, "min_single_eval_pos must be >= 0."
+        assert single_eval_pos_tail_window is None or single_eval_pos_tail_window >= 1, (
+            "single_eval_pos_tail_window must be >= 1 when set."
+        )
         assert (
             self.fixed_num_test_instances is None or self.fixed_num_test_instances >= 0
         ), "fixed_num_test_instances must be >= 0 when set."
@@ -124,6 +133,7 @@ class BatchShapeSamplerConfig(BaseConfig):
             ("seq_len_choices", choices),
             ("seq_len_choice_weights", weights),
             ("uniform_seq_len_min", uniform_seq_len_min),
+            ("single_eval_pos_tail_window", single_eval_pos_tail_window),
             ("seq_len_curriculum_start", curriculum_start),
             ("seq_len_curriculum_warmup_epochs", warmup_epochs),
             ("seq_len_choice_weight_exponent", choice_weight_exponent),
@@ -254,14 +264,22 @@ class BatchShapeSamplerConfig(BaseConfig):
                 f"Got seq_len={seq_len_cap}, fixed_num_test_instances={self.fixed_num_test_instances}."
             )
         configured_min_single_eval_pos = int(self.min_single_eval_pos)
-        if configured_min_single_eval_pos > max_single_eval_pos:
+        min_single_eval_pos = configured_min_single_eval_pos
+        if self.single_eval_pos_tail_window is not None:
+            min_single_eval_pos = max(
+                min_single_eval_pos,
+                max_single_eval_pos - self.single_eval_pos_tail_window + 1,
+            )
+
+        if min_single_eval_pos > max_single_eval_pos:
             raise ValueError(
-                "Configured min_single_eval_pos exceeds the maximum allowed single_eval_pos. "
-                f"Got min_single_eval_pos={configured_min_single_eval_pos}, "
+                "Configured single_eval_pos bounds exceed the maximum allowed single_eval_pos. "
+                f"Got configured_min_single_eval_pos={configured_min_single_eval_pos}, "
+                f"single_eval_pos_tail_window={self.single_eval_pos_tail_window}, "
+                f"effective_min_single_eval_pos={min_single_eval_pos}, "
                 f"max_single_eval_pos={max_single_eval_pos}, seq_len_cap={seq_len_cap}, "
                 f"fixed_num_test_instances={self.fixed_num_test_instances}."
             )
-        min_single_eval_pos = configured_min_single_eval_pos
         single_eval_pos = rng.randint(min_single_eval_pos, max_single_eval_pos)
 
         seq_len = seq_len_cap
