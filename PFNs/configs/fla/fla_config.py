@@ -475,13 +475,16 @@ def get_config(
     )
     if is_associative_recall:
         wandb_name += "_ar"
+    if finetune_from_checkpoint is not None:
+        wandb_project = "finetuning"
+    elif is_associative_recall:
+        wandb_project = ASSOCIATIVE_RECALL_SETTINGS["wandb_project"]
+    else:
+        wandb_project = "fla_models"
+
     wandb_config = WandbConfig(
         entity="icl_arch",
-        project=(
-            ASSOCIATIVE_RECALL_SETTINGS["wandb_project"]
-            if is_associative_recall
-            else "fla_models"
-        ),
+        project=wandb_project,
         name=wandb_name,
         tags=[
             "matched_high_config",

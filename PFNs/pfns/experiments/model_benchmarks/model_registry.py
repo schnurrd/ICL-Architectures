@@ -228,19 +228,16 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
 }
 
 DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
-    "DeltaNet_Comb_ST_Finetuned_16K": {
-        "display_name": "DeltaNet Finetuned 10 ep 16K seq len",
-        "wandb_run_id": "fla_models/runs/s2top3cx",
+    "DeltaNet_Comb_ST_Finetuned_64K_1_e-5_new": {
+        "wandb_run_id": "icl_arch/fla_models/leaywm94",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_Finetuned_40K": {
-        "display_name": "DeltaNet Finetuned 10 ep 40K seq len", 
-        "wandb_run_id": "fla_models/runs/2wjxn5ge",
+    "DeltaNet_Comb_ST_Finetuned_64K_5_e-6_new": {
+        "wandb_run_id": "icl_arch/fla_models/zmvzjsep",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_Finetuned_64K": {
-        "display_name": "DeltaNet Finetuned 6 ep 64K seq len",
-        "wandb_run_id": "fla_models/runs/xnbyqyr1",
+    "DeltaNet_Comb_ST_Finetuned_50K_5_e-6_new_lognormal_5ep": {
+        "wandb_run_id": "icl_arch/fla_models/b48ylhbw",
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Reference": {
