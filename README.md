@@ -162,9 +162,12 @@ python PFNs/pfns/run_evaluation_cli.py \
 wandb is configured via `MainConfig.wandb`. The CLI only toggles logging via `--wandb` / `--no-wandb`.
 For restricted environments, set `mode="offline"` in the config file (or `WANDB_MODE=offline`) and sync later with `wandb sync`.
 
-## Configuration Files  
+## Configuration Files
 
-The Python configuration file must define a `config`or a `get_config(config_index: int = 0)` function, which when called returns a `MainConfig` object. An example configuration file can be found at `PFNs/tabpfn_prior_config.py`.
+The Python configuration file must define either a `config` variable or a
+`get_config(config_index: int = 0)` function, which when called returns a
+`MainConfig` object. An example configuration file can be found at
+`PFNs/tabpfn_prior_config.py`.
 
 ## Curriculum Learning Parameters
 
@@ -174,16 +177,25 @@ From the CLI, pass these through `--config-arg KEY=VALUE`.
 ### Sequence-length stages
 
 - `max_seq_len` (default: `1000`): Upper bound for sampled sequence length.
-- `seq_len_stages` (default: `None`): Optional staged caps by epoch. Entries are applied in order, then fallback to `max_seq_len`.
+- `seq_len_stages` (default: `None`): Optional staged sequence-length settings by epoch.
+  Entries are applied in order, then fallback to `max_seq_len`.
+  Supported formats:
   - `(end_epoch, stage_max_seq_len)`
-  - `(end_epoch, stage_max_seq_len, eval_pos_split_pct)`
   - `(end_epoch, stage_max_seq_len, eval_pos_split_pct_min, eval_pos_split_pct_max)`
+  - `(end_epoch, stage_min_seq_len, stage_max_seq_len, seq_len_distribution)`
+  - `(end_epoch, stage_min_seq_len, stage_max_seq_len, seq_len_distribution, eval_pos_split_pct_min, eval_pos_split_pct_max)`
+  Where `seq_len_distribution` is one of:
+  - `uniform`: sample integer sequence length uniformly in `[min_seq_len, max_seq_len]`.
+  - `log_uniform`: sample sequence length log-uniformly in `[min_seq_len, max_seq_len]`.
 
 Examples:
 - `--config-arg seq_len_stages='[(5, 2048), (20, 8192), (60, 16000)]'`
-- `--config-arg seq_len_stages='[(10, 4000, 80), (30, 12000, 30, 90)]'`
+- `--config-arg seq_len_stages='[(10, 4000, 80, 80), (30, 12000, 30, 90)]'`
   - First stage: fixed eval split at 80%.
   - Second stage: eval split sampled from 30%-90%.
+- `--config-arg seq_len_stages='[(150, 1000, 5000, "uniform"), (200, 5000, 64000, "log_uniform")]'`
+  - First stage: sample seq len uniformly from 1k to 5k.
+  - Second stage: sample seq len log-uniformly from 5k to 64k.
 
 ### Eval-position split (global)
 

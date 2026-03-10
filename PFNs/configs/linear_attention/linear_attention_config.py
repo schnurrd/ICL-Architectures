@@ -78,7 +78,7 @@ def get_config(
     batch_size_stages: list[tuple[int, int]] | tuple[tuple[int, int], ...] | None = None,
     dynamic_batch_size_compensate_grad_accumulation: bool = False,
     eval_pos_split_pct: float | tuple[float, float] | list[float] | None = None,
-    seq_len_stages: list[tuple[int | float, ...]] | tuple[tuple[int | float, ...], ...] | None = None,
+    seq_len_stages: list[tuple[int | float | str, ...]] | tuple[tuple[int | float | str, ...], ...] | None = None,
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
