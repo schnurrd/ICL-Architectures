@@ -150,10 +150,19 @@ class BatchShapeSamplerConfig(BaseConfig):
 
     @staticmethod
     def _normalize_seq_len_distribution(distribution: str) -> str:
-        normalized = distribution.strip().lower().replace("-", "_").replace(" ", "_")
-        if normalized not in {"uniform", "log_uniform"}:
+        normalized = (
+            distribution.strip()
+            .strip(" \t\r\n'\",")
+            .lower()
+            .replace("-", "_")
+            .replace(" ", "_")
+        )
+        if normalized == "loguniform":
+            normalized = "log_uniform"
+        if normalized not in {"fixed", "uniform", "log_uniform"}:
             raise ValueError(
-                "seq_len_distribution must be one of ['uniform', 'log_uniform']."
+                "seq_len_distribution must be one of ['fixed', 'uniform', 'log_uniform']. "
+                f"Got raw={distribution!r}, normalized={normalized!r}."
             )
         return normalized
 
@@ -441,7 +450,7 @@ class BatchShapeSamplerConfig(BaseConfig):
 
         min_single_eval_pos = self.min_single_eval_pos
         if eval_pct_min is not None and eval_pct_max is not None:
-            eval_min = int(math.ceil(float(seq_len_cap) * (eval_pct_min / 100.0)))
+            eval_min = int(math.floor(float(seq_len_cap) * (eval_pct_min / 100.0)))
             eval_max = int(math.floor(float(seq_len_cap) * (eval_pct_max / 100.0)))
             min_single_eval_pos = max(min_single_eval_pos, eval_min)
             max_single_eval_pos = min(max_single_eval_pos, eval_max)

@@ -79,7 +79,7 @@ def test_stage_eval_pos_split_overrides_global_range():
     sampled_stage_2 = [cfg.sample_batch_shape(epoch=3, step=step) for step in range(100)]
     for shape in sampled_stage_2:
         assert 100 <= shape.seq_len <= 300
-        assert math.ceil(shape.seq_len * 0.3) <= shape.single_eval_pos <= math.floor(
+        assert math.floor(shape.seq_len * 0.3) <= shape.single_eval_pos <= math.floor(
             shape.seq_len * 0.35
         )
 
