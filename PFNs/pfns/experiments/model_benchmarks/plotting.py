@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
+
+import math
 
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
@@ -73,6 +75,7 @@ def plot_curves_from_df(
     log_x: bool = False,
     log_y: bool = False,
     invert_y: bool = False,
+    model_legend_layout: Literal["bottom", "right"] = "bottom",
     figsize: tuple[float, float] | None = None,
     dpi: int = 400,
 ):
@@ -80,6 +83,8 @@ def plot_curves_from_df(
     if df.empty:
         print("No data to plot.")
         return None, None
+    if model_legend_layout not in {"bottom", "right"}:
+        raise ValueError("model_legend_layout must be 'bottom' or 'right'.")
 
     display_name_map = resolve_display_name_map(df)
     sns.set_theme(style="whitegrid", font_scale=1.2)
@@ -106,7 +111,6 @@ def plot_curves_from_df(
     boundary_linestyle = "--"
     metric_keys = {metric_key for metric_key, _ in specs}
     show_split = bool(metric_keys.intersection({"acc", "ce", "roc_auc"}))
-    legend_model_count = 0
 
     for idx, (metric_key, metric_name) in enumerate(specs):
         ax = axes[idx]
@@ -114,8 +118,6 @@ def plot_curves_from_df(
         present_models = subset_metric["model"].astype(str).unique().tolist()
         model_names = [name for name in style_map if name in present_models]
         model_names.extend(name for name in present_models if name not in model_names)
-        if idx == 0:
-            legend_model_count = len(model_names)
         pretrain_boundary = float(pretrain_max_x)
         x_values = subset_metric[x_col].to_numpy(dtype=np.float64, copy=False)
         finite_x_values = x_values[np.isfinite(x_values)]
@@ -237,14 +239,37 @@ def plot_curves_from_df(
         )
         axes[0].add_artist(range_legend)
 
-    axes[0].legend(
-        fontsize=11,
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        ncol=1,
-        borderaxespad=0.0,
-        alignment="left",
-    )
+    legend_handles, legend_labels = axes[0].get_legend_handles_labels()
+    legend_model_count = len(legend_labels)
+    if legend_model_count > 0:
+        if model_legend_layout == "right":
+            fig.subplots_adjust(right=0.82)
+            axes[0].legend(
+                legend_handles,
+                legend_labels,
+                fontsize=11,
+                loc="center left",
+                bbox_to_anchor=(1.02, 0.5),
+                ncol=1,
+                borderaxespad=0.0,
+                alignment="left",
+            )
+        else:
+            legend_cols = min(max(1, legend_model_count), 4)
+            legend_rows = max(1, math.ceil(legend_model_count / legend_cols))
+            # Reserve enough room for x-labels + legend while keeping the legend close to the axes.
+            bottom_margin = min(0.42, 0.14 + 0.055 * legend_rows)
+            fig.subplots_adjust(bottom=bottom_margin)
+            fig.legend(
+                legend_handles,
+                legend_labels,
+                fontsize=11,
+                loc="lower center",
+                bbox_to_anchor=(0.5, 0.03),
+                ncol=legend_cols,
+                borderaxespad=0.0,
+                alignment="center",
+            )
     for i in range(1, len(specs)):
         if axes[i].get_legend():
             axes[i].get_legend().remove()

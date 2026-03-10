@@ -46,6 +46,8 @@ def resolve_prior_device(
     max_seq_len: int,
     cuda_seq_len_threshold: int = 2000,
 ) -> str:
-    if torch.cuda.is_available() and max_seq_len > int(cuda_seq_len_threshold):
-        return "cuda"
-    return "cpu"
+    # if torch.cuda.is_available() and max_seq_len > int(cuda_seq_len_threshold):
+    #     return "cuda"
+    # return "cpu"
+    return "cpu" # current tests with the updated prior suggest cpu is even better for long sequences (tested up to 32K)
+
