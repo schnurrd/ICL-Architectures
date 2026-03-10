@@ -44,8 +44,9 @@ class BatchShapeSamplerConfig(BaseConfig):
     seq_len_stages: Optional[
         Sequence[
             tuple[int, int]
-            | tuple[int, int, float]
             | tuple[int, int, float, float]
+            | tuple[int, int, int, str]
+            | tuple[int, int, int, str, float, float]
         ]
     ] = None
 
@@ -147,20 +148,31 @@ class BatchShapeSamplerConfig(BaseConfig):
             parsed_batch_size_stages.append((stage_seq_len_threshold, stage_batch_size))
         return tuple(parsed_batch_size_stages)
 
+    @staticmethod
+    def _normalize_seq_len_distribution(distribution: str) -> str:
+        normalized = distribution.strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized not in {"uniform", "log_uniform"}:
+            raise ValueError(
+                "seq_len_distribution must be one of ['uniform', 'log_uniform']."
+            )
+        return normalized
+
     def _resolve_seq_len_stages(
         self,
         max_seq_len: int,
-    ) -> tuple[tuple[int, int, float | None, float | None], ...] | None:
+    ) -> tuple[tuple[int, int, int, str, float | None, float | None], ...] | None:
         """validates and normalizes seq_len_stages
         """
         if self.seq_len_stages is None:
             return None
 
-        parsed_stages: list[tuple[int, int, float | None, float | None]] = []
+        parsed_stages: list[tuple[int, int, int, str, float | None, float | None]] = []
         for stage_index, stage in enumerate(self.seq_len_stages):
             (
                 end_epoch,
+                stage_min_seq_len,
                 stage_max_seq_len,
+                stage_seq_len_distribution,
                 stage_pct_min,
                 stage_pct_max,
             ) = self._parse_seq_len_stage(stage=stage, stage_index=stage_index)
@@ -170,10 +182,20 @@ class BatchShapeSamplerConfig(BaseConfig):
                     "seq_len_stages end_epoch values must be >= 1. "
                     f"Got {end_epoch} at index {stage_index}."
                 )
+            if stage_min_seq_len < 2:
+                raise ValueError(
+                    "seq_len_stages min_seq_len values must be >= 2. "
+                    f"Got {stage_min_seq_len} at index {stage_index}."
+                )
             if stage_max_seq_len < 2:
                 raise ValueError(
                     "seq_len_stages max_seq_len_cap values must be >= 2. "
                     f"Got {stage_max_seq_len} at index {stage_index}."
+                )
+            if stage_min_seq_len > stage_max_seq_len:
+                raise ValueError(
+                    "seq_len_stages min_seq_len must be <= max_seq_len_cap. "
+                    f"Got {stage_min_seq_len} > {stage_max_seq_len} at index {stage_index}."
                 )
             if stage_max_seq_len > max_seq_len:
                 raise ValueError(
@@ -185,49 +207,93 @@ class BatchShapeSamplerConfig(BaseConfig):
                     "seq_len_stages end_epoch values must be strictly increasing."
                 )
             parsed_stages.append(
-                (end_epoch, stage_max_seq_len, stage_pct_min, stage_pct_max)
+                (
+                    end_epoch,
+                    stage_min_seq_len,
+                    stage_max_seq_len,
+                    stage_seq_len_distribution,
+                    stage_pct_min,
+                    stage_pct_max,
+                )
             )
         return tuple(parsed_stages)
 
     def _parse_seq_len_stage(
         self,
         *,
-        stage: tuple[int, int]
-        | tuple[int, int, float]
-        | tuple[int, int, float, float],
+        stage: (
+            tuple[int, int]
+            | tuple[int, int, float, float]
+            | tuple[int, int, int, str]
+            | tuple[int, int, int, str, float, float]
+        ),
         stage_index: int,
-    ) -> tuple[int, int, float | None, float | None]:
+    ) -> tuple[int, int, int, str, float | None, float | None]:
         stage_len = len(stage)
         if stage_len == 2:
             end_epoch_raw, stage_max_seq_len_raw = stage
+            stage_min_seq_len_raw = stage_max_seq_len_raw
+            stage_seq_len_distribution = "fixed"
             stage_pct_min_raw, stage_pct_max_raw = None, None
-        elif stage_len == 3:
-            end_epoch_raw, stage_max_seq_len_raw, stage_pct_raw = stage
-            stage_pct_min_raw, stage_pct_max_raw = stage_pct_raw, stage_pct_raw
         elif stage_len == 4:
+            if isinstance(stage[3], str):
+                (
+                    end_epoch_raw,
+                    stage_min_seq_len_raw,
+                    stage_max_seq_len_raw,
+                    stage_seq_len_distribution_raw,
+                ) = stage
+                stage_seq_len_distribution = self._normalize_seq_len_distribution(
+                    stage_seq_len_distribution_raw
+                )
+                stage_pct_min_raw, stage_pct_max_raw = None, None
+            else:
+                (
+                    end_epoch_raw,
+                    stage_max_seq_len_raw,
+                    stage_pct_min_raw,
+                    stage_pct_max_raw,
+                ) = stage
+                stage_min_seq_len_raw = stage_max_seq_len_raw
+                stage_seq_len_distribution = "fixed"
+        elif stage_len == 6:
             (
                 end_epoch_raw,
+                stage_min_seq_len_raw,
                 stage_max_seq_len_raw,
+                stage_seq_len_distribution_raw,
                 stage_pct_min_raw,
                 stage_pct_max_raw,
             ) = stage
+            stage_seq_len_distribution = self._normalize_seq_len_distribution(
+                stage_seq_len_distribution_raw
+            )
         else:
             raise ValueError(
                 "Each seq_len_stages entry must be one of: "
                 "(end_epoch, max_seq_len), "
-                "(end_epoch, max_seq_len, eval_pos_split_pct), or "
-                "(end_epoch, max_seq_len, eval_pos_split_pct_min, eval_pos_split_pct_max). "
+                "(end_epoch, max_seq_len, eval_pos_split_pct_min, eval_pos_split_pct_max), "
+                "(end_epoch, min_seq_len, max_seq_len, seq_len_distribution), "
+                "(end_epoch, min_seq_len, max_seq_len, seq_len_distribution, eval_pos_split_pct_min, eval_pos_split_pct_max). "
                 f"Invalid entry at index {stage_index}: {stage!r}"
             )
 
         end_epoch = int(end_epoch_raw)
+        stage_min_seq_len = int(stage_min_seq_len_raw)
         stage_max_seq_len = int(stage_max_seq_len_raw)
         stage_pct_min, stage_pct_max = self._normalize_eval_pos_pct_range(
             stage_pct_min_raw,
             stage_pct_max_raw,
             source=f"seq_len_stages[{stage_index}] eval_pos_split_pct range",
         )
-        return end_epoch, stage_max_seq_len, stage_pct_min, stage_pct_max
+        return (
+            end_epoch,
+            stage_min_seq_len,
+            stage_max_seq_len,
+            stage_seq_len_distribution,
+            stage_pct_min,
+            stage_pct_max,
+        )
 
     @staticmethod
     def _normalize_eval_pos_pct_range(
@@ -257,31 +323,70 @@ class BatchShapeSamplerConfig(BaseConfig):
 
     def _effective_stage_settings(
         self, epoch: int
-    ) -> tuple[int, float | None, float | None]:
+    ) -> tuple[int, int, str, float | None, float | None]:
         if not self.seq_len_stages:
             return (
                 self.max_seq_len,
+                self.max_seq_len,
+                "fixed",
                 self.eval_pos_split_pct_min,
                 self.eval_pos_split_pct_max,
             )
         for (
             end_epoch,
+            stage_min_seq_len,
             stage_max_seq_len,
+            stage_seq_len_distribution,
             stage_eval_pct_min,
             stage_eval_pct_max,
         ) in self.seq_len_stages:
             if epoch <= end_epoch:
                 if stage_eval_pct_min is not None or stage_eval_pct_max is not None:
-                    return stage_max_seq_len, stage_eval_pct_min, stage_eval_pct_max
+                    return (
+                        stage_min_seq_len,
+                        stage_max_seq_len,
+                        stage_seq_len_distribution,
+                        stage_eval_pct_min,
+                        stage_eval_pct_max,
+                    )
                 return (
+                    stage_min_seq_len,
                     stage_max_seq_len,
+                    stage_seq_len_distribution,
                     self.eval_pos_split_pct_min,
                     self.eval_pos_split_pct_max,
                 )
         return (
             self.max_seq_len,
+            self.max_seq_len,
+            "fixed",
             self.eval_pos_split_pct_min,
             self.eval_pos_split_pct_max,
+        )
+
+    @staticmethod
+    def _sample_seq_len(
+        *,
+        rng: random.Random,
+        min_seq_len: int,
+        max_seq_len: int,
+        seq_len_distribution: str,
+    ) -> int:
+        if min_seq_len == max_seq_len or seq_len_distribution == "fixed":
+            return max_seq_len
+        if seq_len_distribution == "uniform":
+            return rng.randint(min_seq_len, max_seq_len)
+        if seq_len_distribution == "log_uniform":
+            sampled = int(
+                round(
+                    math.exp(
+                        rng.uniform(math.log(float(min_seq_len)), math.log(float(max_seq_len)))
+                    )
+                )
+            )
+            return max(min_seq_len, min(max_seq_len, sampled))
+        raise ValueError(
+            f"Unsupported seq_len_distribution {seq_len_distribution!r}; this should have been validated earlier."
         )
 
     def _dynamic_batch_size(self, seq_len: int) -> int:
@@ -306,7 +411,19 @@ class BatchShapeSamplerConfig(BaseConfig):
         # it seems to be beneficial to oversample small numbers of features
         num_features = rng.randint(self.min_num_features, self.max_num_features)
 
-        seq_len_cap, eval_pct_min, eval_pct_max = self._effective_stage_settings(epoch)
+        (
+            stage_min_seq_len,
+            stage_max_seq_len,
+            stage_seq_len_distribution,
+            eval_pct_min,
+            eval_pct_max,
+        ) = self._effective_stage_settings(epoch)
+        seq_len_cap = self._sample_seq_len(
+            rng=rng,
+            min_seq_len=stage_min_seq_len,
+            max_seq_len=stage_max_seq_len,
+            seq_len_distribution=stage_seq_len_distribution,
+        )
         max_single_eval_pos = (
             seq_len_cap
             - 1
