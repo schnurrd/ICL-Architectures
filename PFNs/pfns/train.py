@@ -740,10 +740,22 @@ def train_or_evaluate_epoch(
 
         if logger and training and (batch_index % log_every_n_steps == 0):
             global_step = (epoch - 1) * len(dl) + batch_index
+            eval_pos = (
+                (
+                    int(single_eval_pos.item())
+                    if torch.is_tensor(single_eval_pos)
+                    else int(single_eval_pos)
+                )
+                if single_eval_pos is not None
+                else -1
+            )
             logger.log(
                 {
                     "trainer/epoch": epoch,
                     "trainer/global_step": global_step,
+                    "step/seq_len": int(batch.x.shape[1]),
+                    "step/num_features": int(batch.x.shape[2]),
+                    "step/eval_pos": eval_pos,
                     "step/data_time": time_to_get_batch,
                     "step/step_time": step_time,
                     "step/mean_loss": mean_loss,
