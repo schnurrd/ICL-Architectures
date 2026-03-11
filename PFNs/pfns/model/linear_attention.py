@@ -201,6 +201,12 @@ class LinearAttention(nn.Module):
         x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
         q_all, k_all, v_all = self._project_item_qkv(x, norm_idx)
 
+        if self.causal:
+            q_all = self._feature_map(q_all)
+            k_all = self._feature_map(k_all)
+            attn_all, _, _ = self._causal_linear_attention_items(q_all, k_all, v_all)
+            return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
+
         # Train Part
         q_train = q_all[:, :single_eval_pos]
         k_train = k_all[:, :single_eval_pos]
@@ -211,43 +217,28 @@ class LinearAttention(nn.Module):
         k_test = k_all[:, single_eval_pos:]
         v_test = v_all[:, single_eval_pos:]
 
-        if self.causal:
-            q_train = self._feature_map(q_train)
-            k_train = self._feature_map(k_train)
-            attn_train, kv_state_train, k_sum_train = self._causal_linear_attention_items(
-                q_train,
-                k_train,
-                v_train,
-            )
-            q_test = self._feature_map(q_test)
-            k_test = self._feature_map(k_test)
-            attn_test, _, _ = self._causal_linear_attention_items(
-                q_test,
-                k_test,
-                v_test,
-                kv_state_prefix=kv_state_train,
-                k_sum_prefix=k_sum_train,
-            )
-        else:
-            kv_state_train, k_sum_train = compute_kv_state_5d(
-                self._feature_map(k_train), v_train
-            )
+        q_train = self._feature_map(q_train)
+        k_train = self._feature_map(k_train)
+        q_test = self._feature_map(q_test)
+        k_test = self._feature_map(k_test)
 
-            attn_train = apply_state_to_query_5d(
-                self._feature_map(q_train),
-                kv_state_train,
-                k_sum_train,
-                eps=self.eps,
-            )
-            
-            attn_test = apply_state_to_query_5d(
-                self._feature_map(q_test),
-                kv_state_train,
-                k_sum_train,
-                eps=self.eps,
-                k_self=self._feature_map(k_test),
-                v_self=v_test,
-            )
+        kv_state_train, k_sum_train = compute_kv_state_5d(k_train, v_train)
+
+        attn_train = apply_state_to_query_5d(
+            q_train,
+            kv_state_train,
+            k_sum_train,
+            eps=self.eps,
+        )
+        
+        attn_test = apply_state_to_query_5d(
+            q_test,
+            kv_state_train,
+            k_sum_train,
+            eps=self.eps,
+            k_self=k_test,
+            v_self=v_test,
+        )
 
         attn_all = torch.cat([attn_train, attn_test], dim=1)
         return self._apply_item_output_and_mlp(x, attn_all, norm_idx)

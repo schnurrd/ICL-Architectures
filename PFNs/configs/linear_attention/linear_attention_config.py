@@ -83,6 +83,7 @@ def get_config(
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = None,
+    causal: bool = False,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -171,6 +172,7 @@ def get_config(
             activation="relu",
             layer_kwargs={
                 "feature_attention_softmax": False,
+                "causal": causal,
                 #"feature_dim": 64,
             },
         ),
@@ -205,6 +207,8 @@ def get_config(
         wandb_extras.append(f"agg{resolved_aggregate_k}")
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
+    if causal:
+        wandb_extras.append("causal")
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
