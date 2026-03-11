@@ -10,10 +10,8 @@ import argparse
 from typing import Any
 
 from pfns.scripts.tabpfn_interface import TabPFNClassifier
-from pfns.evaluation import (
-    evaluate_on_openml,
-    get_baselines,
-)
+from pfns.evaluation.baselines import get_baselines
+from pfns.evaluation.evaluate import evaluate_on_openml
 from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
 from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENCHMARK
 from pfns.datasets.tabular_datasets import get_benchmark_suite_dids
@@ -98,12 +96,14 @@ def run_evaluation(
     elif benchmark == "tabarena_full":
         dataset_ids = get_benchmark_suite_dids(
             suite_id=457, # TabArena suite
+            max_features=None,
         )
     elif benchmark == "tabarena_medium":
         dataset_ids = get_benchmark_suite_dids(
             suite_id=457, # TabArena suite
             min_samples=10_000,
-            max_samples=250_000,
+            max_samples=None,
+            max_features=None,
         )
     else:
         supported = ", ".join(BENCHMARK_CHOICES)

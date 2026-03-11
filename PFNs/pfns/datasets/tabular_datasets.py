@@ -64,7 +64,7 @@ def get_benchmark_suite_dids(
     suite_id: int = 457,
     min_samples: int | None = None,
     max_samples: int | None = None,
-    max_features: int | None = 20,
+    max_features: int | None = None,
     refresh_cache: bool = False,
 ) -> list[int]:
     """Resolve classification dataset IDs from an OpenML benchmark suite."""
@@ -153,6 +153,7 @@ def get_openml_classification(did, seed=42):
             msg = "Invalid" if is_object_array else "Corrupt"
             print(f"{msg} cached dataset for did={did}, rebuilding cache.")
             cache_file.unlink(missing_ok=True)
+            X = y = cat_idx = attribute_names = None
 
     if X is None:
         dataset = openml.datasets.get_dataset(int(did))

@@ -48,14 +48,15 @@ def evaluate_model(
     model,
     X: np.ndarray,
     y: np.ndarray,
+    *,
     n_splits: int = 5,
     random_state: int = 42,
     categorical_feats: list[int] | tuple[int, ...] | None = None,
-    verbose: bool = True,
     splits: list[tuple[np.ndarray, np.ndarray]] | None = None,
+    verbose: bool = True,
 ) -> list[dict[str, Any]]:
     """Evaluate a model with cross-validation. Returns per-split metrics (no aggregation)."""
-    X = np.nan_to_num(np.asarray(X, dtype=np.float32), nan=0.0)
+    X = np.asarray(X, dtype=np.float32)
     y = np.asarray(y, dtype=np.int64)
     total_classes = int(np.unique(y).size)
 
@@ -73,19 +74,22 @@ def evaluate_model(
     results: list[dict[str, Any]] = []
     
     for train_idx, test_idx in splits:
+        X_train = np.asarray(X[train_idx], dtype=np.float32)
+        X_test = np.asarray(X[test_idx], dtype=np.float32)
+
         start = time.time()
         fit_kwargs = {}
         if categorical_feats is not None:
             fit_kwargs["categorical_feats"] = categorical_feats
-        model.fit(X[train_idx], y[train_idx], **fit_kwargs)
+        model.fit(X_train, y[train_idx], **fit_kwargs)
         fit_time = time.time() - start
         
         start = time.time()
         if model.__class__.__name__ == "TabPFNClassifier":
-            y_pred, y_proba = model.predict(X[test_idx], return_prediction_probs=True)
+            y_pred, y_proba = model.predict(X_test, return_prediction_probs=True)
         else:
-            y_pred = model.predict(X[test_idx])
-            y_proba = model.predict_proba(X[test_idx])
+            y_pred = model.predict(X_test)
+            y_proba = model.predict_proba(X_test)
         predict_time = time.time() - start
         
         acc = accuracy_score(y[test_idx], y_pred)
@@ -126,7 +130,7 @@ def compare_models(
     if len(models) != len(model_names):
         raise ValueError("models and model_names must have the same length.")
 
-    X_np = np.nan_to_num(np.asarray(X, dtype=np.float32), nan=0.0)
+    X_np = np.asarray(X, dtype=np.float32)
     y_np = np.asarray(y, dtype=np.int64)
     shared_splits = _build_stratified_splits(
         X_np,
@@ -145,8 +149,8 @@ def compare_models(
             y_np,
             n_splits=n_splits,
             categorical_feats=categorical_feats,
-            verbose=verbose,
             splits=shared_splits,
+            verbose=verbose,
         )
         for row in split_results:
             row.update({"model": name})
@@ -232,8 +236,8 @@ def evaluate_on_openml(
                     y_np,
                     n_splits=n_splits,
                     categorical_feats=categorical_feats,
-                    verbose=verbose,
                     splits=shared_splits,
+                    verbose=verbose,
                 )
                 for row in split_results:
                     row.update({"model": model_name, "dataset": name})
