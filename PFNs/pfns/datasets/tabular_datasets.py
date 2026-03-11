@@ -6,6 +6,7 @@ import pandas as pd
 import torch
 import logging
 import hashlib
+import json
 
 from pathlib import Path
 from typing import List
@@ -28,6 +29,32 @@ def _openml_list_cache_path(dids: List[int]) -> Path:
     h = hashlib.sha1(str(tuple(sorted(map(int, dids)))).encode()).hexdigest()[:16]
     return _local_cache_dir() / f"openml_list_{h}.parquet"
 
+def _openml_suite_cache_path(suite_id: int) -> Path:
+    return _local_cache_dir() / f"openml_suite_{int(suite_id)}_dids.json"
+
+def _tabarena_classification_cache_path(
+    suite_id: int,
+    *,
+    min_samples: int | None,
+    max_samples: int | None,
+    max_features: int | None,
+) -> Path:
+    min_part = "all" if min_samples is None else str(int(min_samples))
+    max_part = "all" if max_samples is None else str(int(max_samples))
+    feat_part = "all" if max_features is None else str(int(max_features))
+    return _local_cache_dir() / (
+        f"tabarena_suite_{int(suite_id)}_classification_dids_{min_part}_{max_part}_{feat_part}.json"
+    )
+
+def _load_cached_dids(cache_file: Path) -> list[int]:
+    with cache_file.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    return sorted({int(did) for did in payload.get("dids", [])})
+
+def _save_cached_dids(cache_file: Path, dids: list[int]) -> None:
+    with cache_file.open("w", encoding="utf-8") as f:
+        json.dump({"dids": sorted({int(did) for did in dids})}, f, indent=2)
+
 def load_openml_list_cached(dids: List[int]) -> pd.DataFrame:
     cache_file = _openml_list_cache_path(dids)
     if cache_file.exists():
@@ -36,6 +63,76 @@ def load_openml_list_cached(dids: List[int]) -> pd.DataFrame:
     df = openml.datasets.list_datasets(dids, output_format="dataframe")
     df.to_parquet(cache_file, index=False)
     return df
+
+
+def get_tabarena_classification_dids(
+    *,
+    suite_id: int = 457,
+    min_samples: int | None = None,
+    max_samples: int | None = None,
+    max_features: int | None = 20,
+    refresh_cache: bool = False,
+) -> list[int]:
+    """Resolve TabArena classification OpenML IDs with optional filtering."""
+    if (
+        min_samples is not None
+        and max_samples is not None
+        and int(min_samples) > int(max_samples)
+    ):
+        raise ValueError("min_samples must be <= max_samples when both are set.")
+    if max_features is not None and int(max_features) <= 0:
+        raise ValueError("max_features must be > 0 when set.")
+    cache_file = _tabarena_classification_cache_path(
+        suite_id,
+        min_samples=min_samples,
+        max_samples=max_samples,
+        max_features=max_features,
+    )
+    if cache_file.exists() and not refresh_cache:
+        return _load_cached_dids(cache_file)
+
+    suite_cache_file = _openml_suite_cache_path(suite_id)
+    if suite_cache_file.exists() and not refresh_cache:
+        dids = _load_cached_dids(suite_cache_file)
+    else:
+        suite = openml.study.get_suite(int(suite_id))
+        dids = sorted({int(did) for did in getattr(suite, "data", [])})
+        if not dids:
+            raise RuntimeError(
+                f"OpenML suite {suite_id} did not expose dataset IDs via `suite.data`."
+            )
+        _save_cached_dids(suite_cache_file, dids)
+    suite_df = load_openml_list_cached(dids).copy()
+
+    for col in ("did", "NumberOfClasses", "NumberOfInstances", "NumberOfFeatures"):
+        if col not in suite_df.columns:
+            raise RuntimeError(
+                f"Missing expected column '{col}' in OpenML suite metadata."
+            )
+    suite_df["did"] = pd.to_numeric(suite_df["did"], errors="coerce")
+    suite_df["NumberOfClasses"] = pd.to_numeric(
+        suite_df["NumberOfClasses"], errors="coerce"
+    )
+    suite_df["NumberOfInstances"] = pd.to_numeric(
+        suite_df["NumberOfInstances"], errors="coerce"
+    )
+    suite_df["NumberOfFeatures"] = pd.to_numeric(
+        suite_df["NumberOfFeatures"], errors="coerce"
+    )
+    filtered = suite_df[suite_df["NumberOfClasses"] > 0]
+    if min_samples is not None:
+        filtered = filtered[filtered["NumberOfInstances"] >= int(min_samples)]
+    if max_samples is not None:
+        filtered = filtered[filtered["NumberOfInstances"] <= int(max_samples)]
+    if max_features is not None:
+        filtered = filtered[filtered["NumberOfFeatures"] <= int(max_features)]
+
+    filtered_dids = sorted(
+        {int(did) for did in filtered["did"].dropna().astype(int).tolist()}
+    )
+    _save_cached_dids(cache_file, filtered_dids)
+    return filtered_dids
+
 
 def _cat_idx_from_indicator(categorical_indicator, n_features: int) -> List[int]:
     ci = np.asarray(categorical_indicator)
@@ -52,32 +149,62 @@ def _encode_labels(y: np.ndarray):
 def get_openml_classification(did, seed=42):
     cache_file = _dataset_cache_path(int(did))
 
+    X = y = cat_idx = attribute_names = None
+
     if cache_file.exists():
-        data = np.load(cache_file, allow_pickle=False)
-        X, y = data["X"], data["y"]
-        cat_idx = data["cat_idx"].astype(np.int64).tolist()
-        attribute_names = data["attribute_names"].astype(str).tolist()
-    else:
+        try:
+            data = np.load(cache_file, allow_pickle=False)
+            X, y = data["X"], data["y"]
+            cat_idx = data["cat_idx"].astype(np.int64).tolist()
+            attribute_names = data["attribute_names"].astype(str).tolist()
+        except Exception as e:
+            is_object_array = (
+                isinstance(e, ValueError)
+                and "object arrays cannot be loaded" in str(e).lower()
+            )
+            msg = "Invalid" if is_object_array else "Corrupt"
+            print(f"{msg} cached dataset for did={did}, rebuilding cache.")
+            cache_file.unlink(missing_ok=True)
+
+    if X is None:
         dataset = openml.datasets.get_dataset(int(did))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            X, y, categorical_indicator, attribute_names = dataset.get_data(
-                dataset_format="array", target=dataset.default_target_attribute
+            X_df, y, categorical_indicator, attribute_names = dataset.get_data(
+                dataset_format="dataframe",
+                target=dataset.default_target_attribute,
             )
 
+        cat_idx = _cat_idx_from_indicator(
+            categorical_indicator,
+            n_features=X_df.shape[1],
+        )
+        for i, col in enumerate(X_df.columns):
+            if i in cat_idx:
+                codes = X_df[col].astype("category").cat.codes.to_numpy()
+                col_values = codes.astype(np.float32, copy=False)
+                col_values[codes == -1] = np.nan
+                X_df[col] = col_values
+            else:
+                X_df[col] = pd.to_numeric(X_df[col], errors="coerce")
+
+        X = X_df.to_numpy(dtype=np.float32, copy=False)
+        y = np.asarray(y)
+        # Ensure cached targets are never object/string arrays.
+        if y.dtype.kind in {"O", "U", "S"}:
+            y = _encode_labels(y)
+        else:
+            y = y.astype(np.int64, copy=False)
         if not isinstance(X, np.ndarray) or not isinstance(y, np.ndarray):
             print("Not a NP Array, skipping")
             return None, None, None, None
-        
-        cat_idx = _cat_idx_from_indicator(categorical_indicator, n_features=X.shape[1])
-        attribute_names = list(attribute_names)
-        
+
         np.savez_compressed(
             cache_file,
             X=X,
             y=y,
             cat_idx=np.asarray(cat_idx, dtype=np.int64),
-            attribute_names=np.asarray(attribute_names, dtype=str),
+            attribute_names=np.asarray(list(attribute_names), dtype=str),
         )
 
     y_enc = _encode_labels(np.asarray(y))
