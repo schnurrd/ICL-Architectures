@@ -95,11 +95,11 @@ def run_evaluation(
         dataset_ids = TEST_BENCHMARK
     elif benchmark == "openml_large_dataset":
         dataset_ids = [1461]
-    elif benchmark in {"tabarena_full", "tabarena_classification"}:
+    elif benchmark == "tabarena_full":
         dataset_ids = get_benchmark_suite_dids(
             suite_id=457, # TabArena suite
         )
-    elif benchmark in {"tabarena_medium", "tabarena_medium_classification"}:
+    elif benchmark == "tabarena_medium":
         dataset_ids = get_benchmark_suite_dids(
             suite_id=457, # TabArena suite
             min_samples=10_000,

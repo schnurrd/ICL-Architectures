@@ -181,8 +181,10 @@ def get_openml_classification(did, seed=42):
         # Ensure cached targets are never object/string arrays.
         if y.dtype.kind in {"O", "U", "S"}:
             y = _encode_labels(y)
-        else:
+        elif np.issubdtype(y.dtype, np.integer):
             y = y.astype(np.int64, copy=False)
+        else:
+            y = y.astype(np.float64, copy=False)
 
         np.savez_compressed(
             cache_file,
