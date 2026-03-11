@@ -146,12 +146,7 @@ def get_openml_classification(did, seed=42):
             cat_idx = data["cat_idx"].astype(np.int64).tolist()
             attribute_names = data["attribute_names"].astype(str).tolist()
         except Exception as e:
-            is_object_array = (
-                isinstance(e, ValueError)
-                and "object arrays cannot be loaded" in str(e).lower()
-            )
-            msg = "Invalid" if is_object_array else "Corrupt"
-            print(f"{msg} cached dataset for did={did}, rebuilding cache.")
+            print(f"Can't load cached dataset for did={did}, rebuilding cache. Exception: {e}")
             cache_file.unlink(missing_ok=True)
             X = y = cat_idx = attribute_names = None
 
