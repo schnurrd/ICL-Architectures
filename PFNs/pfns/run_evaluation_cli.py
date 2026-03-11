@@ -16,7 +16,7 @@ from pfns.evaluation import (
 )
 from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
 from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENCHMARK
-from pfns.datasets.tabular_datasets import get_tabarena_classification_dids
+from pfns.datasets.tabular_datasets import get_benchmark_suite_dids
 from pfns.experiments.model_benchmarks.plotting import resolve_display_name_map
 from pfns.utils import get_default_device
 SUMMARY_METRIC_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -96,9 +96,12 @@ def run_evaluation(
     elif benchmark == "openml_large_dataset":
         dataset_ids = [1461]
     elif benchmark in {"tabarena_full", "tabarena_classification"}:
-        dataset_ids = get_tabarena_classification_dids()
+        dataset_ids = get_benchmark_suite_dids(
+            suite_id=457, # TabArena suite
+        )
     elif benchmark in {"tabarena_medium", "tabarena_medium_classification"}:
-        dataset_ids = get_tabarena_classification_dids(
+        dataset_ids = get_benchmark_suite_dids(
+            suite_id=457, # TabArena suite
             min_samples=10_000,
             max_samples=250_000,
         )

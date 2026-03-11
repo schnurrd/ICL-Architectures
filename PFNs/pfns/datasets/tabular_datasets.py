@@ -18,7 +18,12 @@ openml.config.set_root_cache_directory(
 )
 
 def _local_cache_dir() -> Path:
-    d = Path(os.environ.get("OPENML_LOCAL_CACHE_DIRECTORY", str(Path(__file__).parent / "openml_local_cache")))
+    d = Path(
+        os.environ.get(
+            "OPENML_LOCAL_CACHE_DIRECTORY",
+            str(Path(__file__).parent / "openml_local_cache"),
+        )
+    )
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -26,34 +31,23 @@ def _dataset_cache_path(did: int) -> Path:
     return _local_cache_dir() / f"openml_{did}_raw.npz"
 
 def _openml_list_cache_path(dids: List[int]) -> Path:
-    h = hashlib.sha1(str(tuple(sorted(map(int, dids)))).encode()).hexdigest()[:16]
+    h = hashlib.sha1(str(tuple(_normalize_dids(dids))).encode()).hexdigest()[:16]
     return _local_cache_dir() / f"openml_list_{h}.parquet"
 
-def _openml_suite_cache_path(suite_id: int) -> Path:
-    return _local_cache_dir() / f"openml_suite_{int(suite_id)}_dids.json"
+def _suite_cache_path(prefix: str, suite_id: int, descriptor: str) -> Path:
+    return _local_cache_dir() / f"{prefix}_{int(suite_id)}_{descriptor}.json"
 
-def _tabarena_classification_cache_path(
-    suite_id: int,
-    *,
-    min_samples: int | None,
-    max_samples: int | None,
-    max_features: int | None,
-) -> Path:
-    min_part = "all" if min_samples is None else str(int(min_samples))
-    max_part = "all" if max_samples is None else str(int(max_samples))
-    feat_part = "all" if max_features is None else str(int(max_features))
-    return _local_cache_dir() / (
-        f"tabarena_suite_{int(suite_id)}_classification_dids_{min_part}_{max_part}_{feat_part}.json"
-    )
+def _normalize_dids(dids) -> list[int]:
+    return sorted({int(did) for did in dids})
 
 def _load_cached_dids(cache_file: Path) -> list[int]:
     with cache_file.open("r", encoding="utf-8") as f:
         payload = json.load(f)
-    return sorted({int(did) for did in payload.get("dids", [])})
+    return _normalize_dids(payload.get("dids", []))
 
 def _save_cached_dids(cache_file: Path, dids: list[int]) -> None:
     with cache_file.open("w", encoding="utf-8") as f:
-        json.dump({"dids": sorted({int(did) for did in dids})}, f, indent=2)
+        json.dump({"dids": _normalize_dids(dids)}, f, indent=2)
 
 def load_openml_list_cached(dids: List[int]) -> pd.DataFrame:
     cache_file = _openml_list_cache_path(dids)
@@ -65,7 +59,7 @@ def load_openml_list_cached(dids: List[int]) -> pd.DataFrame:
     return df
 
 
-def get_tabarena_classification_dids(
+def get_benchmark_suite_dids(
     *,
     suite_id: int = 457,
     min_samples: int | None = None,
@@ -73,66 +67,60 @@ def get_tabarena_classification_dids(
     max_features: int | None = 20,
     refresh_cache: bool = False,
 ) -> list[int]:
-    """Resolve TabArena classification OpenML IDs with optional filtering."""
+    """Resolve classification dataset IDs from an OpenML benchmark suite."""
+    min_samples, min_part = (None, "all") if min_samples is None else (int(min_samples), str(int(min_samples)))
+    max_samples, max_part = (None, "all") if max_samples is None else (int(max_samples), str(int(max_samples)))
+    max_features, feat_part = (None, "all") if max_features is None else (int(max_features), str(int(max_features)))
     if (
         min_samples is not None
         and max_samples is not None
-        and int(min_samples) > int(max_samples)
+        and min_samples > max_samples
     ):
         raise ValueError("min_samples must be <= max_samples when both are set.")
-    if max_features is not None and int(max_features) <= 0:
+    if max_features is not None and max_features <= 0:
         raise ValueError("max_features must be > 0 when set.")
-    cache_file = _tabarena_classification_cache_path(
+    
+    cache_file = _suite_cache_path(
+        "benchmark_suite",
         suite_id,
-        min_samples=min_samples,
-        max_samples=max_samples,
-        max_features=max_features,
+        f"dids_{min_part}_{max_part}_{feat_part}",
     )
     if cache_file.exists() and not refresh_cache:
         return _load_cached_dids(cache_file)
 
-    suite_cache_file = _openml_suite_cache_path(suite_id)
+    suite_cache_file = _suite_cache_path("openml_suite", suite_id, "dids")
     if suite_cache_file.exists() and not refresh_cache:
         dids = _load_cached_dids(suite_cache_file)
     else:
         suite = openml.study.get_suite(int(suite_id))
-        dids = sorted({int(did) for did in getattr(suite, "data", [])})
+        dids = _normalize_dids(getattr(suite, "data", []))
         if not dids:
             raise RuntimeError(
                 f"OpenML suite {suite_id} did not expose dataset IDs via `suite.data`."
             )
         _save_cached_dids(suite_cache_file, dids)
+
     suite_df = load_openml_list_cached(dids).copy()
 
-    for col in ("did", "NumberOfClasses", "NumberOfInstances", "NumberOfFeatures"):
-        if col not in suite_df.columns:
-            raise RuntimeError(
-                f"Missing expected column '{col}' in OpenML suite metadata."
-            )
-    suite_df["did"] = pd.to_numeric(suite_df["did"], errors="coerce")
-    suite_df["NumberOfClasses"] = pd.to_numeric(
-        suite_df["NumberOfClasses"], errors="coerce"
-    )
-    suite_df["NumberOfInstances"] = pd.to_numeric(
-        suite_df["NumberOfInstances"], errors="coerce"
-    )
-    suite_df["NumberOfFeatures"] = pd.to_numeric(
-        suite_df["NumberOfFeatures"], errors="coerce"
-    )
+    required_cols = ["did", "NumberOfClasses", "NumberOfInstances", "NumberOfFeatures"]
+    missing = [col for col in required_cols if col not in suite_df.columns]
+    if missing:
+        cols = ", ".join(f"'{col}'" for col in missing)
+        raise RuntimeError(f"Missing expected column(s) {cols} in OpenML suite metadata.")
+    for col in required_cols:
+        suite_df[col] = pd.to_numeric(suite_df[col], errors="coerce")
+
     filtered = suite_df[suite_df["NumberOfClasses"] > 0]
     if min_samples is not None:
-        filtered = filtered[filtered["NumberOfInstances"] >= int(min_samples)]
+        filtered = filtered[filtered["NumberOfInstances"] >= min_samples]
     if max_samples is not None:
-        filtered = filtered[filtered["NumberOfInstances"] <= int(max_samples)]
+        filtered = filtered[filtered["NumberOfInstances"] <= max_samples]
     if max_features is not None:
-        filtered = filtered[filtered["NumberOfFeatures"] <= int(max_features)]
+        filtered = filtered[filtered["NumberOfFeatures"] <= max_features]
 
-    filtered_dids = sorted(
-        {int(did) for did in filtered["did"].dropna().astype(int).tolist()}
-    )
+    filtered_dids = _normalize_dids(filtered["did"].dropna().tolist())
     _save_cached_dids(cache_file, filtered_dids)
     return filtered_dids
-
 
 def _cat_idx_from_indicator(categorical_indicator, n_features: int) -> List[int]:
     ci = np.asarray(categorical_indicator)
@@ -195,9 +183,6 @@ def get_openml_classification(did, seed=42):
             y = _encode_labels(y)
         else:
             y = y.astype(np.int64, copy=False)
-        if not isinstance(X, np.ndarray) or not isinstance(y, np.ndarray):
-            print("Not a NP Array, skipping")
-            return None, None, None, None
 
         np.savez_compressed(
             cache_file,
@@ -230,13 +215,18 @@ def load_openml_list(
     return_capped=True,
     verbose: bool = True,
 ):
+    if min_samples > max_samples:
+        raise ValueError("min_samples must be <= max_samples")
+
     datasets = []
     openml_list = load_openml_list_cached(dids)
     if verbose:
         print(f"Number of datasets: {len(openml_list)}")
 
     if filter_for_nan:
-        openml_list = openml_list[openml_list["NumberOfInstancesWithMissingValues"] == 0]
+        openml_list = openml_list[
+            openml_list["NumberOfInstancesWithMissingValues"] == 0
+        ]
         if verbose:
             print(
                 f"Number of datasets after Nan and feature number filtering: {len(openml_list)}"
@@ -254,54 +244,50 @@ def load_openml_list(
             print("Loading", entry["name"], entry.did, "..")
 
         if entry["NumberOfClasses"] == 0.0:
-            raise Exception("Regression not supported")
-        else:
-            X, y, categorical_feats, attribute_names = get_openml_classification(
-                int(entry.did),
-            )
+            raise RuntimeError("Regression not supported")
+        X, y, categorical_feats, attribute_names = get_openml_classification(
+            int(entry.did),
+        )
         if X is None:
             print("Warning: Could not load dataset, skipping.")
             continue
-        
+
         num_classes = int(torch.unique(y).numel())
         if num_classes > max_num_classes:
-            if return_capped:
-                y_np = y.cpu().numpy()
-                vals, counts = np.unique(y_np, return_counts=True)
-                keep_vals_t = torch.as_tensor(sorted(vals[np.argsort(-counts)[:max_num_classes]]), device=y.device, dtype=y.dtype)
-                keep = torch.isin(y, keep_vals_t)
-                X = X[keep]
-                y = y[keep]
-                modifications["classes_capped"] = True
-            else:
+            if not return_capped:
                 print("Too many classes")
                 continue
-        
+            y_np = y.cpu().numpy()
+            vals, counts = np.unique(y_np, return_counts=True)
+            top_vals = np.sort(vals[np.argsort(-counts)[:max_num_classes]])
+            keep_vals_t = torch.as_tensor(top_vals, device=y.device, dtype=y.dtype)
+            keep = torch.isin(y, keep_vals_t)
+            X = X[keep]
+            y = y[keep]
+            modifications["classes_capped"] = True
+
         if X.shape[0] > max_samples:
-            if return_capped:
-                X = X[0 : max_samples, :]
-                y = y[0 : max_samples]
-                modifications["samples_capped"] = True
-            else:
+            if not return_capped:
                 print("Too many samples")
                 continue
-        
-        assert min_samples <= max_samples, "min_samples must be <= max_samples"
-        
+            X = X[0:max_samples, :]
+            y = y[0:max_samples]
+            modifications["samples_capped"] = True
+
         if X.shape[0] < min_samples:
             print("Too few samples left")
             continue
 
         if X.shape[1] > num_feats:
-            if return_capped:
-                X = X[:, 0:num_feats]
-                categorical_feats = [c for c in categorical_feats if c < num_feats]
-                modifications["feats_capped"] = True
-            else:
+            if not return_capped:
                 print("Too many features")
                 continue
+            X = X[:, 0:num_feats]
+            categorical_feats = [c for c in categorical_feats if c < num_feats]
+            attribute_names = attribute_names[:num_feats]
+            modifications["feats_capped"] = True
 
-        datasets += [
+        datasets.append(
             [
                 entry["name"],
                 X,
@@ -310,7 +296,7 @@ def load_openml_list(
                 attribute_names,
                 modifications,
             ]
-        ]
+        )
 
     return datasets, openml_list
 
