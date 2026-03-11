@@ -74,22 +74,19 @@ def evaluate_model(
     results: list[dict[str, Any]] = []
     
     for train_idx, test_idx in splits:
-        X_train = np.asarray(X[train_idx], dtype=np.float32)
-        X_test = np.asarray(X[test_idx], dtype=np.float32)
-
         start = time.time()
         fit_kwargs = {}
         if categorical_feats is not None:
             fit_kwargs["categorical_feats"] = categorical_feats
-        model.fit(X_train, y[train_idx], **fit_kwargs)
+        model.fit(X[train_idx], y[train_idx], **fit_kwargs)
         fit_time = time.time() - start
         
         start = time.time()
         if model.__class__.__name__ == "TabPFNClassifier":
-            y_pred, y_proba = model.predict(X_test, return_prediction_probs=True)
+            y_pred, y_proba = model.predict(X[test_idx], return_prediction_probs=True)
         else:
-            y_pred = model.predict(X_test)
-            y_proba = model.predict_proba(X_test)
+            y_pred = model.predict(X[test_idx])
+            y_proba = model.predict_proba(X[test_idx])
         predict_time = time.time() - start
         
         acc = accuracy_score(y[test_idx], y_pred)
@@ -197,6 +194,7 @@ def evaluate_on_openml(
         max_num_classes=max_classes,
         return_capped=True,
         filter_for_nan=False,
+        random_state=random_state,
         verbose=verbose,
     )
     

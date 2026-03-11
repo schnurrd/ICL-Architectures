@@ -410,12 +410,7 @@ def main():
     parser.add_argument("--checkpoint_name", type=str, default="checkpoint.pt")
     parser.add_argument("--wandb_run_id", type=str, default=None)
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument(
-        "--benchmark",
-        type=str,
-        default="opencc",
-        choices=BENCHMARK_CHOICES,
-    )
+    parser.add_argument("--benchmark", type=str, default="opencc", choices=BENCHMARK_CHOICES,)
     parser.add_argument("--max_samples", type=int, default=1000)
     parser.add_argument("--max_features", type=int, default=20)
     parser.add_argument("--max_classes", type=int, default=10)

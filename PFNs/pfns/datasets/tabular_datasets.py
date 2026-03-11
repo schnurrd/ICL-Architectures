@@ -153,34 +153,16 @@ def get_openml_classification(did, seed=42):
     if X is None:
         dataset = openml.datasets.get_dataset(int(did))
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            X_df, y, categorical_indicator, attribute_names = dataset.get_data(
-                dataset_format="dataframe",
-                target=dataset.default_target_attribute,
+            warnings.simplefilter("ignore") # array format will be deprecated soon which the warning is about
+            X, y, categorical_indicator, attribute_names = dataset.get_data(
+                dataset_format="array", target=dataset.default_target_attribute
             )
 
-        cat_idx = _cat_idx_from_indicator(
-            categorical_indicator,
-            n_features=X_df.shape[1],
-        )
-        for i, col in enumerate(X_df.columns):
-            if i in cat_idx:
-                codes = X_df[col].astype("category").cat.codes.to_numpy()
-                col_values = codes.astype(np.float32, copy=False)
-                col_values[codes == -1] = np.nan
-                X_df[col] = col_values
-            else:
-                X_df[col] = pd.to_numeric(X_df[col], errors="coerce")
-
-        X = X_df.to_numpy(dtype=np.float32, copy=False)
-        y = np.asarray(y)
-        # Ensure cached targets are never object/string arrays.
-        if y.dtype.kind in {"O", "U", "S"}:
-            y = _encode_labels(y)
-        elif np.issubdtype(y.dtype, np.integer):
-            y = y.astype(np.int64, copy=False)
-        else:
-            y = y.astype(np.float64, copy=False)
+        if not isinstance(X, np.ndarray) or not isinstance(y, np.ndarray):
+            print("Not a NP Array, skipping")
+            return None, None, None, None
+        
+        cat_idx = _cat_idx_from_indicator(categorical_indicator, n_features=X.shape[1])
 
         np.savez_compressed(
             cache_file,
@@ -206,15 +188,18 @@ def get_openml_classification(did, seed=42):
 def load_openml_list(
     dids,
     filter_for_nan=False,
-    num_feats=100,
+    num_feats=20,
     min_samples=100,
-    max_samples=400,
+    max_samples=1000,
     max_num_classes=10,
     return_capped=True,
+    random_state: int = 42,
     verbose: bool = True,
 ):
     if min_samples > max_samples:
         raise ValueError("min_samples must be <= max_samples")
+    if int(num_feats) <= 0:
+        raise ValueError("num_feats must be > 0")
 
     datasets = []
     openml_list = load_openml_list_cached(dids)
@@ -237,14 +222,15 @@ def load_openml_list(
             "feats_capped": False,
         }
         entry = openml_list.loc[ds]
+        dataset_id = int(entry.did)
 
         if verbose:
-            print("Loading", entry["name"], entry.did, "..")
+            print("Loading", entry["name"], dataset_id, "..")
 
         if entry["NumberOfClasses"] == 0.0:
             raise RuntimeError("Regression not supported")
         X, y, categorical_feats, attribute_names = get_openml_classification(
-            int(entry.did),
+            dataset_id,
         )
         if X is None:
             print("Warning: Could not load dataset, skipping.")
@@ -268,8 +254,15 @@ def load_openml_list(
             if not return_capped:
                 print("Too many samples")
                 continue
-            X = X[0:max_samples, :]
-            y = y[0:max_samples]
+            sample_rng = np.random.default_rng(
+                np.random.SeedSequence([int(random_state), dataset_id, 0])
+            )
+            sample_idx = np.sort(
+                sample_rng.choice(int(X.shape[0]), size=int(max_samples), replace=False)
+            )
+            sample_idx_t = torch.as_tensor(sample_idx, dtype=torch.long)
+            X = X[sample_idx_t]
+            y = y[sample_idx_t]
             modifications["samples_capped"] = True
 
         if X.shape[0] < min_samples:
@@ -280,9 +273,21 @@ def load_openml_list(
             if not return_capped:
                 print("Too many features")
                 continue
-            X = X[:, 0:num_feats]
-            categorical_feats = [c for c in categorical_feats if c < num_feats]
-            attribute_names = attribute_names[:num_feats]
+            feature_rng = np.random.default_rng(
+                np.random.SeedSequence([int(random_state), dataset_id, 1])
+            )
+            selected_cols = np.sort(
+                feature_rng.choice(int(X.shape[1]), size=int(num_feats), replace=False)
+            )
+            selected_cols_list = selected_cols.tolist()
+            selected_lookup = {
+                old_idx: new_idx for new_idx, old_idx in enumerate(selected_cols_list)
+            }
+            X = X[:, selected_cols_list]
+            categorical_feats = [
+                selected_lookup[idx] for idx in categorical_feats if idx in selected_lookup
+            ]
+            attribute_names = [attribute_names[idx] for idx in selected_cols_list]
             modifications["feats_capped"] = True
 
         datasets.append(
