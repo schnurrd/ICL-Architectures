@@ -62,7 +62,7 @@ DEFAULT_BASELINE: dict[str, int] = {
 
 DEFAULT_WANDB: dict[str, Any] = {
     "enabled": True,
-    "overwrite": False,
+    "overwrite": True,
     "artifact_name_real_eval": "real_eval_results",
     "entity": "icl_arch",
     "artifact_project": "real_world_eval_artifacts",
