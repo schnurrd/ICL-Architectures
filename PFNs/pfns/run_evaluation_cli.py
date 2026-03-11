@@ -10,12 +10,11 @@ import argparse
 from typing import Any
 
 from pfns.scripts.tabpfn_interface import TabPFNClassifier
-from pfns.evaluation import (
-    evaluate_on_openml,
-    get_baselines,
-)
+from pfns.evaluation.baselines import get_baselines
+from pfns.evaluation.evaluate import evaluate_on_openml
 from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
 from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENCHMARK
+from pfns.datasets.tabular_datasets import get_benchmark_suite_dids
 from pfns.experiments.model_benchmarks.plotting import resolve_display_name_map
 from pfns.utils import get_default_device
 SUMMARY_METRIC_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -27,6 +26,13 @@ SUMMARY_METRIC_DEFAULTS: dict[str, dict[str, Any]] = {
     "predict_time": {"label": "Pred (s)", "direction": "down", "precision": 2, "show_std": False},
 }
 TIMING_METRICS = {"fit_time", "predict_time"}
+BENCHMARK_CHOICES = [
+    "opencc",
+    "test",
+    "openml_large_dataset",
+    "tabarena_full",
+    "tabarena_medium",
+]
 
 
 def _resolve_summary_metrics(
@@ -87,8 +93,21 @@ def run_evaluation(
         dataset_ids = TEST_BENCHMARK
     elif benchmark == "openml_large_dataset":
         dataset_ids = [1461]
+    elif benchmark == "tabarena_full":
+        dataset_ids = get_benchmark_suite_dids(
+            suite_id=457, # TabArena suite
+            max_features=None,
+        )
+    elif benchmark == "tabarena_medium":
+        dataset_ids = get_benchmark_suite_dids(
+            suite_id=457, # TabArena suite
+            min_samples=10_000,
+            max_samples=None,
+            max_features=None,
+        )
     else:
-        raise ValueError("Benchmark must be 'opencc', 'test', or 'openml_large_dataset'.")
+        supported = ", ".join(BENCHMARK_CHOICES)
+        raise ValueError(f"Benchmark must be one of: {supported}.")
 
     resolved_runner = runner or model_config.get("runner")
     if resolved_runner is None:
@@ -391,7 +410,7 @@ def main():
     parser.add_argument("--checkpoint_name", type=str, default="checkpoint.pt")
     parser.add_argument("--wandb_run_id", type=str, default=None)
     parser.add_argument("--device", type=str, default=None)
-    parser.add_argument("--benchmark", type=str, default="opencc", choices=["opencc", "test", "openml_150"])
+    parser.add_argument("--benchmark", type=str, default="opencc", choices=BENCHMARK_CHOICES,)
     parser.add_argument("--max_samples", type=int, default=1000)
     parser.add_argument("--max_features", type=int, default=20)
     parser.add_argument("--max_classes", type=int, default=10)

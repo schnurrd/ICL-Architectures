@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Config selector for FLA backbones using CLI-provided axes.
+Config selector for FLA backbones using CLI-provided arguments.
 """
 
 from __future__ import annotations

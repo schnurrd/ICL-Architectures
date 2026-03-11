@@ -48,14 +48,15 @@ def evaluate_model(
     model,
     X: np.ndarray,
     y: np.ndarray,
+    *,
     n_splits: int = 5,
     random_state: int = 42,
     categorical_feats: list[int] | tuple[int, ...] | None = None,
-    verbose: bool = True,
     splits: list[tuple[np.ndarray, np.ndarray]] | None = None,
+    verbose: bool = True,
 ) -> list[dict[str, Any]]:
     """Evaluate a model with cross-validation. Returns per-split metrics (no aggregation)."""
-    X = np.nan_to_num(np.asarray(X, dtype=np.float32), nan=0.0)
+    X = np.asarray(X, dtype=np.float32)
     y = np.asarray(y, dtype=np.int64)
     total_classes = int(np.unique(y).size)
 
@@ -126,7 +127,7 @@ def compare_models(
     if len(models) != len(model_names):
         raise ValueError("models and model_names must have the same length.")
 
-    X_np = np.nan_to_num(np.asarray(X, dtype=np.float32), nan=0.0)
+    X_np = np.asarray(X, dtype=np.float32)
     y_np = np.asarray(y, dtype=np.int64)
     shared_splits = _build_stratified_splits(
         X_np,
@@ -145,8 +146,8 @@ def compare_models(
             y_np,
             n_splits=n_splits,
             categorical_feats=categorical_feats,
-            verbose=verbose,
             splits=shared_splits,
+            verbose=verbose,
         )
         for row in split_results:
             row.update({"model": name})
@@ -193,6 +194,7 @@ def evaluate_on_openml(
         max_num_classes=max_classes,
         return_capped=True,
         filter_for_nan=False,
+        random_state=random_state,
         verbose=verbose,
     )
     
@@ -232,8 +234,8 @@ def evaluate_on_openml(
                     y_np,
                     n_splits=n_splits,
                     categorical_feats=categorical_feats,
-                    verbose=verbose,
                     splits=shared_splits,
+                    verbose=verbose,
                 )
                 for row in split_results:
                     row.update({"model": model_name, "dataset": name})
