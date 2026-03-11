@@ -898,7 +898,7 @@ class LinearAttentionBackboneConfig(BackboneConfig):
                 dropout=self.dropout,
                 activation=self.activation,
                 attention_between_features=attention_between_features,
-                **(self.layer_kwargs or {}),                
+                **(self.layer_kwargs or {}),
             )
             for _ in range(self.nlayers)
         ])

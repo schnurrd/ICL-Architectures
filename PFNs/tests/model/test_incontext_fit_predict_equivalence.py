@@ -117,6 +117,19 @@ def _assert_incontext_fit_predict_matches_forward(
             id="linear_attention",
         ),
         pytest.param(
+            "linear_attention_causal",
+            LinearAttentionBackboneConfig(
+                nlayers=2,
+                nhead=2,
+                mlp_hidden_dim=64,
+                dropout=0.0,
+                layer_kwargs={"causal": True},
+            ),
+            False,
+            32,
+            id="linear_attention_causal",
+        ),
+        pytest.param(
             "rebased",
             RebasedBackboneConfig(
                 nlayers=2,

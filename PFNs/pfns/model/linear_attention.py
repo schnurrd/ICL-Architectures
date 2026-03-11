@@ -22,6 +22,7 @@ class LinearAttention(nn.Module):
         dropout: float = 0.1,
         activation: str = "silu",
         attention_between_features: bool = False,
+        causal: bool = False,
         feature_attention_softmax: bool = False,
         feature_dim: int | None = None,
         eps: float = 1e-6,
@@ -36,6 +37,7 @@ class LinearAttention(nn.Module):
         self.feature_dim = feature_dim if feature_dim is not None else self.head_dim
         
         self.attention_between_features = attention_between_features
+        self.causal = bool(causal)
         self.feature_attention_softmax = feature_attention_softmax
         
         self.dropout = nn.Dropout(dropout)
@@ -113,6 +115,31 @@ class LinearAttention(nn.Module):
         out = torch.einsum("bshnm,bshmd->bshnd", attn, v)
         return out.permute(0, 1, 3, 2, 4)
 
+    def _causal_linear_attention_items(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        *,
+        kv_state_prefix: torch.Tensor | None = None,
+        k_sum_prefix: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if q.shape[1] == 0:
+            assert kv_state_prefix is not None and k_sum_prefix is not None
+            return v, kv_state_prefix, k_sum_prefix
+
+        kv_prefix = torch.cumsum(torch.einsum("bsnhf,bsnhd->bsnhfd", k, v), dim=1)
+        k_prefix = torch.cumsum(k, dim=1)
+        if kv_state_prefix is not None:
+            kv_prefix = kv_prefix + kv_state_prefix.unsqueeze(1)
+        if k_sum_prefix is not None:
+            k_prefix = k_prefix + k_sum_prefix.unsqueeze(1)
+
+        num = torch.einsum("bsnhf,bsnhfd->bsnhd", q, kv_prefix)
+        denom = torch.einsum("bsnhf,bsnhf->bsnh", q, k_prefix)
+        attn = num / (denom.unsqueeze(-1) + self.eps)
+        return attn, kv_prefix[:, -1], k_prefix[:, -1]
+
     def _apply_feature_attention_block(
         self,
         x: torch.Tensor,
@@ -184,25 +211,43 @@ class LinearAttention(nn.Module):
         k_test = k_all[:, single_eval_pos:]
         v_test = v_all[:, single_eval_pos:]
 
-        kv_state_train, k_sum_train = compute_kv_state_5d(
-            self._feature_map(k_train), v_train
-        )
+        if self.causal:
+            q_train = self._feature_map(q_train)
+            k_train = self._feature_map(k_train)
+            attn_train, kv_state_train, k_sum_train = self._causal_linear_attention_items(
+                q_train,
+                k_train,
+                v_train,
+            )
+            q_test = self._feature_map(q_test)
+            k_test = self._feature_map(k_test)
+            attn_test, _, _ = self._causal_linear_attention_items(
+                q_test,
+                k_test,
+                v_test,
+                kv_state_prefix=kv_state_train,
+                k_sum_prefix=k_sum_train,
+            )
+        else:
+            kv_state_train, k_sum_train = compute_kv_state_5d(
+                self._feature_map(k_train), v_train
+            )
 
-        attn_train = apply_state_to_query_5d(
-            self._feature_map(q_train),
-            kv_state_train,
-            k_sum_train,
-            eps=self.eps,
-        )
-        
-        attn_test = apply_state_to_query_5d(
-            self._feature_map(q_test),
-            kv_state_train,
-            k_sum_train,
-            eps=self.eps,
-            k_self=self._feature_map(k_test),
-            v_self=v_test,
-        )
+            attn_train = apply_state_to_query_5d(
+                self._feature_map(q_train),
+                kv_state_train,
+                k_sum_train,
+                eps=self.eps,
+            )
+            
+            attn_test = apply_state_to_query_5d(
+                self._feature_map(q_test),
+                kv_state_train,
+                k_sum_train,
+                eps=self.eps,
+                k_self=self._feature_map(k_test),
+                v_self=v_test,
+            )
 
         attn_all = torch.cat([attn_train, attn_test], dim=1)
         return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
@@ -226,9 +271,12 @@ class LinearAttention(nn.Module):
 
         q = self._feature_map(q)
         k = self._feature_map(k)
-        kv_state, k_sum = compute_kv_state_5d(k, v)
 
-        attn = apply_state_to_query_5d(q, kv_state, k_sum, eps=self.eps)
+        if self.causal:
+            attn, kv_state, k_sum = self._causal_linear_attention_items(q, k, v)
+        else:
+            kv_state, k_sum = compute_kv_state_5d(k, v)
+            attn = apply_state_to_query_5d(q, kv_state, k_sum, eps=self.eps)
         x = self._apply_item_output_and_mlp(x, attn, norm_idx)
         return x, {"kv_state": kv_state, "k_sum": k_sum}
 
@@ -248,14 +296,23 @@ class LinearAttention(nn.Module):
         kv_state = state["kv_state"]
         k_sum = state["k_sum"]
 
-        attn = apply_state_to_query_5d(
-            q,
-            kv_state,
-            k_sum,
-            eps=self.eps,
-            k_self=k,
-            v_self=v,
-        )
+        if self.causal:
+            attn, _, _ = self._causal_linear_attention_items(
+                q,
+                k,
+                v,
+                kv_state_prefix=kv_state,
+                k_sum_prefix=k_sum,
+            )
+        else:
+            attn = apply_state_to_query_5d(
+                q,
+                kv_state,
+                k_sum,
+                eps=self.eps,
+                k_self=k,
+                v_self=v,
+            )
         return self._apply_item_output_and_mlp(x, attn, norm_idx)
 
     def empty_trainset_representation_cache(self) -> None:
