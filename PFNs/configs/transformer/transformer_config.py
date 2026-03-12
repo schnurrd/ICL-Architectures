@@ -98,7 +98,7 @@ TRAINING_PROFILES = {
         "warmup_epochs": 10,
         "aggregate_k_gradients": 2,
         "attention_between_features": True,
-        "features_per_group": 4,
+        "features_per_group": 2,
         "wandb_suffix": "_high_feature_att",
     },
     "very_high": {
