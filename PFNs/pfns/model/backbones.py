@@ -328,7 +328,7 @@ class FLABackboneConfig(BackboneConfig):
     cache_chunk_size: int | None = None
     # Backward-compatibility only: older checkpoints may serialize this field.
     # It is ignored by FLABackbone and has no effect on training/inference.
-    # deltanet_state_reg_weight: float | None = None
+    deltanet_state_reg_weight: float | None = None
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
