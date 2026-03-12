@@ -42,9 +42,9 @@ from pfns.run_evaluation_cli import (
 from pfns.utils import get_default_device
 
 DEFAULT_EXPERIMENT: dict[str, Any] = {
-    "name": "real_world_openml_comparison",
-    "benchmark": "opencc",
-    "max_samples": 1000,
+    "name": "real_world_tabarena_comparison",# "real_world_openml_comparison",
+    "benchmark": "tabarena_full",
+    "max_samples": 1_000_000,
     "max_features": 20,
     "max_classes": 10,
     "n_splits": 5,
@@ -65,7 +65,7 @@ DEFAULT_WANDB: dict[str, Any] = {
     "overwrite": True,
     "artifact_name_real_eval": "real_eval_results",
     "entity": "icl_arch",
-    "artifact_project": "real_world_eval_artifacts",
+    "artifact_project": "real_world_tabarena_full_eval_artifacts", #  "real_world_eval_artifacts"
     "mode": "online",
 }
 
