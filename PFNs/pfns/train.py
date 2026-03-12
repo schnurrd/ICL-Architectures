@@ -444,19 +444,6 @@ def train(
     }
 
 
-def _get_backbone_aux_loss(model: torch.nn.Module) -> torch.Tensor | None:
-    model_ref = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
-    backbone = getattr(model_ref, "backbone", None)
-    if backbone is None:
-        backbone = getattr(model_ref, "transformer_layers", None)
-    if backbone is None or not hasattr(backbone, "get_aux_loss"):
-        return None
-    aux_loss = backbone.get_aux_loss()
-    if aux_loss is None or not torch.is_tensor(aux_loss):
-        return None
-    return aux_loss
-
-
 # we could think about removing c as arg here to make the dep's clearer
 def train_or_evaluate_epoch(
     c: MainConfig,
@@ -597,9 +584,6 @@ def train_or_evaluate_epoch(
                         ),  # loss per sequence without nanmean, if any loss in a sequence is nan, the whole sequence is ignored
                         return_nanshare=True,
                     )  # loss and nan_share are both scalar tensors
-                    aux_loss = _get_backbone_aux_loss(model)
-                    if aux_loss is not None:
-                        loss = loss + aux_loss.to(device=loss.device, dtype=loss.dtype)
                     if c.debug_spike_enabled:
                         spike_save_count = log_loss_spike(
                             loss=loss,

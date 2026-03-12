@@ -248,26 +248,22 @@ DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "DeltaNet Reference",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "eval_autocast_dtype": "bf16",
-    }
+    },
 }
 
-DELTANET_ADDED_REGULARIZATION: dict[str, dict[str, Any]] = {
-    "DeltaNet_Comb_ST_reg_1e-6": {
-        "wandb_run_id": "fla_models/runs/f6ynrp4l",
+DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
+    "DeltaNet_Int_MT_Increasing_seq_1K->32K": {
+        "wandb_run_id": "fla_models/runs/vo5mkuwt",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_reg_1e-5": {
-        "wandb_run_id": "fla_models/runs/bfr8qhfh",
+    "DeltaNet_Comb_ST_Increasing_seq_1K->32K": {
+        "wandb_run_id": "fla_models/runs/58w3kifz",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_reg_1e-4": {
-        "wandb_run_id": "fla_models/runs/lzodfrv5",
+    "DeltaNet_Int_MT_Seq_Len_1K": {
+        "wandb_run_id": "fla_models/runs/ji6lw9hu",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_Reference": {
-        "wandb_run_id": "fla_models/runs/ob2m9rth",
-        "eval_autocast_dtype": "bf16",
-    }
 }
 
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
@@ -382,7 +378,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "equal_params": EQUAL_PARAMS_MODELS,
     "transformer_masked": TRANSFORMER_MASKED_MODELS,
     "deltanet_finetuned": DELTANET_FINETUNED_MODELS,
-    "deltanet_added_regularization": DELTANET_ADDED_REGULARIZATION,
+    "deltanet_high_seq_len": DELTANET_HIGH_SEQ_LEN_MODELS,
     "fla_models": {
         **KDA_MODELS,
         **GLA_MODELS,

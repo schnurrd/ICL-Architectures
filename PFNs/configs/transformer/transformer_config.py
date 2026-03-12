@@ -132,7 +132,7 @@ TRAINING_PROFILES = {
 
 def get_config(
     config_index: int = 0,
-    training_setup: str = "low",
+    training_setup: str = "high",
     batch_size: int | None = None,
     max_seq_len: int | None = None,
     batch_size_stages: list[tuple[int, int]] | tuple[tuple[int, int], ...] | None = None,
