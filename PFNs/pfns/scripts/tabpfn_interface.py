@@ -87,7 +87,6 @@ class InferenceEngine:
         self.no_grad = no_grad
         self.categorical_feats = categorical_feats
         self.seed = seed
-        self._numpy_rng = np.random.default_rng(seed)
 
     def _get_sklearn_transformer(self, transform_type: str):
         """Get sklearn transformer based on config."""
@@ -118,11 +117,14 @@ class InferenceEngine:
         """Preprocess input data for one ensemble member and track categorical indices."""
         categorical_inds = list(self.categorical_feats) if self.categorical_feats else []
         active_indices = list(range(X.shape[2]))
+        rng = np.random.default_rng(
+            None if self.seed is None else self.seed + preprocessing_index
+        )
 
         # ToDo: It would make more sense to switch the order between the constant feature removal and the max feature subsampling.
         if X.shape[2] > max_features:
             selected = sorted(
-                self._numpy_rng.choice(X.shape[2], max_features, replace=False).tolist()
+                rng.choice(X.shape[2], max_features, replace=False).tolist()
             )
             X = X[:, :, selected]
             active_indices = [active_indices[i] for i in selected]
@@ -130,9 +132,6 @@ class InferenceEngine:
                 f"Warning: Subsampling features to {max_features} for preprocessing."
             )
         if max_num_rows is not None and eval_position > max_num_rows:
-            rng = np.random.default_rng(
-                None if self.seed is None else self.seed + preprocessing_index
-            )
             selected_rows = sorted(
                 rng.choice(eval_position, max_num_rows, replace=False).tolist()
             )
@@ -243,7 +242,13 @@ class InferenceEngine:
             transform_type = config.transform_type
             cache_key = (
                 None
-                if config.max_num_rows is not None and eval_position > config.max_num_rows
+                if (
+                    X.shape[2] > config.max_features
+                    or (
+                        config.max_num_rows is not None
+                        and eval_position > config.max_num_rows
+                    )
+                )
                 else transform_type
             )
             if cache_key is not None and cache_key in preprocessed_cache:
