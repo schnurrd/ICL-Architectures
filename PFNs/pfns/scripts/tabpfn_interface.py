@@ -229,7 +229,7 @@ class InferenceEngine:
         X: torch.Tensor,
         y: torch.Tensor,
         eval_position: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[list[int]]]:
         """Preprocess inputs for all ensemble members."""
         inputs = []
         labels = []
