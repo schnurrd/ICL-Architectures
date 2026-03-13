@@ -113,7 +113,7 @@ class InferenceEngine:
         max_features: int,
         max_num_rows: Optional[int] = None,
         preprocessing_index: int = 0,
-    ) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
+    ) -> tuple[torch.Tensor, torch.Tensor, list[int], int]:
         """Preprocess input data for one ensemble member and track categorical indices."""
         categorical_inds = list(self.categorical_feats) if self.categorical_feats else []
         active_indices = list(range(X.shape[2]))
@@ -184,7 +184,7 @@ class InferenceEngine:
             X = torch.tensor(X_np).float()
 
         X = X.unsqueeze(1)
-        return X.to(self.device), y, categorical_inds
+        return X.to(self.device), y.to(self.device), categorical_inds, eval_position
 
     def predict(
         self,
@@ -252,12 +252,22 @@ class InferenceEngine:
                 else transform_type
             )
             if cache_key is not None and cache_key in preprocessed_cache:
-                X_processed, y_processed, cached_cat_inds = preprocessed_cache[cache_key]
+                (
+                    X_processed,
+                    y_processed,
+                    cached_cat_inds,
+                    processed_eval_position,
+                ) = preprocessed_cache[cache_key]
                 X_processed = X_processed.clone()
                 y_processed = y_processed.clone()
                 cat_inds_processed = list(cached_cat_inds)
             else:
-                X_processed, y_processed, cat_inds_processed = self._preprocess_data(
+                (
+                    X_processed,
+                    y_processed,
+                    cat_inds_processed,
+                    processed_eval_position,
+                ) = self._preprocess_data(
                     X.clone(),
                     y,
                     eval_position,
@@ -274,13 +284,16 @@ class InferenceEngine:
                         X_processed,
                         y_processed,
                         list(cat_inds_processed),
+                        processed_eval_position,
                     )
 
             y_shifted = ((y_processed + config.class_shift) % self.num_classes).float()
-            processed_eval_position = y_processed.shape[0]
 
             # Apply sample permutation on the training portion only
-            if config.sample_permutation is not None and processed_eval_position > 1:
+            if (
+                config.sample_permutation is not None
+                and processed_eval_position > 1
+            ):
                 perm = config.sample_permutation
                 if perm.shape[0] == processed_eval_position:
                     if perm.device != X_processed.device:
