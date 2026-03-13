@@ -152,11 +152,39 @@ def get_openml_classification(did, seed=42):
 
     if X is None:
         dataset = openml.datasets.get_dataset(int(did))
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore") # array format will be deprecated soon which the warning is about
+        try:
             X, y, categorical_indicator, attribute_names = dataset.get_data(
-                dataset_format="array", target=dataset.default_target_attribute
+                dataset_format="dataframe", target=dataset.default_target_attribute
             )
+            
+            def _encode_if_category(col: pd.Series, is_categorical: bool) -> pd.Series:
+                # similar to https://github.com/openml/openml-python/blob/449f2cb9274a6a4d566748c6f1fdc4b3899482ba/openml/datasets/dataset.py#L654
+                if isinstance(col.dtype, pd.CategoricalDtype) or is_categorical:
+                    cat = col.astype("category")
+                    codes = cat.cat.codes.astype(np.float32)
+                    codes[codes == -1] = np.nan
+                    return codes
+
+                numeric = pd.to_numeric(col, errors="coerce")
+                non_missing = col.notna()
+                # If all non-missing values can be converted to numeric, use the numeric version. Otherwise, treat as categorical.
+                if numeric[non_missing].notna().all():
+                    return numeric.astype(np.float32)
+
+                cat = col.astype("category")
+                codes = cat.cat.codes.astype(np.float32)
+                codes[codes == -1] = np.nan
+                return codes
+        
+            columns = {
+                column_name: _encode_if_category(X.loc[:, column_name], categorical_indicator[i])
+                for i, column_name in enumerate(X.columns)
+            }
+            X = pd.DataFrame(columns).to_numpy(dtype=np.float32)
+            y = _encode_if_category(y, True).to_numpy(dtype=np.int64)
+        except Exception as e:
+            print(f"Failed to load dataset for did={did} from OpenML. Exception: {e}")
+            return None, None, None, None
 
         if not isinstance(X, np.ndarray) or not isinstance(y, np.ndarray):
             print("Not a NP Array, skipping")
