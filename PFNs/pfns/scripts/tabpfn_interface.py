@@ -49,6 +49,7 @@ class EnsembleConfig:
         "none", "power", "power_all", "quantile", "quantile_all", "robust", "robust_all"
     ] = "none"
     max_features: int = 100
+    max_num_rows: Optional[int] = None
 
 
 # =============================================================================
@@ -86,7 +87,6 @@ class InferenceEngine:
         self.no_grad = no_grad
         self.categorical_feats = categorical_feats
         self.seed = seed
-        self._numpy_rng = np.random.default_rng(seed)
 
     def _get_sklearn_transformer(self, transform_type: str):
         """Get sklearn transformer based on config."""
@@ -111,20 +111,35 @@ class InferenceEngine:
         eval_position: int,
         transform_type: str,
         max_features: int,
-    ) -> tuple[torch.Tensor, list[int]]:
+        max_num_rows: Optional[int] = None,
+        preprocessing_index: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor, list[int], int]:
         """Preprocess input data for one ensemble member and track categorical indices."""
         categorical_inds = list(self.categorical_feats) if self.categorical_feats else []
         active_indices = list(range(X.shape[2]))
+        rng = np.random.default_rng(
+            None if self.seed is None else self.seed + preprocessing_index
+        )
 
         # ToDo: It would make more sense to switch the order between the constant feature removal and the max feature subsampling.
         if X.shape[2] > max_features:
             selected = sorted(
-                self._numpy_rng.choice(X.shape[2], max_features, replace=False).tolist()
+                rng.choice(X.shape[2], max_features, replace=False).tolist()
             )
             X = X[:, :, selected]
             active_indices = [active_indices[i] for i in selected]
             print(
                 f"Warning: Subsampling features to {max_features} for preprocessing."
+            )
+        if max_num_rows is not None and eval_position > max_num_rows:
+            selected_rows = sorted(
+                rng.choice(eval_position, max_num_rows, replace=False).tolist()
+            )
+            X = torch.cat([X[selected_rows], X[eval_position:]], dim=0)
+            y = y[selected_rows]
+            eval_position = y.shape[0]
+            print(
+                f"Warning: Subsampling dataset to {max_num_rows} rows for preprocessing."
             )
 
         X = normalize_data(X, normalize_positions=eval_position)  # probably redundant
@@ -169,7 +184,7 @@ class InferenceEngine:
             X = torch.tensor(X_np).float()
 
         X = X.unsqueeze(1)
-        return X.to(self.device), categorical_inds
+        return X.to(self.device), y.to(self.device), categorical_inds, eval_position
 
     def predict(
         self,
@@ -214,7 +229,7 @@ class InferenceEngine:
         X: torch.Tensor,
         y: torch.Tensor,
         eval_position: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[list[int]]]:
         """Preprocess inputs for all ensemble members."""
         inputs = []
         labels = []
@@ -223,37 +238,78 @@ class InferenceEngine:
         # Cache preprocessed data by transform type
         preprocessed_cache = {}
 
-        for config in self.ensemble_configs:
+        for preprocessing_index, config in enumerate(self.ensemble_configs):
             transform_type = config.transform_type
-            if transform_type in preprocessed_cache:
-                X_processed, cached_cat_inds = preprocessed_cache[transform_type]
+            cache_key = (
+                None
+                if (
+                    X.shape[2] > config.max_features
+                    or (
+                        config.max_num_rows is not None
+                        and eval_position > config.max_num_rows
+                    )
+                )
+                else transform_type
+            )
+            if cache_key is not None and cache_key in preprocessed_cache:
+                (
+                    X_processed,
+                    y_processed,
+                    cached_cat_inds,
+                    processed_eval_position,
+                ) = preprocessed_cache[cache_key]
                 X_processed = X_processed.clone()
+                y_processed = y_processed.clone()
                 cat_inds_processed = list(cached_cat_inds)
             else:
-                X_processed, cat_inds_processed = self._preprocess_data(
-                    X.clone(), y, eval_position, transform_type, config.max_features
+                (
+                    X_processed,
+                    y_processed,
+                    cat_inds_processed,
+                    processed_eval_position,
+                ) = self._preprocess_data(
+                    X.clone(),
+                    y,
+                    eval_position,
+                    transform_type,
+                    config.max_features,
+                    max_num_rows=config.max_num_rows,
+                    preprocessing_index=preprocessing_index,
                 )
                 if self.no_grad:
                     X_processed = X_processed.detach()
-                preprocessed_cache[transform_type] = (
-                    X_processed,
-                    list(cat_inds_processed),
-                )
+                    y_processed = y_processed.detach()
+                if cache_key is not None:
+                    preprocessed_cache[cache_key] = (
+                        X_processed,
+                        y_processed,
+                        list(cat_inds_processed),
+                        processed_eval_position,
+                    )
 
-            y_shifted = ((y + config.class_shift) % self.num_classes).float()
+            y_shifted = ((y_processed + config.class_shift) % self.num_classes).float()
 
             # Apply sample permutation on the training portion only
-            if config.sample_permutation is not None and eval_position > 1:
+            if (
+                config.sample_permutation is not None
+                and processed_eval_position > 1
+            ):
                 perm = config.sample_permutation
-                if perm.shape[0] == eval_position:
+                if perm.shape[0] == processed_eval_position:
                     if perm.device != X_processed.device:
                         perm = perm.to(X_processed.device)
                     X_processed = torch.cat(
-                        [X_processed[:eval_position][perm], X_processed[eval_position:]],
+                        [
+                            X_processed[:processed_eval_position][perm],
+                            X_processed[processed_eval_position:],
+                        ],
                         dim=0,
                     )
                     y_shifted = torch.cat(
-                        [y_shifted[:eval_position][perm], y_shifted[eval_position:]],
+                        [
+                            y_shifted[:processed_eval_position][perm],
+                            y_shifted[processed_eval_position:],
+                        ],
                         dim=0,
                     )
 
@@ -437,7 +493,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         seed: int = 0,
         no_grad: bool = True,
         batch_size_inference: int = 32,
-        subsample_features: bool = False,
+        subsample_dataset_size: Optional[int] = None,
         preprocess_transforms: list[str] = None,
         fla_cache_chunk_size: int | None = None,
     ):
@@ -473,8 +529,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                but it is split into smaller/larger batches.
         :param no_grad: If set to false, allows for the computation of gradients with respect to X_train and X_test.
                For this to correctly function no_preprocessing_mode must be set to true.
-        :param subsample_features: If set to true and the number of features in the dataset exceeds self.max_features (100),
-                the features are subsampled to self.max_features.
+        :param subsample_dataset_size: If set to an integer and the number of samples in the dataset exceeds this number, a subsample of the data is taken.
         :param preprocess_transforms: List of preprocessing transforms to consider during inference.
         :param fla_cache_chunk_size: If set and the model uses an FLA backbone, chunk size for cache-backed inference.
         """
@@ -504,7 +559,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.seed = seed
         self.no_grad = no_grad
         self.batch_size_inference = batch_size_inference
-        self.subsample_features = subsample_features
+        self.subsample_dataset_size = subsample_dataset_size
         self.preprocess_transforms = preprocess_transforms
         self.fla_cache_chunk_size = fla_cache_chunk_size
         self.categorical_feats: tuple[int, ...] = ()
@@ -559,7 +614,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.classes_ = cls
         return np.asarray(y, dtype=np.int64, order="C")
 
-    def fit(self, X, y, categorical_feats=None, overwrite_warning=True):
+    def fit(self, X, y, categorical_feats=None):
         """
         Validates the training set and stores it.
 
@@ -580,20 +635,14 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.y_ = y
 
         if X.shape[1] > self.max_num_features:
-            if self.subsample_features:
-                print(
-                    "WARNING: The number of features for this classifier is restricted to ",
-                    self.max_num_features,
-                    " and will be subsampled.",
-                )
+            print(
+                f"""Warning: Number of features in the training data ({X.shape[1]}) exceeds the maximum number of features ({self.max_num_features}) that the model was trained on.
+                The features will be subsampled to {self.max_num_features} during preprocessing."""
+            )
         if len(np.unique(y)) > self.max_num_classes:
             raise ValueError(
                 "The number of classes for this classifier is restricted to ",
                 self.max_num_classes,
-            )
-        if X.shape[0] > 1024 and not overwrite_warning:
-            raise ValueError(
-                "⚠️ WARNING: TabPFN is not made for datasets with a trainingsize > 1024. Prediction might take a while, be less reliable. We advise not to run datasets > 10k samples, which might lead to your machine crashing (due to quadratic memory scaling of TabPFN). Please confirm you want to run by passing overwrite_warning=True to the fit function."
             )
 
         # Return the classifier
@@ -664,8 +713,13 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         rng.shuffle(class_feature_pairs)
 
         if self.sample_order_permutation and eval_pos > 1:
+            permutation_size = (
+                min(eval_pos, self.subsample_dataset_size)
+                if self.subsample_dataset_size is not None
+                else eval_pos
+            )
             sample_permutations = [
-                torch.randperm(eval_pos, device=self.device)
+                torch.randperm(permutation_size, device=self.device)
                 for _ in range(self.N_ensemble_configurations)
             ]
         else:
@@ -689,6 +743,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                 sample_permutation=sp,
                 transform_type=transform,
                 max_features=self.max_num_features,
+                max_num_rows=self.subsample_dataset_size,
             )
             for cs, fs, sp, transform in combinations
         ]
