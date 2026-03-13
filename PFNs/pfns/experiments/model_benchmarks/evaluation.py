@@ -128,15 +128,11 @@ def _evaluate_model_at_seqlen(
     x_test = test_x.to(resolved_device)
     selected_rows_list = [None]
     if subsample_dataset_size is not None and seqlen > subsample_dataset_size:
+        shuffled_rows = np.random.default_rng(seqlen).permutation(seqlen)
+        num_slices = (seqlen + subsample_dataset_size - 1) // subsample_dataset_size
         selected_rows_list = [
-            sorted(
-                np.random.default_rng(seqlen + ensemble_index).choice(
-                    seqlen, subsample_dataset_size, replace=False
-                ).tolist()
-            )
-            for ensemble_index in range(
-                (seqlen + subsample_dataset_size - 1) // subsample_dataset_size
-            )
+            sorted(rows.tolist())
+            for rows in np.array_split(shuffled_rows, num_slices)
         ]
 
     def run_eval(selected_rows: list[int] | None, warmup_only: bool = False):
