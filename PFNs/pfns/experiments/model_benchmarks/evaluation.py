@@ -210,12 +210,14 @@ def _evaluate_model_at_seqlen(
         outputs = []
         fit_ms = 0.0
         pred_ms = 0.0
-        context_size_mb = 0.0
+        context_size_mb_values = []
         for selected_rows in selected_rows_list:
-            output_i, fit_ms_i, pred_ms_i, context_size_mb = run_eval(selected_rows)
+            output_i, fit_ms_i, pred_ms_i, context_size_mb_i = run_eval(selected_rows)
             outputs.append(output_i)
             fit_ms += fit_ms_i
             pred_ms += pred_ms_i
+            context_size_mb_values.append(float(context_size_mb_i))
+        context_size_mb = max(context_size_mb_values) if context_size_mb_values else 0.0
         output = outputs[0] if len(outputs) == 1 else torch.stack(outputs).mean(dim=0)
 
         forward_ms = fit_ms + pred_ms
@@ -412,6 +414,11 @@ def evaluate_models_over_seqlens(
             "forward_models": sorted(forward_models_set),
             "data_generation_seed": (
                 int(data_generation_seed) if data_generation_seed is not None else None
+            ),
+            "subsample_dataset_size": (
+                int(subsample_dataset_size)
+                if subsample_dataset_size is not None
+                else None
             ),
             "task_variant": task_variant,
             "task_kwargs": resolved_task_kwargs,
