@@ -5,11 +5,15 @@ from pfns.training_utils import resolve_autocast_dtype
 from pfns.utils import get_default_device
 
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
+
     "Softmax_Transformer": {
-        "wandb_run_id": "tabpfn_transformer/runs/90rqcrr2",  # no feature attention like fla
+        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
     },
     "Softmax_Transformer_with_feature_attention": {
-        "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default)
+        "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
+        #n ew smaller versions 
+        # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
+        # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
     },
 }
 
@@ -314,7 +318,7 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     "Transformer_Non_Causal": {
         "display_name": "Non-Causal", #"Non-Causal (Default)",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/f1lg4ch9", # fp16 version d4mttnjl, fp 32 version pmcn4brd, old 15.2M params version
         "eval_mode": "forward",
     },
     # "Transformer_Non_Causal_with_RoPE_pairwise": {
@@ -328,7 +332,7 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     # },
     "masked:Transformer_Comb_ST": {
         "display_name": "Causal Single Target",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/gex7h68b", # fp 16 version 2wrxsh60, old 15.2M params version b56ohkmz
         "eval_mode": "forward",
     },
     # "Transformer_Test_To_Train_Only": {
