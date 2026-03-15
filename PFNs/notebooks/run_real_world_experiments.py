@@ -27,6 +27,12 @@ from pfns.experiments.model_benchmarks.model_registry import (
     get_models_from_families,
     get_models_from_names,
 )
+from pfns.experiments.model_benchmarks.real_world_presets import (
+    DEFAULT_REAL_WORLD_PRESET,
+    REAL_WORLD_PRESET_CHOICES,
+    get_real_world_preset,
+    normalize_real_world_preset_name,
+)
 from pfns.experiments.model_benchmarks.workflows import (
     alias_real_world_dataframe_bundle,
     build_real_world_run_metadata,
@@ -41,51 +47,58 @@ from pfns.run_evaluation_cli import (
 )
 from pfns.utils import get_default_device
 
-# DEFAULT_EXPERIMENT: dict[str, Any] = {
-#     "name": "real_world_tabarena_comparison",# "real_world_openml_comparison",
-#     "benchmark": "tabarena_full",
-#     "max_samples": 1_000_000,
-#     "max_features": 20,
-#     "max_classes": 10,
-#     "n_splits": 5,
-#     "batch_size_inference": 10,
-#     "n_ensemble_configurations": 10,
-#     "preprocess_transforms": ["none", "power_all"],
-#     "sample_order_permutation": True,
-#     "fla_cache_chunk_size": None,
-# }
-DEFAULT_EXPERIMENT: dict[str, Any] = {
-    "name": "real_world_openml_comparison", # "real_world_tabarena_comparison",# "real_world_openml_comparison",
-    "benchmark": "opencc", # "tabarena_full",
-    "max_samples": 1_000, # 1_000_000,
-    "max_features": 20,
-    "max_classes": 10,
-    "n_splits": 5,
-    "batch_size_inference": 32,
-    "n_ensemble_configurations": 10,
-    "preprocess_transforms": ["none", "power"],
-    "sample_order_permutation": True,
-    "fla_cache_chunk_size": None,
-}
-
 DEFAULT_BASELINE: dict[str, int] = {
     "n_jobs": 4,
     "random_state": 42,
 }
 
-DEFAULT_WANDB: dict[str, Any] = {
+BASE_WANDB: dict[str, Any] = {
     "enabled": True,
-    "overwrite": True,
+    "overwrite": False,
     "artifact_name_real_eval": "real_eval_results",
     "entity": "icl_arch",
-    "artifact_project":  "real_world_eval_artifacts", # "real_world_tabarena_full_eval_artifacts", #  "real_world_eval_artifacts"
     "mode": "online",
 }
+DEFAULT_WANDB: dict[str, Any] = BASE_WANDB | get_real_world_preset(
+    DEFAULT_REAL_WORLD_PRESET
+)["wandb"]
 
 
-def parse_cli_args() -> argparse.Namespace:
+def _parse_real_world_preset(preset: str) -> str:
+    try:
+        return normalize_real_world_preset_name(preset)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
+    preset_parser = argparse.ArgumentParser(add_help=False)
+    preset_parser.add_argument(
+        "--preset",
+        "--experiment-preset",
+        dest="preset",
+        type=_parse_real_world_preset,
+        default=DEFAULT_REAL_WORLD_PRESET,
+    )
+    preset_args, _ = preset_parser.parse_known_args(argv)
+    preset_defaults = get_real_world_preset(preset_args.preset)
+    experiment_defaults = preset_defaults["experiment"]
+    wandb_defaults = BASE_WANDB | preset_defaults["wandb"]
+
     parser = argparse.ArgumentParser(
-        description="Run real-world OpenML benchmark experiments with per-model sharding.",
+        description="Run real-world benchmark experiments with per-model sharding.",
+    )
+    parser.add_argument(
+        "--preset",
+        "--experiment-preset",
+        dest="preset",
+        type=_parse_real_world_preset,
+        choices=REAL_WORLD_PRESET_CHOICES,
+        default=preset_args.preset,
+        help=(
+            "Preset controlling experiment and W&B defaults. "
+            "Accepts 'openml', 'tabarena', or the full experiment names."
+        ),
     )
     parser.add_argument(
         "--models",
@@ -120,34 +133,34 @@ def parse_cli_args() -> argparse.Namespace:
     parser.add_argument(
         "--benchmark",
         type=str,
-        default=DEFAULT_EXPERIMENT["benchmark"],
+        default=experiment_defaults["benchmark"],
         choices=BENCHMARK_CHOICES,
     )
-    parser.add_argument("--experiment-name", type=str, default=DEFAULT_EXPERIMENT["name"])
-    parser.add_argument("--max-samples", type=int, default=DEFAULT_EXPERIMENT["max_samples"])
-    parser.add_argument("--max-features", type=int, default=DEFAULT_EXPERIMENT["max_features"])
-    parser.add_argument("--max-classes", type=int, default=DEFAULT_EXPERIMENT["max_classes"])
-    parser.add_argument("--n-splits", type=int, default=DEFAULT_EXPERIMENT["n_splits"])
+    parser.add_argument("--experiment-name", type=str, default=experiment_defaults["name"])
+    parser.add_argument("--max-samples", type=int, default=experiment_defaults["max_samples"])
+    parser.add_argument("--max-features", type=int, default=experiment_defaults["max_features"])
+    parser.add_argument("--max-classes", type=int, default=experiment_defaults["max_classes"])
+    parser.add_argument("--n-splits", type=int, default=experiment_defaults["n_splits"])
     parser.add_argument(
         "--batch-size-inference",
         type=int,
-        default=DEFAULT_EXPERIMENT["batch_size_inference"],
+        default=experiment_defaults["batch_size_inference"],
     )
     parser.add_argument(
         "--n-ensemble-configurations",
         type=int,
-        default=DEFAULT_EXPERIMENT["n_ensemble_configurations"],
+        default=experiment_defaults["n_ensemble_configurations"],
     )
     parser.add_argument(
         "--preprocess-transforms",
         nargs="+",
-        default=DEFAULT_EXPERIMENT["preprocess_transforms"],
+        default=experiment_defaults["preprocess_transforms"],
         help="TabPFN preprocessing transforms.",
     )
     parser.add_argument(
         "--sample-order-permutation",
         action="store_true",
-        default=DEFAULT_EXPERIMENT["sample_order_permutation"],
+        default=experiment_defaults["sample_order_permutation"],
         help="Permute sample order per TabPFN ensemble member.",
     )
     parser.add_argument(
@@ -156,7 +169,7 @@ def parse_cli_args() -> argparse.Namespace:
         dest="sample_order_permutation",
         help="Disable sample-order permutation for TabPFN.",
     )
-    parser.add_argument("--fla-cache-chunk-size", type=int, default=DEFAULT_EXPERIMENT["fla_cache_chunk_size"])
+    parser.add_argument("--fla-cache-chunk-size", type=int, default=experiment_defaults["fla_cache_chunk_size"])
 
     parser.add_argument("--baseline-n-jobs", type=int, default=DEFAULT_BASELINE["n_jobs"])
     parser.add_argument("--random-state", type=int, default=DEFAULT_BASELINE["random_state"])
@@ -197,13 +210,13 @@ def parse_cli_args() -> argparse.Namespace:
     parser.add_argument(
         "--artifact-name-real-eval",
         type=str,
-        default=DEFAULT_WANDB["artifact_name_real_eval"],
+        default=wandb_defaults["artifact_name_real_eval"],
     )
-    parser.add_argument("--wandb-entity", type=str, default=DEFAULT_WANDB["entity"])
-    parser.add_argument("--wandb-artifact-project", type=str, default=DEFAULT_WANDB["artifact_project"])
-    parser.add_argument("--wandb-mode", type=str, default=DEFAULT_WANDB["mode"])
+    parser.add_argument("--wandb-entity", type=str, default=wandb_defaults["entity"])
+    parser.add_argument("--wandb-artifact-project", type=str, default=wandb_defaults["artifact_project"])
+    parser.add_argument("--wandb-mode", type=str, default=wandb_defaults["mode"])
 
-    args, _ = parser.parse_known_args()
+    args, _ = parser.parse_known_args(argv)
 
     if args.max_samples < 1:
         parser.error("--max-samples must be >= 1")
@@ -293,6 +306,7 @@ def main() -> None:
 
     print(f"Results are stored in: {output_root}")
     print(f"Available model families: {list(MODEL_FAMILIES)}")
+    print(f"Preset: {args.preset}")
     print(f"Sharding config: num_runs={args.num_runs}, run_index={args.run_index}")
 
     all_models_to_compare = _resolve_selected_models(args)
