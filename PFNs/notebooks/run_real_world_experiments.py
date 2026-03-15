@@ -41,15 +41,28 @@ from pfns.run_evaluation_cli import (
 )
 from pfns.utils import get_default_device
 
+# DEFAULT_EXPERIMENT: dict[str, Any] = {
+#     "name": "real_world_tabarena_comparison",# "real_world_openml_comparison",
+#     "benchmark": "tabarena_full",
+#     "max_samples": 1_000_000,
+#     "max_features": 20,
+#     "max_classes": 10,
+#     "n_splits": 5,
+#     "batch_size_inference": 10,
+#     "n_ensemble_configurations": 10,
+#     "preprocess_transforms": ["none", "power_all"],
+#     "sample_order_permutation": True,
+#     "fla_cache_chunk_size": None,
+# }
 DEFAULT_EXPERIMENT: dict[str, Any] = {
-    "name": "real_world_tabarena_comparison",# "real_world_openml_comparison",
-    "benchmark": "tabarena_full",
-    "max_samples": 1_000_000,
+    "name": "real_world_openml_comparison", # "real_world_tabarena_comparison",# "real_world_openml_comparison",
+    "benchmark": "opencc", # "tabarena_full",
+    "max_samples": 1_000, # 1_000_000,
     "max_features": 20,
     "max_classes": 10,
     "n_splits": 5,
     "batch_size_inference": 32,
-    "n_ensemble_configurations": 32,
+    "n_ensemble_configurations": 10,
     "preprocess_transforms": ["none", "power", "robust"],
     "sample_order_permutation": True,
     "fla_cache_chunk_size": None,
@@ -65,7 +78,7 @@ DEFAULT_WANDB: dict[str, Any] = {
     "overwrite": True,
     "artifact_name_real_eval": "real_eval_results",
     "entity": "icl_arch",
-    "artifact_project": "real_world_tabarena_full_eval_artifacts", #  "real_world_eval_artifacts"
+    "artifact_project":  "real_world_eval_artifacts", # "real_world_tabarena_full_eval_artifacts", #  "real_world_eval_artifacts"
     "mode": "online",
 }
 

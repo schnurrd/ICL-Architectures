@@ -104,6 +104,86 @@ class InferenceEngine:
             return RobustScaler(unit_variance=True)
         return None
 
+    def _get_fallback_transform_type(self, transform_type: str) -> str | None:
+        """Return the safer fallback transform for numerically unstable transforms."""
+        if transform_type == "power":
+            return "robust"
+        if transform_type == "power_all":
+            return "robust_all"
+        return None
+
+    def _fit_transform_column(
+        self,
+        X_np: np.ndarray,
+        eval_position: int,
+        col: int,
+        transform_type: str,
+    ) -> np.ndarray | None:
+        """Fit a sklearn transformer on the train split and transform one column."""
+        import warnings
+
+        transformer = self._get_sklearn_transformer(transform_type)
+        if transformer is None:
+            return None
+
+        train_values = X_np[0:eval_position, col : col + 1]
+        all_values = X_np[:, col : col + 1]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            transformer.fit(train_values)
+            return transformer.transform(all_values)
+
+    def _fit_transform_column_with_fallback(
+        self,
+        X_np: np.ndarray,
+        eval_position: int,
+        col: int,
+        transform_type: str,
+    ) -> np.ndarray | None:
+        """Apply a column transform, falling back to a safer transform if configured."""
+        fallback_transform_type = self._get_fallback_transform_type(transform_type)
+        primary_error: Exception | None = None
+
+        for candidate_transform in (transform_type, fallback_transform_type):
+            if candidate_transform is None:
+                break
+
+            try:
+                transformed = self._fit_transform_column(
+                    X_np,
+                    eval_position,
+                    col,
+                    candidate_transform,
+                )
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                if candidate_transform == transform_type:
+                    primary_error = exc
+                    if fallback_transform_type is None:
+                        print(
+                            f"Warning: Preprocessing transform {transform_type} failed on column {col}. Skipping transform. Error: {exc}"
+                        )
+                        return None
+                    continue
+
+                print(
+                    f"Warning: Preprocessing transform {transform_type} failed on column {col}. "
+                    f"Fallback {candidate_transform} also failed, skipping transform. "
+                    f"Errors: {primary_error}; fallback error: {exc}"
+                )
+                return None
+
+            if candidate_transform != transform_type:
+                print(
+                    f"Warning: Preprocessing transform {transform_type} failed on column {col}. "
+                    f"Falling back to {candidate_transform}. Error: {primary_error}"
+                )
+            return transformed
+
+        return None
+
     def _preprocess_data(
         self,
         X: torch.Tensor,
@@ -159,28 +239,25 @@ class InferenceEngine:
 
         # Apply sklearn transforms
         if transform_type != "none":
-            import warnings
-
             X_np = X.cpu().numpy()
-            feats = (
-                set(range(X_np.shape[1]))
-                if "all" in transform_type
-                else set(range(X_np.shape[1])) - set(categorical_inds)
-            )
+            if "all" in transform_type:
+                feature_indices = range(X_np.shape[1])
+            else:
+                categorical_ind_set = set(categorical_inds)
+                feature_indices = [
+                    col for col in range(X_np.shape[1]) if col not in categorical_ind_set
+                ]
 
-            warnings.simplefilter("error")
-            for col in feats:
-                try:
-                    transformer = self._get_sklearn_transformer(transform_type)
-                    if transformer is not None:
-                        transformer.fit(X_np[0:eval_position, col : col + 1])
-                        trans = transformer.transform(X_np[:, col : col + 1])
-                        X_np[:, col : col + 1] = trans
-                except Exception as e:
-                    print(
-                        f"Warning: Preprocessing transform {transform_type} failed on column {col}. Skipping transform. Error: {e}"
-                    )
-            warnings.simplefilter("default")
+            for col in feature_indices:
+                trans = self._fit_transform_column_with_fallback(
+                    X_np,
+                    eval_position,
+                    col,
+                    transform_type,
+                )
+                if trans is not None:
+                    X_np[:, col : col + 1] = trans
+            # X_np[~np.isfinite(X_np)] = np.nan
             X = torch.tensor(X_np).float()
 
         X = X.unsqueeze(1)

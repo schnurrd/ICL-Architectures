@@ -215,6 +215,7 @@ def get_config(
             variable_num_features_normalization=True,
             nan_handling=True,  # currently only nan to mean imputation works
             use_categorical_encoder=True,
+            train_normalization=True,
         ),
         y_encoder=EncoderConfig(
             nan_handling=True,
