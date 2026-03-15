@@ -256,8 +256,7 @@ def download_model_from_wandb(
         except Exception as e:
             print(f"Could not verify existing model (Error: {e}). Proceeding locally.")
             pass
-        os.remove(destination_path) # remove outdated or invalid file
-    
+
     if latest_model_artifact is not None:
         print(f"Found model artifact: {latest_model_artifact.name}")
         with tempfile.TemporaryDirectory(prefix="wandb_model_downloads_") as tmp_dir:
