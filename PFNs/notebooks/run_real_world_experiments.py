@@ -63,7 +63,7 @@ DEFAULT_EXPERIMENT: dict[str, Any] = {
     "n_splits": 5,
     "batch_size_inference": 32,
     "n_ensemble_configurations": 10,
-    "preprocess_transforms": ["none", "power", "robust"],
+    "preprocess_transforms": ["none", "power"],
     "sample_order_permutation": True,
     "fla_cache_chunk_size": None,
 }
