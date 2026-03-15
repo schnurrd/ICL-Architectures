@@ -240,14 +240,6 @@ DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "icl_arch/fla_models/zmvzjsep",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_Finetuned_50K_1_e-5_new_lognormal_10ep": {
-        "wandb_run_id": "icl_arch/fla_models/f7sd3vcp",
-        "eval_autocast_dtype": "bf16",
-    },
-    "DeltaNet_Comb_ST_Finetuned_50K_5_e-6_new_lognormal_5ep": {
-        "wandb_run_id": "icl_arch/fla_models/b48ylhbw",
-        "eval_autocast_dtype": "bf16",
-    },
     "DeltaNet_Comb_ST_Reference": {
         "display_name": "DeltaNet Reference",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
