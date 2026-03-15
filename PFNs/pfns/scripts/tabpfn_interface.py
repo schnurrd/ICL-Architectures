@@ -573,6 +573,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         subsample_dataset_size: Optional[int] = None,
         preprocess_transforms: list[str] = None,
         fla_cache_chunk_size: int | None = None,
+        autocast_dtype: str | None = None,
     ):
         """
         Initializes the classifier and loads the model.
@@ -640,6 +641,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.preprocess_transforms = preprocess_transforms
         self.fla_cache_chunk_size = fla_cache_chunk_size
         self.categorical_feats: tuple[int, ...] = ()
+        self.autocast_dtype = resolve_autocast_dtype(device, autocast_dtype)
 
         model_key = (
             f"{self.base_path.resolve()}|{self.model_string}|{self.device}|"
@@ -825,14 +827,6 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             for cs, fs, sp, transform in combinations
         ]
 
-        autocast_dtype = (
-            resolve_autocast_dtype(
-                self.device,
-                self.config.train_mixed_precision_dtype,
-            )
-            if self.config.train_mixed_precision
-            else None
-        )
         engine = InferenceEngine(
             model=self.model,
             ensemble_configs=ensemble_configs,
@@ -842,7 +836,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
             batch_size_inference=self.batch_size_inference,
             average_logits=True,
             extend_features=True,
-            autocast_dtype=autocast_dtype,
+            autocast_dtype=self.autocast_dtype,
             no_grad=self.no_grad,
             categorical_feats=self.categorical_feats,
             seed=self.seed,
