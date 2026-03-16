@@ -15,7 +15,7 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     },
     "Softmax_Transformer_new_no_norm": {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
-        "eval_autocast_dtype": "bf16"
+        "eval_autocast_dtype": "fp16"
     },
     "Softmax_Transformer_with_feature_attention": {
         "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
