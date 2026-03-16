@@ -19,13 +19,6 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
         # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
         # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
     },
-    "Softmax_Transformer_with_feature_attention_new": {
-        "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
-        "eval_autocast_dtype": "fp32",
-        #n ew smaller versions 
-        # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
-        # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
-    },
 }
 
 KDA_MODELS: dict[str, dict[str, Any]] = {
@@ -251,11 +244,6 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Based $\\phi$ with 16-dim features",
         "wandb_run_id": "fla_models/runs/kxe10m62"
     },
-    "Based_feat_dim_16_new": {
-        "display_name": "Based $\\phi$ with 16-dim features",
-        "wandb_run_id": "fla_models/runs/kxe10m62",
-        "eval_autocast_dtype": "fp32",
-    }
 }
 
 DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
