@@ -20,6 +20,7 @@ from pfns.prior_defaults import (
     resolve_training_setup_for_task,
 )
 from pfns.model.backbones import LinearAttentionBackboneConfig
+from pfns.model.mode_normalization import resolve_sequence_mode
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.run_logger import WandbConfig
@@ -31,6 +32,7 @@ from pfns.train import (
 )
 
 DEFAULT_BATCH_SIZE = 8
+SUPPORTED_SEQUENCE_MODES = ("Comb_ST", "Comb_MT")
 GLOBAL_TRAIN_MIXED_PRECISION = (
     torch.cuda.is_available()
     and torch.cuda.is_bf16_supported()
@@ -69,6 +71,30 @@ TRAINING_PROFILES = {
 #    - RTX 2080Ti (fp32): 
 #    - A5000:     (bf16):
 
+
+def _resolve_linear_attention_mode(
+    sequence_mode: str | None,
+    kwargs: dict[str, object]
+) -> tuple[str | None, dict[str, bool]]:
+    """Resolve the sequence mode and related layer kwargs for linear attention config."""
+    if kwargs.get("causal", True): # for backward compatibility
+        return "Comb_MT", {"causal": True, "causal_train_only": False}
+    
+    if sequence_mode is None:
+        return None, {"causal": False, "causal_train_only": False}
+
+    resolved_mode = resolve_sequence_mode(sequence_mode)
+    if resolved_mode not in SUPPORTED_SEQUENCE_MODES:
+        raise ValueError(
+            "Linear attention config only supports sequence_mode "
+            f"{SUPPORTED_SEQUENCE_MODES}, got {resolved_mode!r}."
+        )
+
+    return resolved_mode, {
+        "causal": resolved_mode == "Comb_MT",
+        "causal_train_only": resolved_mode == "Comb_ST",
+    }
+
 def get_config(
     config_index: int = 0,
     training_setup: str = "high",
@@ -83,7 +109,8 @@ def get_config(
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = None,
-    causal: bool = False,
+    sequence_mode: str | None = None,
+    **kwargs,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -92,6 +119,9 @@ def get_config(
 
     feature_positional_embedding = normalize_optional_none_string(
         feature_positional_embedding
+    )
+    resolved_sequence_mode, layer_kwargs = _resolve_linear_attention_mode(
+        sequence_mode, kwargs
     )
 
     training_setup = training_setup.strip().lower()
@@ -173,7 +203,7 @@ def get_config(
             activation="relu",
             layer_kwargs={
                 "feature_attention_softmax": False,
-                "causal": causal,
+                **layer_kwargs,
                 #"feature_dim": 64,
             },
         ),
@@ -208,8 +238,8 @@ def get_config(
         wandb_extras.append(f"agg{resolved_aggregate_k}")
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
-    if causal:
-        wandb_extras.append("causal")
+    if resolved_sequence_mode is not None:
+        wandb_extras.append(resolved_sequence_mode)
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (

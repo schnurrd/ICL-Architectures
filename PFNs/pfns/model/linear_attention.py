@@ -23,6 +23,7 @@ class LinearAttention(nn.Module):
         activation: str = "silu",
         attention_between_features: bool = False,
         causal: bool = False,
+        causal_train_only: bool = False,
         feature_attention_softmax: bool = False,
         feature_dim: int | None = None,
         eps: float = 1e-6,
@@ -38,6 +39,11 @@ class LinearAttention(nn.Module):
         
         self.attention_between_features = attention_between_features
         self.causal = bool(causal)
+        self.causal_train_only = bool(causal_train_only)
+        if self.causal and self.causal_train_only:
+            raise ValueError(
+                "causal and causal_train_only are mutually exclusive."
+            )
         self.feature_attention_softmax = feature_attention_softmax
         
         self.dropout = nn.Dropout(dropout)
@@ -76,29 +82,6 @@ class LinearAttention(nn.Module):
         denom = torch.einsum("bsnhd,bshd->bsnh", q, k_sum).unsqueeze(-1)
         kv = torch.einsum("bsnhd,bsnhe->bshde", k, v)
         return torch.einsum("bsnhd,bshde->bsnhe", q, kv) / (denom + self.eps)
-
-    def _linear_attention_items(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        k_self: torch.Tensor | None = None,
-        v_self: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        # q, k, v: (batch, seq_len, num_feature_blocks, nhead, head_dim)
-        q = self._feature_map(q)
-        k = self._feature_map(k)
-        kv_state, k_sum = compute_kv_state_5d(k, v)
-        if k_self is not None and v_self is not None:
-            k_self = self._feature_map(k_self)
-        return apply_state_to_query_5d(
-            q,
-            kv_state,
-            k_sum,
-            eps=self.eps,
-            k_self=k_self,
-            v_self=v_self,
-        )
 
     def _softmax_attention_features(
         self,
@@ -173,6 +156,46 @@ class LinearAttention(nn.Module):
         v = self.v_proj_item(x_norm).view(b, s, n, self.num_heads, self.head_dim)
         return q, k, v
 
+    def _apply_train_only_item_attention(
+        self,
+        q_train: torch.Tensor,
+        k_train: torch.Tensor,
+        v_train: torch.Tensor,
+        q_test: torch.Tensor,
+        k_test: torch.Tensor,
+        v_test: torch.Tensor,
+        *,
+        causal_train: bool,
+        include_test_self: bool,
+    ) -> torch.Tensor:
+        q_train = self._feature_map(q_train)
+        k_train = self._feature_map(k_train)
+        q_test = self._feature_map(q_test)
+        k_test = self._feature_map(k_test)
+
+        if causal_train:
+            attn_train, kv_state_train, k_sum_train = (
+                self._causal_linear_attention_items(q_train, k_train, v_train)
+            )
+        else:
+            kv_state_train, k_sum_train = compute_kv_state_5d(k_train, v_train)
+            attn_train = apply_state_to_query_5d(
+                q_train,
+                kv_state_train,
+                k_sum_train,
+                eps=self.eps,
+            )
+
+        attn_test = apply_state_to_query_5d(
+            q_test,
+            kv_state_train,
+            k_sum_train,
+            eps=self.eps,
+            k_self=k_test if include_test_self else None,
+            v_self=v_test if include_test_self else None,
+        )
+        return torch.cat([attn_train, attn_test], dim=1)
+
     def _apply_item_output_and_mlp(
         self,
         x: torch.Tensor,
@@ -207,40 +230,22 @@ class LinearAttention(nn.Module):
             attn_all, _, _ = self._causal_linear_attention_items(q_all, k_all, v_all)
             return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
 
-        # Train Part
         q_train = q_all[:, :single_eval_pos]
         k_train = k_all[:, :single_eval_pos]
         v_train = v_all[:, :single_eval_pos]
-        
-        # Test Part
         q_test = q_all[:, single_eval_pos:]
         k_test = k_all[:, single_eval_pos:]
         v_test = v_all[:, single_eval_pos:]
-
-        q_train = self._feature_map(q_train)
-        k_train = self._feature_map(k_train)
-        q_test = self._feature_map(q_test)
-        k_test = self._feature_map(k_test)
-
-        kv_state_train, k_sum_train = compute_kv_state_5d(k_train, v_train)
-
-        attn_train = apply_state_to_query_5d(
+        attn_all = self._apply_train_only_item_attention(
             q_train,
-            kv_state_train,
-            k_sum_train,
-            eps=self.eps,
-        )
-        
-        attn_test = apply_state_to_query_5d(
+            k_train,
+            v_train,
             q_test,
-            kv_state_train,
-            k_sum_train,
-            eps=self.eps,
-            k_self=k_test,
-            v_self=v_test,
+            k_test,
+            v_test,
+            causal_train=self.causal_train_only,
+            include_test_self=not self.causal_train_only,
         )
-
-        attn_all = torch.cat([attn_train, attn_test], dim=1)
         return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
 
     def incontext_fit(
@@ -259,11 +264,10 @@ class LinearAttention(nn.Module):
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
         x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
         q, k, v = self._project_item_qkv(x, norm_idx)
-
         q = self._feature_map(q)
         k = self._feature_map(k)
 
-        if self.causal:
+        if self.causal or self.causal_train_only:
             attn, kv_state, k_sum = self._causal_linear_attention_items(q, k, v)
         else:
             kv_state, k_sum = compute_kv_state_5d(k, v)
@@ -281,7 +285,6 @@ class LinearAttention(nn.Module):
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
         x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
         q, k, v = self._project_item_qkv(x, norm_idx)
-
         q = self._feature_map(q)
         k = self._feature_map(k)
         kv_state = state["kv_state"]
@@ -294,6 +297,13 @@ class LinearAttention(nn.Module):
                 v,
                 kv_state_prefix=kv_state,
                 k_sum_prefix=k_sum,
+            )
+        elif self.causal_train_only:
+            attn = apply_state_to_query_5d(
+                q,
+                kv_state,
+                k_sum,
+                eps=self.eps,
             )
         else:
             attn = apply_state_to_query_5d(
