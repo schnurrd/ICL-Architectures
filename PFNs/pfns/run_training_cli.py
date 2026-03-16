@@ -46,33 +46,6 @@ def _normalize_wandb_run_path(path: str) -> str | None:
     return f"{entity}/{project}/{run_id}"
 
 
-def _resolve_finetune_checkpoint_source(config_kwargs: dict[str, object]) -> None:
-    value = config_kwargs.get("finetune_from_checkpoint", None)
-    if not isinstance(value, str):
-        return
-    candidate = value.strip()
-    if candidate.lower() in {"", "default", "auto"}:
-        return
-
-    # Convenience: allow passing a checkpoint directory.
-    if os.path.isdir(candidate):
-        checkpoint_in_dir = os.path.join(candidate, "checkpoint.pt")
-        if os.path.exists(checkpoint_in_dir):
-            config_kwargs["finetune_from_checkpoint"] = checkpoint_in_dir
-            print(f"Resolved finetune checkpoint directory to: {checkpoint_in_dir}")
-            return
-
-    # If it looks like a wandb run path and is not an existing local file, download it.
-    normalized_run_path = _normalize_wandb_run_path(candidate)
-    if normalized_run_path is not None and not os.path.exists(candidate):
-        checkpoint_path = download_model_from_wandb(normalized_run_path)
-        config_kwargs["finetune_from_checkpoint"] = checkpoint_path
-        print(
-            f"Resolved finetune_from_checkpoint wandb run path {candidate} "
-            f"to local checkpoint: {checkpoint_path}"
-        )
-
-
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -132,18 +105,6 @@ def parse_args():
         metavar="RUN_PATH",
         help="Continue training from a wandb run (e.g., 'entity/project/run_id' or 'project/runs/run_id'). "
              "Downloads the checkpoint from wandb if not present locally.",
-    )
-    parser.add_argument(
-        "--finetune-from-wandb",
-        type=str,
-        default=None,
-        metavar="RUN_PATH",
-        help=(
-            "Download a checkpoint from a wandb run and pass it as "
-            "finetune_from_checkpoint to get_config. "
-            "Accepted formats: 'entity/project/run_id' or 'project/runs/run_id'. "
-            "Use this for weights-only fine-tuning with fresh optimizer settings."
-        ),
     )
 
     parser.add_argument(
@@ -362,30 +323,6 @@ def main():
     """Main CLI entry point."""
     args = parse_args()
     config_kwargs = dict(args.config_arg)
-    if args.continue_from_wandb is not None and args.finetune_from_wandb is not None:
-        raise ValueError(
-            "--continue-from-wandb and --finetune-from-wandb are mutually exclusive."
-        )
-    if args.finetune_from_wandb is not None:
-        if "finetune_from_checkpoint" in config_kwargs:
-            raise ValueError(
-                "Do not pass both --finetune-from-wandb and "
-                "--config-arg finetune_from_checkpoint=...; choose one source."
-            )
-        normalized_run_path = _normalize_wandb_run_path(args.finetune_from_wandb)
-        if normalized_run_path is None:
-            raise ValueError(
-                "Invalid --finetune-from-wandb path. "
-                "Expected 'entity/project/run_id' or 'project/runs/run_id'."
-            )
-        finetune_checkpoint_path = download_model_from_wandb(normalized_run_path)
-        config_kwargs["finetune_from_checkpoint"] = finetune_checkpoint_path
-        print(
-            f"Using finetune checkpoint downloaded from wandb run "
-            f"{normalized_run_path}: {finetune_checkpoint_path}"
-        )
-    else:
-        _resolve_finetune_checkpoint_source(config_kwargs)
     print("Loading configuration...")
     config = load_config_from_python(args.config_file, args.config_index, config_kwargs=config_kwargs)
 
@@ -404,12 +341,10 @@ def main():
         checkpoint_path = download_model_from_wandb(normalized_run_path)
         
         config = pfns.train.load_config(checkpoint_path)
-        # Continue mode should always restore optimizer/scheduler/epoch state.
-        # Overwrite save/load path to local path to avoid backwards compatibility issues.
+        # overwrite save/load path to local path to avoid backwards compatibility issues
         config = _update_config(config, 
             train_state_dict_load_path=checkpoint_path,
             train_state_dict_save_path=checkpoint_path,
-            checkpoint_load_mode="resume",
         )
         print(f"Continuing from wandb run: {run_id}")
 
@@ -461,17 +396,6 @@ def main():
         
         os.makedirs(path, exist_ok=True)
         print(f"Checkpoint path: {checkpoint_path}")
-
-    if (
-        getattr(config, "checkpoint_load_mode", "resume") == "weights_only"
-        and config.train_state_dict_load_path is None
-    ):
-        raise ValueError(
-            "checkpoint_load_mode='weights_only' requires a checkpoint load path. "
-            "Provide --finetune-from-wandb, or set "
-            "--config-arg finetune_from_checkpoint=... to a local checkpoint file "
-            "(or wandb run path)."
-        )
 
     # --- Update wandb config with all changes ---
     if run_manager.run_id:
