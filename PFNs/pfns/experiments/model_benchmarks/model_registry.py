@@ -207,26 +207,29 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
 
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
-    "Linear_Attention": {
-        "wandb_run_id": "linear_attention/runs/zybvsyiv",
+    "Linear_Attention_Non_Causal": {
+        "wandb_run_id": "linear_attention/runs/ygawhsm9",
+    },
+    "Linear_Attention_Causal": { # Comb_MT
+        "wandb_run_id": "linear_attention/runs/fdzuamc8",
     },
 }
 
 BASED_MODELS: dict[str, dict[str, Any]] = {
     "Rebased_feat_dim_32": {
-        "display_name": "Rebased $\phi$ with 32-dim features",
+        "display_name": "Rebased $\\phi$ with 32-dim features",
         "wandb_run_id": "fla_models/runs/72wtj14x"
     },
     "Rebased_feat_dim_16": {
-        "display_name": "Rebased $\phi$ with 16-dim features",
+        "display_name": "Rebased $\\phi$ with 16-dim features",
         "wandb_run_id": "fla_models/runs/478t1e31"
     },
     "Based_feat_dim_32": {
-        "display_name": "Based $\phi$ with 32-dim features",
+        "display_name": "Based $\\phi$ with 32-dim features",
         "wandb_run_id": "fla_models/runs/csb759y0"
     },
     "Based_feat_dim_16": {
-        "display_name": "Based $\phi$ with 16-dim features",
+        "display_name": "Based $\\phi$ with 16-dim features",
         "wandb_run_id": "fla_models/runs/kxe10m62"
     }
 }
@@ -238,6 +241,14 @@ DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
     },
     "DeltaNet_Comb_ST_Increasing_seq_1K->32K": {
         "wandb_run_id": "fla_models/runs/58w3kifz",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Int_MT_Seq_Len_500-64K_uniform": {
+        "wandb_run_id": "fla_models/runs/tou1nzi5",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Int_MT_Seq_Len_500-64K_loguniform": {
+        "wandb_run_id": "fla_models/runs/pyfldrsm",
         "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Int_MT_Seq_Len_1K": {

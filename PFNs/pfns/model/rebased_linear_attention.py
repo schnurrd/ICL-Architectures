@@ -172,14 +172,12 @@ class RebasedLinearAttention(nn.Module):
         k_test = k[:, single_eval_pos:]
         v_test = v[:, single_eval_pos:]
         
-        # Test tokens attend to Train State and themselves
+        # Test tokens attend only to the Train State
         attn_out_test = apply_state_to_query_4d(
             q_test, 
             kv_state_train, 
             k_sum_train,
             eps=self.eps,
-            k_self=k_test,
-            v_self=v_test
         )
         
         attn_out = torch.cat([attn_out_train, attn_out_test], dim=1)        
@@ -231,8 +229,6 @@ class RebasedLinearAttention(nn.Module):
             kv_state,
             k_sum,
             eps=self.eps,
-            k_self=k,
-            v_self=v,
         )
 
         return self._apply_output_residual_and_mlp(
