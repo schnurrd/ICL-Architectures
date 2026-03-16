@@ -208,9 +208,9 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Non_Causal": {
-        "wandb_run_id": "linear_attention/runs/zybvsyiv",
+        "wandb_run_id": "linear_attention/runs/ygawhsm9",
     },
-    "Linear_Attention_Causal": {
+    "Linear_Attention_Causal": { # Comb_MT
         "wandb_run_id": "linear_attention/runs/fdzuamc8",
     },
 }

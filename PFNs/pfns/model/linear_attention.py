@@ -10,6 +10,8 @@ from pfns.model.attention_utils import (
 
 
 class LinearAttention(nn.Module):
+    AUTO_CAUSAL_EVAL_CHUNK_SIZE = 2000
+
     """
     Linear attention layer with optional attention between feature blocks,
     following the same ordering as PerFeatureLayer (features -> items -> MLP).
@@ -31,6 +33,7 @@ class LinearAttention(nn.Module):
         attention_between_features: bool = False,
         causal: bool = False,
         causal_train_only: bool = False,
+        causal_chunk_size: int | None = None,
         feature_attention_softmax: bool = False,
         feature_dim: int | None = None,
         eps: float = 1e-6,
@@ -52,6 +55,9 @@ class LinearAttention(nn.Module):
             raise ValueError(
                 "causal and causal_train_only are mutually exclusive."
             )
+        if causal_chunk_size is not None and causal_chunk_size <= 0:
+            raise ValueError("causal_chunk_size must be >= 1.")
+        self.causal_chunk_size = causal_chunk_size
         self.feature_attention_softmax = feature_attention_softmax
         
         self.dropout = nn.Dropout(dropout)
@@ -108,7 +114,7 @@ class LinearAttention(nn.Module):
         out = torch.einsum("bshnm,bshmd->bshnd", attn, v)
         return out.permute(0, 1, 3, 2, 4)
 
-    def _causal_linear_attention_items(
+    def _causal_linear_attention_chunk(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
@@ -117,7 +123,7 @@ class LinearAttention(nn.Module):
         kv_state_prefix: torch.Tensor | None = None,
         k_sum_prefix: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Causal item attention: out_t = (q_t^T KV_<=t) / (q_t^T K_<=t + eps), with optional cached prefix state."""
+        """Process one causal chunk exactly, optionally seeded from a cached prefix state."""
         if q.shape[1] == 0:
             assert kv_state_prefix is not None and k_sum_prefix is not None
             return v, kv_state_prefix, k_sum_prefix
@@ -133,6 +139,63 @@ class LinearAttention(nn.Module):
         denom = torch.einsum("bsnhf,bsnhf->bsnh", q, k_prefix)
         attn = num / (denom.unsqueeze(-1) + self.eps)
         return attn, kv_prefix[:, -1], k_prefix[:, -1]
+
+    def _resolved_causal_chunk_size(self, seq_len: int) -> int | None:
+        """Resolve the chunk size for causal recurrence."""
+        if self.causal_chunk_size is not None:
+            return self.causal_chunk_size
+        if (
+            (self.causal or self.causal_train_only)
+            and not self.training
+            and seq_len > self.AUTO_CAUSAL_EVAL_CHUNK_SIZE
+        ):
+            return self.AUTO_CAUSAL_EVAL_CHUNK_SIZE
+        return None
+
+    def _causal_linear_attention_items(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        *,
+        kv_state_prefix: torch.Tensor | None = None,
+        k_sum_prefix: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Causal item attention with optional chunking over the sequence dimension."""
+        if q.shape[1] == 0:
+            return self._causal_linear_attention_chunk(
+                q,
+                k,
+                v,
+                kv_state_prefix=kv_state_prefix,
+                k_sum_prefix=k_sum_prefix,
+            )
+
+        chunk_size = self._resolved_causal_chunk_size(q.shape[1])
+        if chunk_size is None or q.shape[1] <= chunk_size:
+            return self._causal_linear_attention_chunk(
+                q,
+                k,
+                v,
+                kv_state_prefix=kv_state_prefix,
+                k_sum_prefix=k_sum_prefix,
+            )
+
+        outputs = []
+        kv_state = kv_state_prefix
+        k_sum = k_sum_prefix
+        for chunk_start in range(0, q.shape[1], chunk_size):
+            chunk_end = min(chunk_start + chunk_size, q.shape[1])
+            attn_chunk, kv_state, k_sum = self._causal_linear_attention_chunk(
+                q[:, chunk_start:chunk_end],
+                k[:, chunk_start:chunk_end],
+                v[:, chunk_start:chunk_end],
+                kv_state_prefix=kv_state,
+                k_sum_prefix=k_sum,
+            )
+            outputs.append(attn_chunk)
+
+        return torch.cat(outputs, dim=1), kv_state, k_sum
 
     def _apply_feature_attention_block(
         self,
