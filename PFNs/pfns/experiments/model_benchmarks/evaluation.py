@@ -116,6 +116,7 @@ def _evaluate_model_at_seqlen(
     num_classes: int,
     categorical_inds: list[int] | None,
     eval_mode: Literal["fit_predict", "forward"],
+    subsample_dataset_size: int | None = None,
 ) -> dict[str, float | None]:
     train_x = base_batch.x[:, :seqlen]
     train_y = base_batch.y[:, :seqlen]
@@ -124,45 +125,74 @@ def _evaluate_model_at_seqlen(
         :,
         largest_seqlen : largest_seqlen + number_of_test_samples,
     ]
-
-    x_train = train_x.to(resolved_device)
-    y_train = train_y.to(resolved_device)
     x_test = test_x.to(resolved_device)
-    style = move_style_and_check_shape(base_batch.style, train_x, resolved_device)
-    y_style = move_y_style_and_check_shape(base_batch.y_style, train_y, resolved_device)
+    selected_rows_list = [None]
+    if subsample_dataset_size is not None and seqlen > subsample_dataset_size:
+        shuffled_rows = np.random.default_rng(seqlen).permutation(seqlen)
+        num_slices = (seqlen + subsample_dataset_size - 1) // subsample_dataset_size
+        selected_rows_list = [
+            sorted(rows.tolist())
+            for rows in np.array_split(shuffled_rows, num_slices)
+        ]
 
-    fit_kwargs = {
-        "x": x_train,
-        "y": y_train,
-        "style": style,
-        "y_style": y_style,
-        "categorical_inds": categorical_inds,
-    }
-    pred_kwargs = {
-        "test_x": x_test,
-        "style": style,
-        "y_style": y_style,
-        "categorical_inds": categorical_inds,
-        "only_return_standard_out": True,
-    }
-    forward_kwargs = {
-        "x": x_train,
-        "y": y_train,
-        "test_x": x_test,
-        "style": style,
-        "y_style": y_style,
-        "categorical_inds": categorical_inds,
-        "only_return_standard_out": True,
-    }
+    def run_eval(selected_rows: list[int] | None, warmup_only: bool = False):
+        member_train_x = train_x
+        member_train_y = train_y
+        if selected_rows is not None:
+            member_train_x = member_train_x[:, selected_rows]
+            member_train_y = member_train_y[:, selected_rows]
+
+        x_train = member_train_x.to(resolved_device)
+        y_train = member_train_y.to(resolved_device)
+        style = move_style_and_check_shape(base_batch.style, member_train_x, resolved_device)
+        y_style = move_y_style_and_check_shape(base_batch.y_style, member_train_y, resolved_device)
+        fit_kwargs = {
+            "x": x_train,
+            "y": y_train,
+            "style": style,
+            "y_style": y_style,
+            "categorical_inds": categorical_inds,
+        }
+        pred_kwargs = {
+            "test_x": x_test,
+            "style": style,
+            "y_style": y_style,
+            "categorical_inds": categorical_inds,
+            "only_return_standard_out": True,
+        }
+        forward_kwargs = {
+            "x": x_train,
+            "y": y_train,
+            "test_x": x_test,
+            "style": style,
+            "y_style": y_style,
+            "categorical_inds": categorical_inds,
+            "only_return_standard_out": True,
+        }
+        if eval_mode == "fit_predict":
+            if warmup_only:
+                for _ in range(warmup_iters):
+                    warm_state = model.incontext_fit(**fit_kwargs)
+                    _ = model.incontext_predict(warm_state, **pred_kwargs)
+                return None
+            state, fit_ms = _timed(lambda: model.incontext_fit(**fit_kwargs), is_cuda=is_cuda)
+            output, pred_ms = _timed(
+                lambda: model.incontext_predict(state, **pred_kwargs),
+                is_cuda=is_cuda,
+            )
+            return output, fit_ms, pred_ms, state.size_bytes() / (1024**2)
+        if eval_mode == "forward":
+            if warmup_only:
+                for _ in range(warmup_iters):
+                    _ = model(**forward_kwargs)
+                return None
+            output, pred_ms = _timed(lambda: model(**forward_kwargs), is_cuda=is_cuda)
+            return output, 0.0, pred_ms, 0.0
+        raise ValueError(f"Unknown eval_mode {eval_mode!r}. Expected one of: {', '.join(EVAL_MODES)}.")
 
     try:
-        if eval_mode == "fit_predict":
-            for _ in range(warmup_iters):
-                warm_state = model.incontext_fit(**fit_kwargs)
-                _ = model.incontext_predict(warm_state, **pred_kwargs)
-        else:
-            for _ in range(warmup_iters):
-                _ = model(**forward_kwargs)
+        for selected_rows in selected_rows_list:
+            run_eval(selected_rows, warmup_only=True)
 
         peak_allocated_mb = None
         peak_reserved_mb = None
@@ -173,19 +203,18 @@ def _evaluate_model_at_seqlen(
             base_alloc = torch.cuda.memory_allocated() / (1024**2)
             base_reserved = torch.cuda.memory_reserved() / (1024**2)
 
-        if eval_mode == "fit_predict":
-            state, fit_ms = _timed(lambda: model.incontext_fit(**fit_kwargs), is_cuda=is_cuda)
-            output, pred_ms = _timed(
-                lambda: model.incontext_predict(state, **pred_kwargs),
-                is_cuda=is_cuda,
-            )
-            context_size_mb = state.size_bytes() / (1024**2)
-        elif eval_mode == "forward":
-            output, pred_ms = _timed(lambda: model(**forward_kwargs), is_cuda=is_cuda)
-            fit_ms = 0.0
-            context_size_mb = 0.0
-        else:
-            raise ValueError(f"Unknown eval_mode {eval_mode!r}. Expected one of: {', '.join(EVAL_MODES)}.")
+        outputs = []
+        fit_ms = 0.0
+        pred_ms = 0.0
+        context_size_mb_values = []
+        for selected_rows in selected_rows_list:
+            output_i, fit_ms_i, pred_ms_i, context_size_mb_i = run_eval(selected_rows)
+            outputs.append(output_i)
+            fit_ms += fit_ms_i
+            pred_ms += pred_ms_i
+            context_size_mb_values.append(float(context_size_mb_i))
+        context_size_mb = max(context_size_mb_values) if context_size_mb_values else 0.0
+        output = outputs[0] if len(outputs) == 1 else torch.stack(outputs).mean(dim=0)
 
         forward_ms = fit_ms + pred_ms
 
@@ -258,6 +287,7 @@ def evaluate_models_over_seqlens(
     device: str | None = None,
     progress_desc: str = "Overall progress",
     data_generation_seed: int | None = None,
+    subsample_dataset_size: int | None = None,
     task_variant: str = "tabular_prior",
     task_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -344,6 +374,7 @@ def evaluate_models_over_seqlens(
                                 num_classes=num_classes,
                                 categorical_inds=categorical_inds,
                                 eval_mode=model_eval_mode,
+                                subsample_dataset_size=subsample_dataset_size,
                             )
                         except BenchmarkOOMError:
                             tables.mark_oom(model_name, seqlen)
@@ -379,6 +410,11 @@ def evaluate_models_over_seqlens(
             "forward_models": sorted(forward_models_set),
             "data_generation_seed": (
                 int(data_generation_seed) if data_generation_seed is not None else None
+            ),
+            "subsample_dataset_size": (
+                int(subsample_dataset_size)
+                if subsample_dataset_size is not None
+                else None
             ),
             "task_variant": task_variant,
             "task_kwargs": resolved_task_kwargs,

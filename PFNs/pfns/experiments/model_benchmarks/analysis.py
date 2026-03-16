@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -77,6 +78,91 @@ def add_numeric_buckets(
         right=True,
     )
     return out
+
+
+def add_normalized_comparison_metrics(
+    metric_df: pd.DataFrame,
+    *,
+    metric_keys: Iterable[str],
+    higher_is_better_metrics: Iterable[str],
+    group_cols: Iterable[str],
+    comparison_col: str = "model",
+    metric_col: str = "metric",
+    value_col: str = "value",
+    neutral_value: float = 0.5,
+    normalized_prefix: str = "normalized_",
+) -> pd.DataFrame:
+    """Append min-max-normalized comparison metrics to a long-form metric dataframe.
+
+    For each `(metric, *group_cols)` slice, values are normalized across `comparison_col`.
+    Lower-is-better metrics are sign-flipped before normalization so that larger normalized
+    values always indicate better performance.
+    """
+    if metric_df.empty:
+        return metric_df.copy()
+
+    metric_keys = list(dict.fromkeys(str(metric) for metric in metric_keys))
+    higher_is_better_metrics = {str(metric) for metric in higher_is_better_metrics}
+    group_cols = list(dict.fromkeys(str(col) for col in group_cols))
+
+    required_cols = {comparison_col, metric_col, value_col, *group_cols}
+    missing_cols = sorted(required_cols - set(metric_df.columns))
+    if missing_cols:
+        raise RuntimeError(
+            f"Metric dataframe is missing required columns for normalization: {missing_cols}"
+        )
+
+    raw_metric_df = metric_df[metric_df[metric_col].astype(str).isin(metric_keys)].copy()
+    if raw_metric_df.empty:
+        return metric_df.copy()
+
+    subset_cols = [metric_col, comparison_col, *group_cols]
+    duplicate_mask = raw_metric_df.duplicated(subset=subset_cols, keep=False)
+    if duplicate_mask.any():
+        duplicate_preview = raw_metric_df.loc[duplicate_mask, subset_cols].head().to_dict("records")
+        raise RuntimeError(
+            "Normalization requires one row per comparison slice. "
+            f"Found duplicates for columns {subset_cols}: {duplicate_preview}"
+        )
+
+    def _normalize_group(group: pd.DataFrame) -> pd.DataFrame:
+        normalized_group = group.copy()
+        raw_scores = normalized_group[value_col].to_numpy(dtype=float, copy=True)
+        finite_mask = np.isfinite(raw_scores)
+        metric_name = str(normalized_group[metric_col].iloc[0])
+        scores = raw_scores if metric_name in higher_is_better_metrics else -raw_scores
+        normalized = np.full_like(scores, np.nan, dtype=float)
+        finite_scores = scores[finite_mask]
+        if finite_scores.size:
+            score_min = float(finite_scores.min())
+            score_max = float(finite_scores.max())
+            normalized[finite_mask] = (
+                float(neutral_value)
+                if np.isclose(score_min, score_max)
+                else (finite_scores - score_min) / (score_max - score_min)
+            )
+
+        normalized_group[value_col] = normalized
+        normalized_group[metric_col] = (
+            normalized_prefix + normalized_group[metric_col].astype(str)
+        )
+        return normalized_group.dropna(subset=[value_col])
+
+    normalized_metric_df = pd.concat(
+        [
+            _normalize_group(group)
+            for _, group in raw_metric_df.groupby(
+                [metric_col, *group_cols],
+                observed=True,
+                sort=True,
+            )
+        ],
+        ignore_index=True,
+    )
+    if normalized_metric_df.empty:
+        return metric_df.copy()
+
+    return pd.concat([metric_df.copy(), normalized_metric_df], ignore_index=True)
 
 
 def compute_mean_rank_tables(

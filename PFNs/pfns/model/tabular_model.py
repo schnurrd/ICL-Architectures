@@ -667,6 +667,13 @@ class TabularModel(nn.Module):
             b=embedded_y.shape[0],
         )  # b s f 1 -> b s f e
         del x
+        
+        if torch.isnan(embedded_x).any():
+            raise ValueError(
+                f"{torch.isnan(embedded_x).any()=}, make sure to add nan handlers"
+                " to the xs that are not fully provided (test set missing)",
+            )
+            
 
         embedded_x, embedded_y = self.add_embeddings(
             embedded_x,  # (b s num_groups e)
@@ -676,6 +683,14 @@ class TabularModel(nn.Module):
             cache_embeddings=(cache_trainset_representation and single_eval_pos is not None),
             use_cached_embeddings=(cache_trainset_representation and single_eval_pos is None),
         )
+        
+        if torch.isnan(embedded_x).any() or torch.isnan(embedded_y).any():
+            raise ValueError(
+                f"There should be no NaNs in the embedded x and y after adding positional or style embeddings."
+                "Check that your embedding layers do not produce NaNs for the given inputs."
+                f"Your embedded x and y at this point are the following:"
+                f"{torch.isnan(embedded_x).any()=} | {torch.isnan(embedded_y).any()=}",
+            )
 
         Int_MT_mode = (
             getattr(self.transformer_layers, "sequence_mode", None) == "Int_MT"

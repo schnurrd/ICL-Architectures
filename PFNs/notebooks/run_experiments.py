@@ -225,6 +225,7 @@ for model_name, model_config in models_to_compare.items():
         ),
         device=device,
         data_generation_seed=EXPERIMENT["data_generation_seed"],
+        subsample_dataset_size=model_config.get("subsample_dataset_size"),
         progress_desc=f"{model_name} progress",
         forward_models=get_forward_models_from_registry({model_name: model_config}),
     )

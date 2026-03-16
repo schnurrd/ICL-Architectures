@@ -5,11 +5,15 @@ from pfns.training_utils import resolve_autocast_dtype
 from pfns.utils import get_default_device
 
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
+
     "Softmax_Transformer": {
-        "wandb_run_id": "tabpfn_transformer/runs/90rqcrr2",  # no feature attention like fla
+        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
     },
     "Softmax_Transformer_with_feature_attention": {
-        "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default)
+        "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
+        #n ew smaller versions 
+        # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
+        # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
     },
 }
 
@@ -203,8 +207,11 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
 
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
-    "Linear_Attention": {
+    "Linear_Attention_Non_Causal": {
         "wandb_run_id": "linear_attention/runs/zybvsyiv",
+    },
+    "Linear_Attention_Causal": {
+        "wandb_run_id": "linear_attention/runs/fdzuamc8",
     },
 }
 
@@ -236,38 +243,34 @@ DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "icl_arch/fla_models/zmvzjsep",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_Finetuned_50K_1_e-5_new_lognormal_10ep": {
-        "wandb_run_id": "icl_arch/fla_models/f7sd3vcp",
-        "eval_autocast_dtype": "bf16",
-    },
-    "DeltaNet_Comb_ST_Finetuned_50K_5_e-6_new_lognormal_5ep": {
-        "wandb_run_id": "icl_arch/fla_models/b48ylhbw",
-        "eval_autocast_dtype": "bf16",
-    },
     "DeltaNet_Comb_ST_Reference": {
         "display_name": "DeltaNet Reference",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "eval_autocast_dtype": "bf16",
-    }
+    },
 }
 
-DELTANET_ADDED_REGULARIZATION: dict[str, dict[str, Any]] = {
-    "DeltaNet_Comb_ST_reg_1e-6": {
-        "wandb_run_id": "fla_models/runs/f6ynrp4l",
+DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
+    "DeltaNet_Int_MT_Increasing_seq_1K->32K": {
+        "wandb_run_id": "fla_models/runs/vo5mkuwt",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_reg_1e-5": {
-        "wandb_run_id": "fla_models/runs/bfr8qhfh",
+    "DeltaNet_Comb_ST_Increasing_seq_1K->32K": {
+        "wandb_run_id": "fla_models/runs/58w3kifz",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_reg_1e-4": {
-        "wandb_run_id": "fla_models/runs/lzodfrv5",
+    "DeltaNet_Int_MT_Seq_Len_500-64K_uniform": {
+        "wandb_run_id": "fla_models/runs/tou1nzi5",
         "eval_autocast_dtype": "bf16",
     },
-    "DeltaNet_Comb_ST_Reference": {
-        "wandb_run_id": "fla_models/runs/ob2m9rth",
+    "DeltaNet_Int_MT_Seq_Len_500-64K_loguniform": {
+        "wandb_run_id": "fla_models/runs/pyfldrsm",
         "eval_autocast_dtype": "bf16",
-    }
+    },
+    "DeltaNet_Int_MT_Seq_Len_1K": {
+        "wandb_run_id": "fla_models/runs/ji6lw9hu",
+        "eval_autocast_dtype": "bf16",
+    },
 }
 
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
@@ -318,7 +321,7 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     "Transformer_Non_Causal": {
         "display_name": "Non-Causal", #"Non-Causal (Default)",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/pmcn4brd", # fp16 version d4mttnjl, fp 32 version pmcn4brd
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/f1lg4ch9", # fp16 version d4mttnjl, fp 32 version pmcn4brd, old 15.2M params version
         "eval_mode": "forward",
     },
     # "Transformer_Non_Causal_with_RoPE_pairwise": {
@@ -332,7 +335,7 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     # },
     "masked:Transformer_Comb_ST": {
         "display_name": "Causal Single Target",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/b56ohkmz", # fp 16 version 2wrxsh60
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/gex7h68b", # fp 16 version 2wrxsh60, old 15.2M params version b56ohkmz
         "eval_mode": "forward",
     },
     # "Transformer_Test_To_Train_Only": {
@@ -354,6 +357,42 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
     #     "eval_mode": "forward",
     # },
+}
+
+SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
+    "subsampled:DeltaNet_Comb_ST_1K": {
+        "display_name": "DeltaNet Comb ST (Subsampled 1K)",
+        "wandb_run_id": "fla_models/runs/ob2m9rth",
+        "eval_autocast_dtype": "bf16",
+        "subsample_dataset_size": 1_000
+    },
+    "subsampled:DeltaNet_Comb_ST_3K": {
+        "display_name": "DeltaNet Comb ST (Subsampled 3K)",
+        "wandb_run_id": "fla_models/runs/ob2m9rth",
+        "eval_autocast_dtype": "bf16",
+        "subsample_dataset_size": 3_000
+    },
+    "subsampled:DeltaNet_Comb_ST_10K": {
+        "display_name": "DeltaNet Comb ST (Subsampled 10K)",
+        "wandb_run_id": "fla_models/runs/ob2m9rth",
+        "eval_autocast_dtype": "bf16",
+        "subsample_dataset_size": 10_000
+    },
+    "subsampled:Transformer_Comb_ST_1K": {
+        "display_name": "Transformer Comb ST (Subsampled 1K)",
+        "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
+        "subsample_dataset_size": 1_000
+    },
+    "subsampled:Transformer_Comb_ST_3K": {
+        "display_name": "Transformer Comb ST (Subsampled 3K)",
+        "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
+        "subsample_dataset_size": 3_000
+    },
+    "subsampled:Transformer_Comb_ST_10K": {
+        "display_name": "Transformer Comb ST (Subsampled 10K)",
+        "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
+        "subsample_dataset_size": 10_000
+    },
 }
 
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
@@ -382,7 +421,8 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "equal_params": EQUAL_PARAMS_MODELS,
     "transformer_masked": TRANSFORMER_MASKED_MODELS,
     "deltanet_finetuned": DELTANET_FINETUNED_MODELS,
-    "deltanet_added_regularization": DELTANET_ADDED_REGULARIZATION,
+    "deltanet_high_seq_len": DELTANET_HIGH_SEQ_LEN_MODELS,
+    "subsampled": SUBSAMPLED_MODELS,
     "fla_models": {
         **KDA_MODELS,
         **GLA_MODELS,

@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from .comparison_analysis import ci95_halfwidth
 from .constants import DEFAULT_COLORS, DEFAULT_LINESTYLES, DEFAULT_MARKERS
 from .model_registry import get_all_models
 
@@ -72,6 +73,8 @@ def plot_curves_from_df(
     x_label: str = "In-context samples",
     title_suffix: str = "",
     show_std: bool = False,
+    error_bars: Literal["std", "ci95"] | None = None,
+    error_style: Literal["bars", "band"] = "bars",
     log_x: bool = False,
     log_y: bool = False,
     invert_y: bool = False,
@@ -85,6 +88,10 @@ def plot_curves_from_df(
         return None, None
     if model_legend_layout not in {"bottom", "right"}:
         raise ValueError("model_legend_layout must be 'bottom' or 'right'.")
+    if error_bars not in {None, "std", "ci95"}:
+        raise ValueError("error_bars must be one of None, 'std', or 'ci95'.")
+    if error_style not in {"bars", "band"}:
+        raise ValueError("error_style must be 'bars' or 'band'.")
 
     display_name_map = resolve_display_name_map(df)
     sns.set_theme(style="whitegrid", font_scale=1.2)
@@ -127,7 +134,7 @@ def plot_curves_from_df(
             sub = subset_metric[subset_metric["model"] == model]
             agg = (
                 sub.groupby(x_col, observed=True)[value_col]
-                .agg(["mean", "std"])
+                .agg(mean="mean", std="std", ci95=ci95_halfwidth)
                 .reset_index()
                 .sort_values(x_col)
             )
@@ -154,6 +161,38 @@ def plot_curves_from_df(
                     alpha=0.2,
                     color=color,
                 )
+            if error_bars is not None:
+                err = agg[error_bars].fillna(0.0).to_numpy(dtype=float)
+                if np.any(err > 0.0):
+                    mean_values = agg["mean"].to_numpy(dtype=float)
+                    lower_values = mean_values - err
+                    if log_y:
+                        lower_values = np.maximum(lower_values, np.finfo(float).tiny)
+                    if error_style == "band":
+                        ax.fill_between(
+                            agg[x_col],
+                            lower_values,
+                            mean_values + err,
+                            alpha=0.12,
+                            color=color,
+                        )
+                    else:
+                        if log_y:
+                            lower_err = np.minimum(err, np.maximum(mean_values - np.finfo(float).tiny, 0.0))
+                            yerr = np.vstack([lower_err, err])
+                        else:
+                            yerr = err
+                        ax.errorbar(
+                            agg[x_col],
+                            agg["mean"],
+                            yerr=yerr,
+                            fmt="none",
+                            ecolor=color,
+                            elinewidth=1.2,
+                            capsize=3.0,
+                            alpha=0.7,
+                            zorder=3,
+                        )
 
         ax.set_xlabel(x_label)
         ax.set_ylabel(metric_name)

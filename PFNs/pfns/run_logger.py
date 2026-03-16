@@ -204,6 +204,7 @@ def download_model_from_wandb(
     run_path: str,
     destination_path: str | None = None,
 ) -> str:
+    from datetime import datetime
     import wandb
     import shutil
     import tempfile
@@ -216,6 +217,19 @@ def download_model_from_wandb(
         destination_path = run.config['train_state_dict_save_path']
     
     destination_dir = os.path.dirname(destination_path)
+    latest_model_artifact = next(
+        (
+            artifact
+            for artifact in run.logged_artifacts()
+            if artifact.type == "model" and "latest" in artifact.aliases
+        ),
+        None,
+    )
+    latest_model_artifact_created_at = getattr(latest_model_artifact, "created_at", None)
+    if isinstance(latest_model_artifact_created_at, str):
+        latest_model_artifact_created_at = datetime.fromisoformat(
+            latest_model_artifact_created_at.replace("Z", "+00:00")
+        )
     
     if os.path.exists(destination_path):
         try:
@@ -224,29 +238,36 @@ def download_model_from_wandb(
             local_run_id = model_data['config']['wandb_run_id']
             local_epoch = model_data.get('epoch')
             remote_epoch = run.summary.get("trainer/epoch")
+            local_file_is_latest = (
+                latest_model_artifact_created_at is None
+                or os.path.getmtime(destination_path)
+                >= latest_model_artifact_created_at.timestamp()
+            )
             
-            if local_run_id == run.id and local_epoch is not None and (local_epoch == remote_epoch or local_epoch == remote_epoch - 1): # can be off by 1 when interupted mid epoch
+            if (
+                local_run_id == run.id
+                and local_epoch is not None
+                and (local_epoch == remote_epoch or local_epoch == remote_epoch - 1)
+                and local_file_is_latest
+            ): # can be off by 1 when interupted mid epoch
                 print(f"Model at {destination_path} is already up to date (Run ID: {local_run_id}, Epoch: {local_epoch}). Skipping download.")
                 return destination_path
             
         except Exception as e:
             print(f"Could not verify existing model (Error: {e}). Proceeding locally.")
             pass
-        os.remove(destination_path) # remove outdated or invalid file
-    
-    artifacts = run.logged_artifacts()
-    for artifact in artifacts:
-        if artifact.type == "model" and "latest" in artifact.aliases:
-            print(f"Found model artifact: {artifact.name}")
-            with tempfile.TemporaryDirectory(prefix="wandb_model_downloads_") as tmp_dir:
-                download_dir = artifact.download(root=tmp_dir)
-                for root, _, files in os.walk(download_dir):
-                    for file in files:
-                        if file.endswith(".pt") or len(files) == 1:
-                            src = os.path.join(root, file)
-                            os.makedirs(destination_dir, exist_ok=True)
-                            shutil.copy2(src, destination_path)
-                            print(f"Downloaded artifact file {file} to {destination_path}")
-                            return destination_path
+
+    if latest_model_artifact is not None:
+        print(f"Found model artifact: {latest_model_artifact.name}")
+        with tempfile.TemporaryDirectory(prefix="wandb_model_downloads_") as tmp_dir:
+            download_dir = latest_model_artifact.download(root=tmp_dir)
+            for root, _, files in os.walk(download_dir):
+                for file in files:
+                    if file.endswith(".pt") or len(files) == 1:
+                        src = os.path.join(root, file)
+                        os.makedirs(destination_dir, exist_ok=True)
+                        shutil.copy2(src, destination_path)
+                        print(f"Downloaded artifact file {file} to {destination_path}")
+                        return destination_path
 
     raise FileNotFoundError(f"No suitable model artifact found in run {run_path}.")

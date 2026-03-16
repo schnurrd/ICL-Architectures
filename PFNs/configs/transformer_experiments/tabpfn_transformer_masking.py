@@ -18,7 +18,15 @@ from pfns.train import (
     OptimizerConfig,
     ModelConfig,
 )
+from pfns.prior_defaults import (
+    ASSOCIATIVE_RECALL_SETTINGS,
+    TABPFN_PRIOR_DEFAULTS,
+    build_prior_for_task,
+    resolve_training_setup_for_task,
+)
 
+MAX_NUM_CLASSES = int(TABPFN_PRIOR_DEFAULTS["max_num_classes"])
+MAX_NUM_FEATURES = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
 
 def get_config(
     config_index: int = 0,
@@ -27,6 +35,7 @@ def get_config(
     interleave_x_y_pairs: bool = False,
     train_mixed_precision: bool = False,
     train_mixed_precision_dtype: str = "fp16",
+    task_variant: str = "tabular_prior",
     item_attention_use_rope: bool = False,
     item_attention_rope_base: float = 128_000.0,
     item_attention_rope_pairwise_positions: bool = False,
@@ -36,17 +45,19 @@ def get_config(
     tabpfn_prior data.
     """
 
-    max_num_classes = 10
-    max_num_features = 20
-
+    _, is_associative_recall = resolve_training_setup_for_task(
+        training_setup="high",
+        task_variant=task_variant,
+    )
+    assert not is_associative_recall, "Associative recall training setups are not supported in this config"
+    
     masking = normalize_optional_none_string(masking)
 
     # for backward compatibility with older config versions
-    if masking in {"causal_train_only", "causal_all"}:
-        if masking == "causal_train_only":
-            masking = "Int_ST" if interleave_x_y_pairs else "Comb_ST"
-        else:
-            masking = "Int_MT" if interleave_x_y_pairs else "Comb_MT"
+    if masking == "causal_train_only":
+        masking = "Int_ST" if interleave_x_y_pairs else "Comb_ST"
+    elif masking == "causal_all":
+        masking = "Int_MT" if interleave_x_y_pairs else "Comb_MT"
 
     assert masking in [
         "test_to_train_only",
@@ -67,23 +78,24 @@ def get_config(
     
     resolved_prior_device = resolve_prior_device(max_seq_len=resolved_max_seq_len)
 
-    prior = TabPFNPriorConfig(
-        prior_type="mlp",       
-        max_num_classes=max_num_classes,
-        max_num_features=max_num_features,          
-        flexible=True,                 
-        differentiable=True,
-        return_categorical_mask=True,
-        nan_handling=True,
-        device=resolved_prior_device,
+    prior = build_prior_for_task(
+        task_variant=task_variant,
+        prior_device=resolved_prior_device,
+        max_num_classes=MAX_NUM_CLASSES,
+        max_num_features=MAX_NUM_FEATURES,
     )
     
     batch_shape = BatchShapeSamplerConfig(
         batch_size=8,
         min_single_eval_pos=64,
         max_seq_len=resolved_max_seq_len,
+        batch_size_stages=None,
+        dynamic_batch_size_compensate_grad_accumulation=False,
+        eval_pos_split_pct_min=None,
+        eval_pos_split_pct_max=None,
+        seq_len_stages=None,
         min_num_features=2,
-        max_num_features=max_num_features,
+        max_num_features=MAX_NUM_FEATURES,
         fixed_num_test_instances=None,
     )
 
@@ -97,11 +109,12 @@ def get_config(
         layer_kwargs["item_attention_rope_pairwise_positions"] = True
 
     model = ModelConfig(
-        criterion=CrossEntropyConfig(num_classes=max_num_classes),
+        criterion=CrossEntropyConfig(num_classes=MAX_NUM_CLASSES),
         encoder=EncoderConfig(
             variable_num_features_normalization=True,
             nan_handling=True, # currently only nan to mean imputation works
-            use_categorical_encoder=True
+            use_categorical_encoder=True,
+            train_normalization=True,
         ),
         y_encoder=EncoderConfig(
             nan_handling=True,

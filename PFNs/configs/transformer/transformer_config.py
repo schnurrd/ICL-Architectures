@@ -91,14 +91,14 @@ TRAINING_PROFILES = {
         **BASE_PROFILE,
         "nlayers": 10,
         "emsize": 320,
-        "nhid": 320 * 4,
+        "nhid": 320 * 2,
         "lr": 3.0e-5,
         "steps_per_epoch": 4000,
         "epochs": 200,
         "warmup_epochs": 10,
         "aggregate_k_gradients": 2,
         "attention_between_features": True,
-        "features_per_group": 5,
+        "features_per_group": 2,
         "wandb_suffix": "_high_feature_att",
     },
     "very_high": {
@@ -132,7 +132,7 @@ TRAINING_PROFILES = {
 
 def get_config(
     config_index: int = 0,
-    training_setup: str = "low",
+    training_setup: str = "high",
     batch_size: int | None = None,
     max_seq_len: int | None = None,
     batch_size_stages: list[tuple[int, int]] | tuple[tuple[int, int], ...] | None = None,
@@ -215,6 +215,7 @@ def get_config(
             variable_num_features_normalization=True,
             nan_handling=True,  # currently only nan to mean imputation works
             use_categorical_encoder=True,
+            train_normalization=True,
         ),
         y_encoder=EncoderConfig(
             nan_handling=True,

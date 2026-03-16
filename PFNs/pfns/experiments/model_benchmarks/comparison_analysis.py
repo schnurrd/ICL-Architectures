@@ -11,10 +11,11 @@ def ci95_halfwidth(values: pd.Series) -> float:
     """
     Return two-sided 95% CI half-width for the sample mean.
     """
-    n = int(values.shape[0])
+    clean_values = values.dropna()
+    n = int(clean_values.shape[0])
     if n <= 1:
         return 0.0
-    std = float(values.std(ddof=1))
+    std = float(clean_values.std(ddof=1))
     sem = float(std / (n ** 0.5))
     t_crit = float(student_t.ppf(0.975, df=n - 1))
     return float(t_crit * sem)

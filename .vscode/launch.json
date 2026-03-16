@@ -137,6 +137,19 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "justMyCode": false
-        }
+        },
+        {
+            "name": "Python Debugger: Real World Experiments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/notebooks/run_real_world_experiments.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
+            "args": [
+                "--num-runs", "1",
+                "--run-index", "0",
+                "--include-baselines",
+            ]
+        },
     ]
 }
