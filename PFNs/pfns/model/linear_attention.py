@@ -13,6 +13,13 @@ class LinearAttention(nn.Module):
     """
     Linear attention layer with optional attention between feature blocks,
     following the same ordering as PerFeatureLayer (features -> items -> MLP).
+
+    Item attention supports three masking modes:
+    - default: train tokens attend bidirectionally within train; test tokens attend
+      to train only
+    - causal_train_only: train tokens attend causally; test tokens attend only to train
+    - causal: full autoregressive attention during training; switches to
+      causal_train_only during inference
     """
     def __init__(
         self,
@@ -23,10 +30,12 @@ class LinearAttention(nn.Module):
         activation: str = "silu",
         attention_between_features: bool = False,
         causal: bool = False,
+        causal_train_only: bool = False,
         feature_attention_softmax: bool = False,
         feature_dim: int | None = None,
         eps: float = 1e-6,
     ):
+        """Initialize projections, norms, and masking flags."""
         super().__init__()
         
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads."
@@ -38,11 +47,15 @@ class LinearAttention(nn.Module):
         
         self.attention_between_features = attention_between_features
         self.causal = bool(causal)
+        self.causal_train_only = bool(causal_train_only)
+        if self.causal and self.causal_train_only:
+            raise ValueError(
+                "causal and causal_train_only are mutually exclusive."
+            )
         self.feature_attention_softmax = feature_attention_softmax
         
         self.dropout = nn.Dropout(dropout)
         self.eps = eps
-        self.save_peak_mem_factor = None
 
         if attention_between_features:
             self.q_proj_feat = nn.Linear(d_model, d_model)
@@ -61,6 +74,7 @@ class LinearAttention(nn.Module):
         self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
 
     def _feature_map(self, x: torch.Tensor) -> torch.Tensor:
+        """phi(x) = ELU(x) + 1."""
         return F.elu(x) + 1.0
 
     def _linear_attention_features(
@@ -69,6 +83,7 @@ class LinearAttention(nn.Module):
         k: torch.Tensor,
         v: torch.Tensor,
     ) -> torch.Tensor:
+        """Feature linear attention: out_n = (phi(q_n)^T sum_m phi(k_m)v_m^T) / (phi(q_n)^T sum_m phi(k_m) + eps)."""
         # q, k, v: (batch, seq_len, num_feature_blocks, nhead, head_dim)
         q = self._feature_map(q)
         k = self._feature_map(k)
@@ -77,35 +92,13 @@ class LinearAttention(nn.Module):
         kv = torch.einsum("bsnhd,bsnhe->bshde", k, v)
         return torch.einsum("bsnhd,bshde->bsnhe", q, kv) / (denom + self.eps)
 
-    def _linear_attention_items(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        k_self: torch.Tensor | None = None,
-        v_self: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        # q, k, v: (batch, seq_len, num_feature_blocks, nhead, head_dim)
-        q = self._feature_map(q)
-        k = self._feature_map(k)
-        kv_state, k_sum = compute_kv_state_5d(k, v)
-        if k_self is not None and v_self is not None:
-            k_self = self._feature_map(k_self)
-        return apply_state_to_query_5d(
-            q,
-            kv_state,
-            k_sum,
-            eps=self.eps,
-            k_self=k_self,
-            v_self=v_self,
-        )
-
     def _softmax_attention_features(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
     ) -> torch.Tensor:
+        """Feature softmax attention: out_n = sum_m softmax_m(q_n^T k_m) v_m."""
         # q, k, v: (batch, seq_len, num_feature_blocks, nhead, head_dim)
         q = q.permute(0, 1, 3, 2, 4)  # (b, s, h, n, d)
         k = k.permute(0, 1, 3, 2, 4)
@@ -124,6 +117,7 @@ class LinearAttention(nn.Module):
         kv_state_prefix: torch.Tensor | None = None,
         k_sum_prefix: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Causal item attention: out_t = (q_t^T KV_<=t) / (q_t^T K_<=t + eps), with optional cached prefix state."""
         if q.shape[1] == 0:
             assert kv_state_prefix is not None and k_sum_prefix is not None
             return v, kv_state_prefix, k_sum_prefix
@@ -145,6 +139,7 @@ class LinearAttention(nn.Module):
         x: torch.Tensor,
         norm_idx: int,
     ) -> tuple[torch.Tensor, int]:
+        """Feature block: x' = x + Dropout(W_o Attn_feat(W_q LN(x), W_k LN(x), W_v LN(x)))."""
         if not self.attention_between_features:
             return x, norm_idx
 
@@ -166,6 +161,7 @@ class LinearAttention(nn.Module):
         x: torch.Tensor,
         norm_idx: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Item projections: q = W_q LN(x), k = W_k LN(x), v = W_v LN(x)."""
         x_norm = self.norms[norm_idx](x)
         b, s, n, _ = x_norm.shape
         q = self.q_proj_item(x_norm).view(b, s, n, self.num_heads, self.feature_dim)
@@ -173,12 +169,66 @@ class LinearAttention(nn.Module):
         v = self.v_proj_item(x_norm).view(b, s, n, self.num_heads, self.head_dim)
         return q, k, v
 
+    def _compute_train_attention_and_state(
+        self,
+        q_train: torch.Tensor,
+        k_train: torch.Tensor,
+        v_train: torch.Tensor,
+        *,
+        causal_train: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute train outputs and the train state consumed by test tokens."""
+        q_train = self._feature_map(q_train)
+        k_train = self._feature_map(k_train)
+
+        if causal_train:
+            return self._causal_linear_attention_items(q_train, k_train, v_train)
+
+        kv_state_train, k_sum_train = compute_kv_state_5d(k_train, v_train)
+        attn_train = apply_state_to_query_5d(
+            q_train,
+            kv_state_train,
+            k_sum_train,
+            eps=self.eps,
+        )
+        return attn_train, kv_state_train, k_sum_train
+
+    def _apply_split_item_attention(
+        self,
+        q_train: torch.Tensor,
+        k_train: torch.Tensor,
+        v_train: torch.Tensor,
+        q_test: torch.Tensor,
+    ) -> torch.Tensor:
+        """Apply the split train/test attention path.
+
+        Test tokens attend only to the aggregated train state. The difference
+        between modes is whether the train state itself was built causally or
+        non-causally.
+        """
+        use_causal_train_only = self.causal_train_only or (self.causal and not self.training)
+        attn_train, kv_state_train, k_sum_train = self._compute_train_attention_and_state(
+            q_train,
+            k_train,
+            v_train,
+            causal_train=use_causal_train_only,
+        )
+        q_test = self._feature_map(q_test)
+        attn_test = apply_state_to_query_5d(
+            q_test,
+            kv_state_train,
+            k_sum_train,
+            eps=self.eps,
+        )
+        return torch.cat([attn_train, attn_test], dim=1)
+
     def _apply_item_output_and_mlp(
         self,
         x: torch.Tensor,
         attn: torch.Tensor,
         norm_idx: int,
     ) -> torch.Tensor:
+        """Output block: x1 = x + Dropout(W_o attn), out = x1 + MLP(LN(x1))."""
         b, s, n, _ = x.shape
         attn = attn.reshape(b, s, n, self.d_model)
         attn = self.dropout(self.out_proj_item(attn))
@@ -187,10 +237,15 @@ class LinearAttention(nn.Module):
         return x + self.mlp(self.norms[norm_idx](x))
 
     def forward(self, x, *, single_eval_pos: int | None = None, **kwargs):
+        """Run feature attention, item attention, and the residual MLP.
+
+        `causal=True` uses full autoregressive attention only in training mode.
+        All other cases use the split train/test path.
+        """
         # x: (batch, num_items, num_feature_blocks, embed_dim)
         norm_idx = 0
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
-        b, s, n, _ = x.shape
+        _, s, _, _ = x.shape
         assert single_eval_pos is not None, (
             "single_eval_pos must be provided for LinearAttention."
         )
@@ -201,80 +256,44 @@ class LinearAttention(nn.Module):
         x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
         q_all, k_all, v_all = self._project_item_qkv(x, norm_idx)
 
-        # Train Part
+        if self.causal and self.training:
+            q_all = self._feature_map(q_all)
+            k_all = self._feature_map(k_all)
+            attn_all, _, _ = self._causal_linear_attention_items(q_all, k_all, v_all)
+            return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
+
         q_train = q_all[:, :single_eval_pos]
         k_train = k_all[:, :single_eval_pos]
         v_train = v_all[:, :single_eval_pos]
-        
-        # Test Part
         q_test = q_all[:, single_eval_pos:]
-        k_test = k_all[:, single_eval_pos:]
-        v_test = v_all[:, single_eval_pos:]
-
-        if self.causal:
-            q_train = self._feature_map(q_train)
-            k_train = self._feature_map(k_train)
-            attn_train, kv_state_train, k_sum_train = self._causal_linear_attention_items(
-                q_train,
-                k_train,
-                v_train,
-            )
-            q_test = self._feature_map(q_test)
-            k_test = self._feature_map(k_test)
-            attn_test, _, _ = self._causal_linear_attention_items(
-                q_test,
-                k_test,
-                v_test,
-                kv_state_prefix=kv_state_train,
-                k_sum_prefix=k_sum_train,
-            )
-        else:
-            kv_state_train, k_sum_train = compute_kv_state_5d(
-                self._feature_map(k_train), v_train
-            )
-
-            attn_train = apply_state_to_query_5d(
-                self._feature_map(q_train),
-                kv_state_train,
-                k_sum_train,
-                eps=self.eps,
-            )
-            
-            attn_test = apply_state_to_query_5d(
-                self._feature_map(q_test),
-                kv_state_train,
-                k_sum_train,
-                eps=self.eps,
-                k_self=self._feature_map(k_test),
-                v_self=v_test,
-            )
-
-        attn_all = torch.cat([attn_train, attn_test], dim=1)
+        attn_all = self._apply_split_item_attention(
+            q_train,
+            k_train,
+            v_train,
+            q_test,
+        )
         return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
 
     def incontext_fit(
         self,
         x: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Process the training context and return the cached KV state.
-
-        Args:
-            x: (batch, seq_len_train, num_feature_blocks, embed_dim)
-
-        Returns:
-            Tuple of (output, state) where state contains kv_state and k_sum.
-        """
+        """Encode the train context and return cached `(kv_state, k_sum)`."""
         norm_idx = 0
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
         x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
         q, k, v = self._project_item_qkv(x, norm_idx)
 
-        q = self._feature_map(q)
-        k = self._feature_map(k)
-
-        if self.causal:
-            attn, kv_state, k_sum = self._causal_linear_attention_items(q, k, v)
+        if self.causal or self.causal_train_only:
+            attn, kv_state, k_sum = self._compute_train_attention_and_state(
+                q,
+                k,
+                v,
+                causal_train=True,
+            )
         else:
+            q = self._feature_map(q)
+            k = self._feature_map(k)
             kv_state, k_sum = compute_kv_state_5d(k, v)
             attn = apply_state_to_query_5d(q, kv_state, k_sum, eps=self.eps)
         x = self._apply_item_output_and_mlp(x, attn, norm_idx)
@@ -285,18 +304,21 @@ class LinearAttention(nn.Module):
         x: torch.Tensor,
         state: dict[str, torch.Tensor],
     ) -> torch.Tensor:
-        """Process test tokens using cached KV state from the training context."""
+        """Apply cached train state to test tokens.
+
+        Depending on the mode, this is either:
+        - causal continuation from the cached prefix, or
+        - attention to cached train state only
+        """
         norm_idx = 0
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
         x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
         q, k, v = self._project_item_qkv(x, norm_idx)
-
-        q = self._feature_map(q)
-        k = self._feature_map(k)
         kv_state = state["kv_state"]
         k_sum = state["k_sum"]
-
-        if self.causal:
+        q = self._feature_map(q)
+        if self.causal and self.training:
+            k = self._feature_map(k)
             attn, _, _ = self._causal_linear_attention_items(
                 q,
                 k,
@@ -310,10 +332,9 @@ class LinearAttention(nn.Module):
                 kv_state,
                 k_sum,
                 eps=self.eps,
-                k_self=k,
-                v_self=v,
             )
         return self._apply_item_output_and_mlp(x, attn, norm_idx)
 
     def empty_trainset_representation_cache(self) -> None:
+        """No internal cache object."""
         return None

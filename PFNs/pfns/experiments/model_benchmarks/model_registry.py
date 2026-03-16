@@ -217,19 +217,19 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
 
 BASED_MODELS: dict[str, dict[str, Any]] = {
     "Rebased_feat_dim_32": {
-        "display_name": "Rebased $\phi$ with 32-dim features",
+        "display_name": "Rebased $\\phi$ with 32-dim features",
         "wandb_run_id": "fla_models/runs/72wtj14x"
     },
     "Rebased_feat_dim_16": {
-        "display_name": "Rebased $\phi$ with 16-dim features",
+        "display_name": "Rebased $\\phi$ with 16-dim features",
         "wandb_run_id": "fla_models/runs/478t1e31"
     },
     "Based_feat_dim_32": {
-        "display_name": "Based $\phi$ with 32-dim features",
+        "display_name": "Based $\\phi$ with 32-dim features",
         "wandb_run_id": "fla_models/runs/csb759y0"
     },
     "Based_feat_dim_16": {
-        "display_name": "Based $\phi$ with 16-dim features",
+        "display_name": "Based $\\phi$ with 16-dim features",
         "wandb_run_id": "fla_models/runs/kxe10m62"
     }
 }
