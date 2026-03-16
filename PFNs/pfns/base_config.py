@@ -10,6 +10,12 @@ import yaml
 BaseTypes = tp.Union[str, int, float, bool, None, Sequence, dict]
 
 
+LEGACY_CONFIG_KEYS_TO_DROP: dict[str, set[str]] = {
+    # Older checkpoints serialized a finetuning-only field that no longer exists.
+    "pfns.train:MainConfig": {"checkpoint_load_mode"},
+}
+
+
 class BaseConfig:
     strict_field_types: ClassVar[bool] = True
 
@@ -109,7 +115,12 @@ class BaseConfig:
             return {k: BaseConfig.from_dict(v) for k, v in data.items()}
 
         # This is a config object
-        module_name, class_name = data.pop("__config_type__").split(":")
+        data = dict(data)
+        config_type = data.pop("__config_type__")
+        for legacy_key in LEGACY_CONFIG_KEYS_TO_DROP.get(config_type, set()):
+            data.pop(legacy_key, None)
+
+        module_name, class_name = config_type.split(":")
         mod = importlib.import_module(module_name)
         cls = getattr(mod, class_name)
 
