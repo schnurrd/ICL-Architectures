@@ -33,6 +33,7 @@ from pfns.train import (
     OptimizerConfig,
     ModelConfig,
 )
+
 DEFAULT_BATCH_SIZE = 8
 GLOBAL_TRAIN_MIXED_PRECISION = (
     torch.cuda.is_available()
@@ -41,6 +42,8 @@ GLOBAL_TRAIN_MIXED_PRECISION = (
 )
 GLOBAL_TRAIN_MIXED_PRECISION_DTYPE = "bf16" if GLOBAL_TRAIN_MIXED_PRECISION else "fp32"
 GLOBAL_AGGREGATE_K_GRADIENTS = 2
+MAX_NUM_CLASSES = int(TABPFN_PRIOR_DEFAULTS["max_num_classes"])
+MAX_NUM_FEATURES = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
 SUPPORTED_SEQUENCE_MODES = CANONICAL_SEQUENCE_MODES
 
 TRAINING_PROFILES = {
@@ -193,13 +196,10 @@ def get_config(
     config_kwargs_override: dict[str, object] | None = None,
 ) -> MainConfig:
     """Build a MainConfig for FLA backbone training."""
-    max_num_classes = int(TABPFN_PRIOR_DEFAULTS["max_num_classes"])
-    max_num_features = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
-    
+    # Resolve inputs and training profile.
     feature_positional_embedding = normalize_optional_none_string(
         feature_positional_embedding
     )
-
     model_type = _normalize_model_type(model_type)
     sequence_mode = resolve_sequence_mode(sequence_mode)
     training_setup = training_setup.strip().lower()
@@ -216,6 +216,8 @@ def get_config(
         raise ValueError(
             f"Unknown training_setup {training_setup!r}. Available: {sorted(TRAINING_PROFILES)}"
         )
+
+    model_settings = MODEL_SETTINGS[model_type]
     profile = TRAINING_PROFILES[training_setup]
     resolved_lr = float(profile["lr"]) if lr is None else float(lr)
     resolved_steps_per_epoch = (
@@ -223,7 +225,6 @@ def get_config(
         if steps_per_epoch is not None
         else int(profile["steps_per_epoch"])
     )
-    resolved_epochs = int(profile.get("epochs", 200))
     resolved_max_seq_len = int(max_seq_len) if max_seq_len is not None else 1000
     resolved_batch_size_stages = resolve_batch_size_stages(batch_size_stages)
     resolved_dynamic_batch_size_compensate_grad_accumulation = bool(
@@ -233,12 +234,11 @@ def get_config(
         resolve_eval_pos_split_pct(eval_pos_split_pct)
     )
     resolved_seq_len_stages = seq_len_stages
-    if aggregate_k_gradients is not None:
-        resolved_aggregate_k = aggregate_k_gradients
-    elif is_associative_recall:
-        resolved_aggregate_k = 1
-    else:
-        resolved_aggregate_k = GLOBAL_AGGREGATE_K_GRADIENTS
+    resolved_aggregate_k = (
+        int(aggregate_k_gradients)
+        if aggregate_k_gradients is not None
+        else 1 if is_associative_recall else GLOBAL_AGGREGATE_K_GRADIENTS
+    )
     resolved_batch_size = batch_size or DEFAULT_BATCH_SIZE
 
     train_mixed_precision = GLOBAL_TRAIN_MIXED_PRECISION
@@ -255,8 +255,8 @@ def get_config(
     prior = build_prior_for_task(
         task_variant=task_variant,
         prior_device=resolved_prior_device,
-        max_num_classes=max_num_classes,
-        max_num_features=max_num_features,
+        max_num_classes=MAX_NUM_CLASSES,
+        max_num_features=MAX_NUM_FEATURES,
     )
 
     batch_shape = BatchShapeSamplerConfig(
@@ -273,11 +273,12 @@ def get_config(
         eval_pos_split_pct_max=resolved_eval_pos_split_pct_max,
         seq_len_stages=resolved_seq_len_stages,
         min_num_features=2,
-        max_num_features=max_num_features,
+        max_num_features=MAX_NUM_FEATURES,
         fixed_num_test_instances=None,
     )
 
-    resolved_config_kwargs = dict(MODEL_SETTINGS[model_type]["config_kwargs"])
+    # Build backbone kwargs.
+    resolved_config_kwargs = dict(model_settings["config_kwargs"])
     if use_short_conv is not None:
         if "use_short_conv" not in resolved_config_kwargs:
             raise ValueError(
@@ -305,7 +306,7 @@ def get_config(
 
     # FLA backbone requires ninp == hidden_size.
     resolved_emsize = int(
-        resolved_config_kwargs.get("hidden_size", MODEL_SETTINGS[model_type]["emsize"])
+        resolved_config_kwargs.get("hidden_size", model_settings["emsize"])
     )
 
     backbone_kwargs = {
@@ -317,7 +318,7 @@ def get_config(
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
 
     model = ModelConfig(
-        criterion=CrossEntropyConfig(num_classes=max_num_classes),
+        criterion=CrossEntropyConfig(num_classes=MAX_NUM_CLASSES),
         encoder=EncoderConfig(
             variable_num_features_normalization=True,
             nan_handling=True,
@@ -337,6 +338,7 @@ def get_config(
         interleave_x_y_pairs=sequence_mode.startswith("Int"),
     )
 
+    # Build optimizer and logging config.
     optimizer = OptimizerConfig(
         optimizer="adamw",
         lr=resolved_lr,
@@ -399,7 +401,7 @@ def get_config(
         optimizer=optimizer,
         model=model,
         batch_shape_sampler=batch_shape,
-        epochs=resolved_epochs,
+        epochs=int(profile.get("epochs", 200)),
         warmup_epochs=10,
         steps_per_epoch=resolved_steps_per_epoch,
         n_targets_per_input=1,
