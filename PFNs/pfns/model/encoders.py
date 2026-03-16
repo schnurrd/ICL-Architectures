@@ -879,6 +879,7 @@ class InputNormalizationEncoderStep(SeqEncStep):
         Returns:
             A tuple containing the normalized tensor.
         """
+        return (x, )
         normalize_position = single_eval_pos if self.normalize_on_train_only else -1
 
         if self.remove_outliers:
