@@ -77,7 +77,7 @@ def _resolve_linear_attention_mode(
     kwargs: dict[str, object]
 ) -> tuple[str | None, dict[str, bool]]:
     """Resolve the sequence mode and related layer kwargs for linear attention config."""
-    if kwargs.get("causal", True): # for backward compatibility
+    if sequence_mode is None and kwargs.get("causal", True): # for backward compatibility
         return "Comb_MT", {"causal": True, "causal_train_only": False}
     
     if sequence_mode is None:
