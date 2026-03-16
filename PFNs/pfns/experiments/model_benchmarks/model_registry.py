@@ -213,6 +213,10 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Causal": { # Comb_MT
         "wandb_run_id": "linear_attention/runs/fdzuamc8",
     },
+    "Linear_Attention_Non_Causal_bf16": {
+        "wandb_run_id": "linear_attention/runs/ygawhsm9",
+        "eval_autocast_dtype": "bf16",
+    },
 }
 
 BASED_MODELS: dict[str, dict[str, Any]] = {
