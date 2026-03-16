@@ -217,6 +217,10 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "linear_attention/runs/ygawhsm9",
         "eval_autocast_dtype": "bf16",
     },
+    "Linear_Attention_Non_Causal_fp32": {
+        "wandb_run_id": "linear_attention/runs/ygawhsm9",
+        "eval_autocast_dtype": "fp32",
+    },
 }
 
 BASED_MODELS: dict[str, dict[str, Any]] = {
