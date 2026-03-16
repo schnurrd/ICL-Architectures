@@ -16,7 +16,7 @@ class LinearAttention(nn.Module):
 
     Item attention supports three masking modes:
     - default: train tokens attend bidirectionally within train; test tokens attend
-      to the train state plus a diagonal self term
+      to train only
     - causal_train_only: train tokens attend causally; test tokens attend only to train
     - causal: full autoregressive attention during training; switches to
       causal_train_only during inference
@@ -199,15 +199,12 @@ class LinearAttention(nn.Module):
         k_train: torch.Tensor,
         v_train: torch.Tensor,
         q_test: torch.Tensor,
-        k_test: torch.Tensor,
-        v_test: torch.Tensor,
     ) -> torch.Tensor:
         """Apply the split train/test attention path.
 
-        In `causal_train_only` mode, test tokens attend only to the aggregated
-        train state. In the default mode, each test token also gets a diagonal
-        self term, so test tokens stay independent from each other while still
-        injecting their own value vector once.
+        Test tokens attend only to the aggregated train state. The difference
+        between modes is whether the train state itself was built causally or
+        non-causally.
         """
         use_causal_train_only = self.causal_train_only or (self.causal and not self.training)
         attn_train, kv_state_train, k_sum_train = self._compute_train_attention_and_state(
@@ -217,24 +214,12 @@ class LinearAttention(nn.Module):
             causal_train=use_causal_train_only,
         )
         q_test = self._feature_map(q_test)
-        k_test = self._feature_map(k_test)
-        if use_causal_train_only:
-            attn_test = apply_state_to_query_5d(
-                q_test,
-                kv_state_train,
-                k_sum_train,
-                eps=self.eps,
-            )
-        else:
-            # Default split mode adds only a per-token diagonal self contribution.
-            attn_test = apply_state_to_query_5d(
-                q_test,
-                kv_state_train,
-                k_sum_train,
-                eps=self.eps,
-                k_self=k_test,
-                v_self=v_test,
-            )
+        attn_test = apply_state_to_query_5d(
+            q_test,
+            kv_state_train,
+            k_sum_train,
+            eps=self.eps,
+        )
         return torch.cat([attn_train, attn_test], dim=1)
 
     def _apply_item_output_and_mlp(
@@ -281,15 +266,11 @@ class LinearAttention(nn.Module):
         k_train = k_all[:, :single_eval_pos]
         v_train = v_all[:, :single_eval_pos]
         q_test = q_all[:, single_eval_pos:]
-        k_test = k_all[:, single_eval_pos:]
-        v_test = v_all[:, single_eval_pos:]
         attn_all = self._apply_split_item_attention(
             q_train,
             k_train,
             v_train,
             q_test,
-            k_test,
-            v_test,
         )
         return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
 
@@ -327,8 +308,7 @@ class LinearAttention(nn.Module):
 
         Depending on the mode, this is either:
         - causal continuation from the cached prefix, or
-        - attention to cached train state only, or
-        - attention to cached train state plus a diagonal self term
+        - attention to cached train state only
         """
         norm_idx = 0
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
@@ -337,8 +317,8 @@ class LinearAttention(nn.Module):
         kv_state = state["kv_state"]
         k_sum = state["k_sum"]
         q = self._feature_map(q)
-        k = self._feature_map(k)
         if self.causal and self.training:
+            k = self._feature_map(k)
             attn, _, _ = self._causal_linear_attention_items(
                 q,
                 k,
@@ -346,21 +326,12 @@ class LinearAttention(nn.Module):
                 kv_state_prefix=kv_state,
                 k_sum_prefix=k_sum,
             )
-        elif self.causal or self.causal_train_only:
-            attn = apply_state_to_query_5d(
-                q,
-                kv_state,
-                k_sum,
-                eps=self.eps,
-            )
         else:
             attn = apply_state_to_query_5d(
                 q,
                 kv_state,
                 k_sum,
                 eps=self.eps,
-                k_self=k,
-                v_self=v,
             )
         return self._apply_item_output_and_mlp(x, attn, norm_idx)
 
