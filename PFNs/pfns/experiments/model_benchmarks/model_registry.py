@@ -256,6 +256,14 @@ DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/58w3kifz",
         "eval_autocast_dtype": "bf16",
     },
+    "DeltaNet_Int_MT_Seq_Len_500-64K_uniform": {
+        "wandb_run_id": "fla_models/runs/tou1nzi5",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Int_MT_Seq_Len_500-64K_loguniform": {
+        "wandb_run_id": "fla_models/runs/pyfldrsm",
+        "eval_autocast_dtype": "bf16",
+    },
     "DeltaNet_Int_MT_Seq_Len_1K": {
         "wandb_run_id": "fla_models/runs/ji6lw9hu",
         "eval_autocast_dtype": "bf16",
