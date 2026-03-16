@@ -207,8 +207,11 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
 
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
-    "Linear_Attention": {
+    "Linear_Attention_Non_Causal": {
         "wandb_run_id": "linear_attention/runs/zybvsyiv",
+    },
+    "Linear_Attention_Causal": {
+        "wandb_run_id": "linear_attention/runs/fdzuamc8",
     },
 }
 
