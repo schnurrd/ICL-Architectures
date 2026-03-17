@@ -1,3 +1,6 @@
+import random
+
+import numpy as np
 import pytest
 import torch
 
@@ -49,6 +52,21 @@ def _sample_one_ar_batch(*, data_generation_seed: int, device: str):
     return batch
 
 
+def _make_prior_generator(*, data_generation_seed: int, device: str):
+    return ClassCoverageBatchGenerator(
+        num_batches=2,
+        largest_seqlen=40,
+        smallest_seqlen=8,
+        num_features=4,
+        num_classes=3,
+        number_of_test_samples=16,
+        prior_type="mlp",
+        prior_device=_resolve_test_device(device),
+        force_max_num_classes=True,
+        data_generation_seed=data_generation_seed,
+    )
+
+
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_prior_generation_is_deterministic_with_fixed_seed(device: str):
     batch_a = _sample_one_batch(
@@ -78,6 +96,41 @@ def test_prior_generation_changes_when_seed_changes(device: str):
     )
 
     assert not torch.equal(batch_a.x, batch_b.x)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_prior_generator_is_deterministic_despite_rng_noise(device: str):
+    generator_a = _make_prior_generator(
+        data_generation_seed=NOTEBOOK_DATA_GENERATION_SEED,
+        device=device,
+    )
+    batch_a1, _ = generator_a.sample_one()
+    batch_a2, _ = generator_a.sample_one()
+
+    generator_b = _make_prior_generator(
+        data_generation_seed=NOTEBOOK_DATA_GENERATION_SEED,
+        device=device,
+    )
+    batch_b1, _ = generator_b.sample_one()
+
+    random.random()
+    np.random.rand()
+    torch.rand(128)
+    resolved_device = _resolve_test_device(device)
+    if resolved_device.startswith("cuda"):
+        torch.rand(128, device=resolved_device)
+
+    batch_b2, _ = generator_b.sample_one()
+
+    assert torch.equal(batch_a1.x, batch_b1.x)
+    assert torch.equal(batch_a1.y, batch_b1.y)
+    assert torch.equal(batch_a1.target_y, batch_b1.target_y)
+    assert torch.equal(batch_a1.categorical_mask, batch_b1.categorical_mask)
+
+    assert torch.equal(batch_a2.x, batch_b2.x)
+    assert torch.equal(batch_a2.y, batch_b2.y)
+    assert torch.equal(batch_a2.target_y, batch_b2.target_y)
+    assert torch.equal(batch_a2.categorical_mask, batch_b2.categorical_mask)
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])

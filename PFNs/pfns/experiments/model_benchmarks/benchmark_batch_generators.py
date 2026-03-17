@@ -2,15 +2,25 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import random
 import time
 from typing import Any
 
+import numpy as np
 import torch
 
 from pfns.priors.associative_recall import generate_associative_recall_batch
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
 
 SEQ_LEN_TASK_VARIANTS: tuple[str, ...] = ("tabular_prior", "associative_recall")
+
+
+def _set_data_generation_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 @dataclass
@@ -95,6 +105,7 @@ class ClassCoverageBatchGenerator:
         prior_device: str = "cuda",
         force_max_num_classes: bool = False,
         prior_overrides: dict[str, Any] | None = None,
+        data_generation_seed: int | None = None,
     ) -> None:
         self.get_batch = self.create_prior_get_batch(
             num_classes=num_classes,
@@ -111,6 +122,10 @@ class ClassCoverageBatchGenerator:
         self.num_classes = num_classes
         self.number_of_test_samples = number_of_test_samples
         self.max_attempts = max_attempts
+        self.data_generation_seed = (
+            int(data_generation_seed) if data_generation_seed is not None else None
+        )
+        self._sample_index = 0
 
     def _has_full_class_coverage(self, batch: Any) -> bool:
         train_class_count = torch.unique(batch.y[:, : self.smallest_seqlen]).numel()
@@ -126,6 +141,9 @@ class ClassCoverageBatchGenerator:
         )
 
     def sample_one(self) -> tuple[Any, float]:
+        if self.data_generation_seed is not None:
+            _set_data_generation_seed(self.data_generation_seed + self._sample_index)
+            self._sample_index += 1
         start_time = time.perf_counter()
         for _ in range(self.max_attempts):
             batch = self.get_batch(
@@ -190,7 +208,7 @@ class AssociativeRecallBatchGenerator:
     def sample_one(self) -> tuple[BenchmarkBatch, float]:
         start_time = time.perf_counter()
         if self.data_generation_seed is not None:
-            torch.manual_seed(self.data_generation_seed + self._sample_index)
+            _set_data_generation_seed(self.data_generation_seed + self._sample_index)
             self._sample_index += 1
         sampled = generate_associative_recall_batch(
             batch_size=1,

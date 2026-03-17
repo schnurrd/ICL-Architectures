@@ -290,6 +290,7 @@ def evaluate_models_over_seqlens(
     subsample_dataset_size: int | None = None,
     task_variant: str = "tabular_prior",
     task_kwargs: dict[str, Any] | None = None,
+    precomputed_batches: list[tuple[Any, float]] | None = None,
 ) -> dict[str, Any]:
     """Run sequence-length evaluation for all models and return nested result tables."""
     if not models:
@@ -313,7 +314,7 @@ def evaluate_models_over_seqlens(
     warmup_iters = 3 if use_warmup_iters else 0
     resolved_task_kwargs = dict(task_kwargs or {})
 
-    if data_generation_seed is not None:
+    if data_generation_seed is not None and precomputed_batches is None:
         _set_data_generation_seed(int(data_generation_seed))
         if task_variant == "associative_recall":
             resolved_task_kwargs.setdefault(
@@ -328,17 +329,20 @@ def evaluate_models_over_seqlens(
         if print_timing:
             print(*args, **kwargs)
 
-    batch_generator = create_seq_len_batch_generator(
-        task_variant=task_variant,
-        num_batches=number_of_repetitions,
-        smallest_seqlen=smallest_seqlen,
-        largest_seqlen=largest_seqlen,
-        num_features=num_features,
-        num_classes=num_classes,
-        number_of_test_samples=number_of_test_samples,
-        default_device=resolved_device,
-        task_kwargs=resolved_task_kwargs,
-    )
+    if precomputed_batches is not None:
+        batch_generator = precomputed_batches
+    else:
+        batch_generator = create_seq_len_batch_generator(
+            task_variant=task_variant,
+            num_batches=number_of_repetitions,
+            smallest_seqlen=smallest_seqlen,
+            largest_seqlen=largest_seqlen,
+            num_features=num_features,
+            num_classes=num_classes,
+            number_of_test_samples=number_of_test_samples,
+            default_device=resolved_device,
+            task_kwargs=resolved_task_kwargs,
+        )
 
     for rep, (base_batch, data_gen_ms) in enumerate(
         tqdm(batch_generator, total=number_of_repetitions, desc=progress_desc),
@@ -418,5 +422,6 @@ def evaluate_models_over_seqlens(
             ),
             "task_variant": task_variant,
             "task_kwargs": resolved_task_kwargs,
+            "precomputed_batches": bool(precomputed_batches is not None),
         },
     }
