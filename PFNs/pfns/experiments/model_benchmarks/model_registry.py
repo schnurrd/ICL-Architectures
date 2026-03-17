@@ -86,6 +86,11 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/tr0jxu69", # 1.5x hidden size, currently running
         "eval_autocast_dtype": "bf16",
     },
+    "DeltaNet_Cached_Hidden_Size_480_2": {
+        "wandb_run_id": "fla_models/runs/tr0jxu69", # 1.5x hidden size, currently running
+        "eval_autocast_dtype": "bf16",
+        "notes": "This is a duplicate of DeltaNet_Cached_Hidden_Size_480 to check variance",
+    },
     "DeltaNet_Cached_Hidden_Size_480_Heads_6": {
         "wandb_run_id": "fla_models/runs/gzag08i9", # 1.5x hidden size, 1.5x heads, currently running
         "eval_autocast_dtype": "bf16",
@@ -116,6 +121,10 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
     },
     "DeltaNet_Teacher_Forcing_short_conv": {
         "wandb_run_id": "fla_models/runs/fm8kzerj",
+        "eval_autocast_dtype": "bf16",
+    },
+    "size_changes:DeltaNet_Comb_ST": {
+        "wandb_run_id": "fla_models/runs/q67a0x92", 
         "eval_autocast_dtype": "bf16",
     },
 }

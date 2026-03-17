@@ -45,6 +45,14 @@ FLA_MODEL_REGISTRY = {
 }
 
 
+def _resolve_fla_sequence_mode(sequence_mode: str) -> str:
+    legacy_sequence_modes = {
+        "Comb_ST": "cached",
+        "comb_st": "cached",
+    }
+    return legacy_sequence_modes.get(sequence_mode, sequence_mode)
+
+
 class Backbone(nn.Module, ABC):
     """Abstract base class for backbone implementations.
     
@@ -324,6 +332,11 @@ class FLABackboneConfig(BackboneConfig):
             raise ValueError(
                 f"Unknown model_type: {self.model_type}. Available: {list(FLA_MODEL_REGISTRY)}"
             )
+        object.__setattr__(
+            self,
+            "sequence_mode",
+            _resolve_fla_sequence_mode(self.sequence_mode),
+        )
         if self.sequence_mode not in {"cached", "causal", "teacher_forcing"}:
             raise ValueError(f"Unknown sequence_mode: {self.sequence_mode}")
 

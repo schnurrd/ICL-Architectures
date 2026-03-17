@@ -216,6 +216,17 @@ class TabularModel(nn.Module):
         error_msgs,
     ):
         """Pre-hook to remap checkpoint keys for backward compatibility."""
+        old_backbone_prefix = prefix + "backbone."
+        new_backbone_prefix = prefix + "transformer_layers."
+
+        if any(k.startswith(old_backbone_prefix) for k in state_dict.keys()):
+            keys_to_remap = [
+                k for k in state_dict.keys() if k.startswith(old_backbone_prefix)
+            ]
+            for old_key in keys_to_remap:
+                new_key = old_key.replace(old_backbone_prefix, new_backbone_prefix, 1)
+                state_dict[new_key] = state_dict.pop(old_key)
+
         old_prefix = prefix + "transformer_layers.layers."
         new_prefix = prefix + "transformer_layers.layer_stack.layers."
 

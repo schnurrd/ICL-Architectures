@@ -832,6 +832,8 @@ class InputNormalizationEncoderStep(SeqEncStep):
             single_eval_pos: The position to use for single evaluation.
             **kwargs: Additional keyword arguments (unused).
         """
+        print("InputNormalizationEncoderStep _fit called with x:", x)
+        return 
         normalize_position = single_eval_pos if self.normalize_on_train_only else -1
         if self.remove_outliers:
             (
@@ -875,6 +877,8 @@ class InputNormalizationEncoderStep(SeqEncStep):
         Returns:
             A tuple containing the normalized tensor.
         """
+        print("InputNormalizationEncoderStep _transform called with x:", x)
+        return (x,)
         normalize_position = single_eval_pos if self.normalize_on_train_only else -1
 
         if self.remove_outliers:

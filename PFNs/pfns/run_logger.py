@@ -225,7 +225,7 @@ def download_model_from_wandb(
             local_epoch = model_data.get('epoch')
             remote_epoch = run.summary.get("trainer/epoch")
             
-            if local_run_id == run.id and local_epoch is not None and (local_epoch == remote_epoch or local_epoch == remote_epoch - 1): # can be off by 1 when interupted mid epoch
+            if False and local_run_id == run.id and local_epoch is not None and (local_epoch == remote_epoch or local_epoch == remote_epoch - 1): # can be off by 1 when interupted mid epoch
                 print(f"Model at {destination_path} is already up to date (Run ID: {local_run_id}, Epoch: {local_epoch}). Skipping download.")
                 return destination_path
             

@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import json
 import typing as tp
 from collections.abc import Sequence
@@ -117,5 +118,26 @@ class BaseConfig:
         processed_data = {}
         for k, v in data.items():
             processed_data[k] = BaseConfig.from_dict(v)
+
+        signature = inspect.signature(cls)
+        accepts_var_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        )
+        if not accepts_var_kwargs:
+            accepted_keys = {
+                name
+                for name, param in signature.parameters.items()
+                if param.kind
+                in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            }
+            processed_data = {
+                key: value
+                for key, value in processed_data.items()
+                if key in accepted_keys
+            }
 
         return cls(**processed_data)

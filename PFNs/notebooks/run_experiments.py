@@ -46,7 +46,7 @@ EXPERIMENT = {
 WANDB = {
     "enabled": True,
     "artifact_name": "seq_len_comparison",
-    "overwrite": False,
+    "overwrite": True,
     "entity": "icl_arch",
     "project": "seq_len_exp",
 }
@@ -106,17 +106,12 @@ print(
 # Example by family:
 # models_to_compare = get_models_from_families(["transformer"])
 
-# models_to_compare = get_models_from_names([
-#     "Softmax_Transformer",
-#     "KDA_causal",
-#     "GLA_Cached",
-#     "DeltaNet_Cached",
-#     "Gated_DeltaNet_Cached_seq_len_10K",
-#     "Rebased",
-#     "Linear_Attention",
-# ])
+all_models_to_compare = get_models_from_names([
+    "DeltaNet_Cached_Hidden_Size_480",
+    "DeltaNet_Cached_Hidden_Size_480_2"
+])
 
-all_models_to_compare = get_all_models()
+# all_models_to_compare = get_all_models()
 all_model_items = list(all_models_to_compare.items())
 models_to_compare = dict(all_model_items[CLI_ARGS.run_index::CLI_ARGS.num_runs])
 if not models_to_compare:
