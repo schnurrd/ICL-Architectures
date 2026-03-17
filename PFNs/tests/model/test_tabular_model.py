@@ -610,89 +610,183 @@ def test_separate_train_inference(
     ), f"{logits1} != {logits1a}"
 
 
+def test_input_normalization_encoder_step_skips_categorical_columns():
+    step = encoders.InputNormalizationEncoderStep(
+        normalize_on_train_only=True,
+        normalize_x=True,
+        remove_outliers=True,
+    )
+
+    x = torch.tensor(
+        [
+            [[0.0, 1.0], [10.0, 0.0]],
+            [[1.0, 3.0], [20.0, 1.0]],
+            [[2.0, 5.0], [30.0, 0.0]],
+            [[3.0, 7.0], [40.0, 1.0]],
+        ],
+        dtype=torch.float32,
+    )
+    categorical_inds = [[1], [1]]
+
+    step._fit(x, single_eval_pos=3, categorical_inds=categorical_inds)
+    transformed, = step._transform(x, single_eval_pos=3, categorical_inds=categorical_inds)
+
+    assert torch.equal(transformed[:, :, 1], x[:, :, 1])
+    assert not torch.equal(transformed[:, :, 0], x[:, :, 0])
+
+
+class _RecordingInputNormalizationEncoderStep(encoders.InputNormalizationEncoderStep):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.last_input = None
+        self.last_output = None
+
+    def _transform(self, x: torch.Tensor, single_eval_pos: int, **kwargs):
+        self.last_input = x.detach().clone()
+        out = super()._transform(x, single_eval_pos, **kwargs)
+        self.last_output = out[0].detach().clone()
+        return out
+
+
+@torch.inference_mode()
+def test_tabular_model_passes_categorical_inds_to_input_normalization():
+    recording_step = _RecordingInputNormalizationEncoderStep(
+        normalize_on_train_only=True,
+        normalize_x=True,
+        remove_outliers=True,
+    )
+    backbone = TransformerBackboneConfig(
+        nhead=2,
+        nhid=32,
+        nlayers=2,
+    ).create_backbone(ninp=tabular_model.DEFAULT_EMSIZE, attention_between_features=True)
+    model = tabular_model.TabularModel(
+        transformer_layers=backbone,
+        encoder=encoders.SequentialEncoder(
+            encoders.OrdinalEncoderStep(),
+            recording_step,
+            encoders.LinearInputEncoderStep(
+                num_features=2,
+                emsize=tabular_model.DEFAULT_EMSIZE,
+                in_keys=["main"],
+                out_keys=["output"],
+            ),
+        ),
+        batch_first=True,
+        features_per_group=2,
+    )
+
+    x_train = torch.tensor(
+        [
+            [[0.0, 1.0, 10.0, 0.0], [1.0, 3.0, 11.0, 1.0], [2.0, 5.0, 12.0, 0.0]],
+            [[3.0, 7.0, 13.0, 1.0], [4.0, 9.0, 14.0, 0.0], [5.0, 11.0, 15.0, 1.0]],
+        ],
+        dtype=torch.float32,
+    )
+    y_train = torch.zeros((2, 3, 1), dtype=torch.float32)
+    x_test = torch.tensor(
+        [
+            [[6.0, 13.0, 16.0, 0.0]],
+            [[7.0, 15.0, 17.0, 1.0]],
+        ],
+        dtype=torch.float32,
+    )
+
+    _ = model(
+        x=x_train,
+        y=y_train,
+        test_x=x_test,
+        categorical_inds=[1, 3],
+    )
+
+    assert recording_step.last_input is not None
+    assert recording_step.last_output is not None
+    assert torch.equal(recording_step.last_input[:, :, 1], recording_step.last_output[:, :, 1])
+
+
 @pytest.mark.parametrize(
     "attention_between_features",
     [False, True],
 )
 def test_transformer_overfit(attention_between_features):
     """Test that a tiny transformer can overfit a simple classification task."""
+    with isolate_torch_rng(seed=0, device=torch.device("cpu")):
+        # Create a tiny transformer for a simple classification task
+        batch_size = 3
+        seq_len_train = 3  # 3 examples in context
+        seq_len_test = 3  # 3 examples to predict
+        emsize = 16  # Small embedding size
+        num_classes = 3  # 3-way classification
 
-    # Create a tiny transformer for a simple classification task
-    batch_size = 3
-    seq_len_train = 3  # 3 examples in context
-    seq_len_test = 3  # 3 examples to predict
-    emsize = 16  # Small embedding size
-    num_classes = 3  # 3-way classification
-
-    # Create a tiny transformer
-    backbone = TransformerBackboneConfig(nhead=2, nhid=32, nlayers=2).create_backbone(ninp=emsize, attention_between_features=attention_between_features)
-    transformer = TabularModel(
-        transformer_layers=backbone,
-        ninp=emsize,
-        nhid=32,
-        features_per_group=1,
-        seed=42,
-        decoder_dict={"standard": (None, num_classes)},
-        attention_between_features=attention_between_features,
-    )
-
-    # # Add a classification head
-    # transformer.decoder_dict = torch.nn.ModuleDict({
-    #     "classification": torch.nn.Linear(emsize, num_classes)
-    # })
-
-    # Create training data: map input 0,1,2 to class 0,1,2
-    x_train = torch.zeros((batch_size, seq_len_train, 1), device="cpu")
-    y_train = torch.zeros((batch_size, seq_len_train, 1), device="cpu")
-
-    # Create test data with the same pattern
-    x_test = torch.zeros((batch_size, seq_len_test, 1), device="cpu")
-    y_test = torch.zeros((batch_size, seq_len_test), device="cpu", dtype=torch.long)
-
-    # Set the first dimension of each feature to 0, 1, or 2 to represent our input
-    for i in range(batch_size):
-        for j in range(seq_len_train):
-            x_train[i, j] = j % num_classes  # Input is 0, 1, 2
-            y_train[i, j] = (j + i) % num_classes  # Input is 0, 1, 2
-
-        for j in range(seq_len_test):
-            x_test[i, j] = j % num_classes  # Input is 0, 1, 2
-            y_test[i, j] = (j + i) % num_classes  # Input is 0, 1, 2
-
-    # Set up optimizer
-    optimizer = optim.Adam(transformer.parameters(), lr=0.01)
-    criterion = CrossEntropyLoss()
-
-    # Train the model to overfit
-    transformer.train()
-    for step in range(100):
-        optimizer.zero_grad()
-
-        scramble = torch.randperm(seq_len_train)
-
-        # Forward pass
-        logits = transformer(
-            x=x_train[:, scramble],
-            y=y_train[:, scramble],
-            test_x=x_test,
+        # Create a tiny transformer
+        backbone = TransformerBackboneConfig(nhead=2, nhid=32, nlayers=2).create_backbone(ninp=emsize, attention_between_features=attention_between_features)
+        transformer = TabularModel(
+            transformer_layers=backbone,
+            ninp=emsize,
+            nhid=32,
+            features_per_group=1,
+            seed=42,
+            decoder_dict={"standard": (None, num_classes)},
+            attention_between_features=attention_between_features,
         )
 
-        # Calculate loss
-        loss = criterion(logits, y_test)
+        # # Add a classification head
+        # transformer.decoder_dict = torch.nn.ModuleDict({
+        #     "classification": torch.nn.Linear(emsize, num_classes)
+        # })
 
-        # Backward pass and optimize
-        loss.backward()
-        optimizer.step()
+        # Create training data: map input 0,1,2 to class 0,1,2
+        x_train = torch.zeros((batch_size, seq_len_train, 1), device="cpu")
+        y_train = torch.zeros((batch_size, seq_len_train, 1), device="cpu")
 
-        # Check if we've overfit
-        if step % 20 == 0 or step == 99:
-            with torch.no_grad():
-                # Get predictions
-                _, predicted = torch.max(logits, 1)
-                accuracy = (predicted == y_test).float().mean().item()
-                print(f"Step {step}, Loss: {loss.item():.4f}, Accuracy: {accuracy:.2f}")
+        # Create test data with the same pattern
+        x_test = torch.zeros((batch_size, seq_len_test, 1), device="cpu")
+        y_test = torch.zeros((batch_size, seq_len_test), device="cpu", dtype=torch.long)
 
-                if accuracy == 1.0 and loss.item() < 0.1:
-                    print("Successfully overfit the data!")
-                    return
+        # Set the first dimension of each feature to 0, 1, or 2 to represent our input
+        for i in range(batch_size):
+            for j in range(seq_len_train):
+                x_train[i, j] = j % num_classes  # Input is 0, 1, 2
+                y_train[i, j] = (j + i) % num_classes  # Input is 0, 1, 2
+
+            for j in range(seq_len_test):
+                x_test[i, j] = j % num_classes  # Input is 0, 1, 2
+                y_test[i, j] = (j + i) % num_classes  # Input is 0, 1, 2
+
+        # Set up optimizer
+        optimizer = optim.Adam(transformer.parameters(), lr=0.01)
+        criterion = CrossEntropyLoss()
+
+        # Train the model to overfit
+        transformer.train()
+        for step in range(100):
+            optimizer.zero_grad()
+
+            scramble = torch.randperm(seq_len_train)
+
+            # Forward pass
+            logits = transformer(
+                x=x_train[:, scramble],
+                y=y_train[:, scramble],
+                test_x=x_test,
+            )
+
+            # Calculate loss
+            loss = criterion(logits, y_test)
+
+            # Backward pass and optimize
+            loss.backward()
+            optimizer.step()
+
+            # Check if we've overfit
+            if step % 20 == 0 or step == 99:
+                with torch.no_grad():
+                    # Get predictions
+                    _, predicted = torch.max(logits, 1)
+                    accuracy = (predicted == y_test).float().mean().item()
+                    print(f"Step {step}, Loss: {loss.item():.4f}, Accuracy: {accuracy:.2f}")
+
+                    if accuracy == 1.0 and loss.item() < 0.1:
+                        print("Successfully overfit the data!")
+                        return
     raise Exception("Failed to overfit the data.")
