@@ -17,11 +17,8 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
         "eval_autocast_dtype": "fp16"
     },
-    "Softmax_Transformer_with_feature_attention": {
-        "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
-        #n ew smaller versions 
-        # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
-        # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
+    "Softmax_Transformer_full_norm": {
+        "wandb_run_id": "tabpfn_transformer/runs/02e7n51p",  # no feature attention like fla
     },
 }
 
