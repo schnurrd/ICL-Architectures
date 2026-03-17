@@ -18,9 +18,8 @@ from .io import (
 def make_fixed_batch_artifact_name(
     *,
     base_artifact_name: str,
-    experiment: dict[str, Any],
+    experiment_hash: str,
 ) -> str:
-    experiment_hash = experiment_payload_hash(experiment_payload=experiment)
     return (
         f"{sanitize_wandb_artifact_component(base_artifact_name)}_"
         f"{sanitize_wandb_artifact_component(experiment_hash)}"
@@ -36,7 +35,13 @@ def resolve_fixed_batches(
     task_variant: str = "tabular_prior",
     task_kwargs: dict[str, Any] | None = None,
 ) -> list[Any]:
-    experiment_hash = experiment_payload_hash(experiment_payload=experiment)
+    resolved_task_kwargs = dict(task_kwargs or {})
+    hash_payload = {
+        "experiment": experiment,
+        "task_variant": task_variant,
+        "task_kwargs": resolved_task_kwargs,
+    }
+    experiment_hash = experiment_payload_hash(experiment_payload=hash_payload)
     bundle_dir = (
         Path(output_root)
         / "fixed_batches"
@@ -50,7 +55,7 @@ def resolve_fixed_batches(
     if wandb.get("enabled"):
         artifact_name = make_fixed_batch_artifact_name(
             base_artifact_name=wandb["batch_artifact_name"],
-            experiment=experiment,
+            experiment_hash=experiment_hash,
         )
         downloaded_bundle = download_results_bundle_from_wandb(
             artifact_name=artifact_name,
@@ -76,7 +81,7 @@ def resolve_fixed_batches(
             num_classes=experiment["num_classes"],
             number_of_test_samples=experiment["num_test_samples"],
             default_device=default_device,
-            task_kwargs=task_kwargs,
+            task_kwargs=resolved_task_kwargs,
         )
     )
     save_seq_len_batches(batches, bundle_dir)
@@ -87,7 +92,7 @@ def resolve_fixed_batches(
             bundle_dir,
             artifact_name=make_fixed_batch_artifact_name(
                 base_artifact_name=wandb["batch_artifact_name"],
-                experiment=experiment,
+                experiment_hash=experiment_hash,
             ),
             entity=wandb["entity"],
             project=wandb["batch_project"],
@@ -97,6 +102,8 @@ def resolve_fixed_batches(
             ),
             metadata={
                 "experiment": experiment,
+                "task_variant": task_variant,
+                "task_kwargs": resolved_task_kwargs,
                 "experiment_hash": experiment_hash,
                 "bundle_type": "fixed_seq_len_batches",
             },
