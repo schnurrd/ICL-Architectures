@@ -871,7 +871,7 @@ class InputNormalizationEncoderStep(SeqEncStep):
             x,
             kwargs.get("categorical_inds"),
         )
-        if categorical_mask is not None:
+        if False and categorical_mask is not None:
             if self.remove_outliers:
                 self.lower_for_outlier_removal = torch.zeros_like(x[0])
                 self.upper_for_outlier_removal = torch.zeros_like(x[0])
@@ -951,7 +951,7 @@ class InputNormalizationEncoderStep(SeqEncStep):
             x,
             kwargs.get("categorical_inds"),
         )
-        if categorical_mask is not None:
+        if False and categorical_mask is not None:
             x_out = x.clone()
             for sample_idx, sample_mask in enumerate(categorical_mask):
                 continuous_mask = ~sample_mask
