@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 import json
 import re
 from datetime import datetime, timezone
@@ -11,6 +12,9 @@ from typing import Any
 import pandas as pd
 import torch
 import wandb
+
+from pfns.priors.prior import Batch
+from pfns.experiments.model_benchmarks.benchmark_batch_generators import BenchmarkBatch
 
 from .analysis import long_df_to_nested_metric_table, nested_metric_table_to_long_df
 from .constants import SCHEMA_VERSION
@@ -211,7 +215,27 @@ def save_seq_len_batches(
     """Persist a fixed seq-len batch set for later reuse."""
     bundle = Path(bundle_dir)
     bundle.mkdir(parents=True, exist_ok=True)
-    torch.save(batches, bundle / SEQ_LEN_BATCHES_FILE)
+    torch.save(
+        {
+            "format": "seq_len_batches_v1",
+            "batches": [
+                {
+                    "batch_type": (
+                        "benchmark_batch"
+                        if isinstance(batch, BenchmarkBatch)
+                        else "batch"
+                    ),
+                    "batch": {
+                        field.name: getattr(batch, field.name)
+                        for field in fields(batch)
+                    },
+                    "data_gen_ms": float(data_gen_ms),
+                }
+                for batch, data_gen_ms in batches
+            ],
+        },
+        bundle / SEQ_LEN_BATCHES_FILE,
+    )
     return bundle
 
 
@@ -219,7 +243,27 @@ def load_seq_len_batches(
     bundle_dir: str | Path,
 ) -> list[Any]:
     """Load a fixed seq-len batch set."""
-    return torch.load(Path(bundle_dir) / SEQ_LEN_BATCHES_FILE, map_location="cpu")
+    batch_file = Path(bundle_dir) / SEQ_LEN_BATCHES_FILE
+    loaded = torch.load(batch_file, map_location="cpu")
+
+    if isinstance(loaded, dict) and loaded.get("format") == "seq_len_batches_v1":
+        batches = []
+        for item in loaded["batches"]:
+            if item["batch_type"] == "benchmark_batch":
+                batch_cls = BenchmarkBatch
+            elif item["batch_type"] == "batch":
+                batch_cls = Batch
+            else:
+                raise ValueError(
+                    f"Unsupported serialized batch type {item['batch_type']!r} in {batch_file}."
+                )
+            batches.append((batch_cls(**item["batch"]), float(item["data_gen_ms"])))
+        return batches
+
+    raise ValueError(
+        f"Unsupported seq-len batch cache format in {batch_file}. "
+        "Regenerate the fixed batches with the current code."
+    )
 
 
 def save_dataframe_bundle(
