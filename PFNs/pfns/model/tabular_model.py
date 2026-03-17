@@ -673,7 +673,6 @@ class TabularModel(nn.Module):
                 f"{torch.isnan(embedded_x).any()=}, make sure to add nan handlers"
                 " to the xs that are not fully provided (test set missing)",
             )
-            
 
         embedded_x, embedded_y = self.add_embeddings(
             embedded_x,  # (b s num_groups e)

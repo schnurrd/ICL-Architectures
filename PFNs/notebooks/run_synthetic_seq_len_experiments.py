@@ -4,6 +4,7 @@ from pathlib import Path
 from pfns.utils import get_default_device
 
 from pfns.experiments.model_benchmarks.evaluation import evaluate_models_over_seqlens
+from pfns.experiments.model_benchmarks.fixed_batches import resolve_fixed_batches
 from pfns.experiments.model_benchmarks.hashing import single_model_hash
 from pfns.experiments.model_benchmarks.io import (
     SEQ_LEN_REQUIRED_FILES,
@@ -53,6 +54,8 @@ WANDB = {
     "overwrite": False,
     "entity": "icl_arch",
     "project": "seq_len_exp",
+    "batch_artifact_name": "seq_len_batches",
+    "batch_project": "seq_len_batch_cache",
 }
 
 
@@ -145,6 +148,14 @@ if CLI_ARGS.models:
     print(f"Requested models: {CLI_ARGS.models}")
 
 expected_run_metadata = build_seq_len_run_metadata(experiment=EXPERIMENT, device=device)
+precomputed_batches = resolve_fixed_batches(
+    experiment=EXPERIMENT,
+    output_root=OUTPUT_ROOT,
+    default_device=device,
+    wandb=WANDB,
+    task_kwargs={"data_generation_seed": EXPERIMENT["data_generation_seed"]},
+)
+print(f"Using {len(precomputed_batches)} fixed batches for this experiment.")
 
 results_by_model = {}
 model_bundle_paths = {}
@@ -228,6 +239,7 @@ for model_name, model_config in models_to_compare.items():
         subsample_dataset_size=model_config.get("subsample_dataset_size"),
         progress_desc=f"{model_name} progress",
         forward_models=get_forward_models_from_registry({model_name: model_config}),
+        precomputed_batches=precomputed_batches,
     )
     results_by_model[model_name] = model_results
 

@@ -21,6 +21,7 @@ SEQ_LEN_METRIC_FILE = "metric.csv"
 SEQ_LEN_TIMING_FILE = "timing.csv"
 SEQ_LEN_MEMORY_FILE = "memory.csv"
 SEQ_LEN_RAW_FILE = "raw_results.pt"
+SEQ_LEN_BATCHES_FILE = "batches.pt"
 
 SEQ_LEN_REQUIRED_FILES = (
     SEQ_LEN_METADATA_FILE,
@@ -29,6 +30,7 @@ SEQ_LEN_REQUIRED_FILES = (
     SEQ_LEN_TIMING_FILE,
     SEQ_LEN_MEMORY_FILE,
 )
+SEQ_LEN_BATCH_REQUIRED_FILES = (SEQ_LEN_BATCHES_FILE,)
 
 REAL_WORLD_METADATA_FILE = "metadata.json"
 REAL_WORLD_RESULTS_FILE = "results.csv"
@@ -200,6 +202,24 @@ def save_results_bundle(
         torch.save(results, bundle / SEQ_LEN_RAW_FILE)
 
     return bundle
+
+
+def save_seq_len_batches(
+    batches: list[Any],
+    bundle_dir: str | Path,
+) -> Path:
+    """Persist a fixed seq-len batch set for later reuse."""
+    bundle = Path(bundle_dir)
+    bundle.mkdir(parents=True, exist_ok=True)
+    torch.save(batches, bundle / SEQ_LEN_BATCHES_FILE)
+    return bundle
+
+
+def load_seq_len_batches(
+    bundle_dir: str | Path,
+) -> list[Any]:
+    """Load a fixed seq-len batch set."""
+    return torch.load(Path(bundle_dir) / SEQ_LEN_BATCHES_FILE, map_location="cpu")
 
 
 def save_dataframe_bundle(
