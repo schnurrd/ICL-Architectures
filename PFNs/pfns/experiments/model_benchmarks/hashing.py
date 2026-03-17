@@ -6,6 +6,18 @@ from typing import Any
 
 from pfns.experiments.model_benchmarks.model_registry import functional_model_config
 
+
+def experiment_payload_hash(
+    *,
+    experiment_payload: dict[str, Any],
+    hash_length: int = 16,
+) -> str:
+    """Build a deterministic short hash for an experiment payload."""
+    return hashlib.sha256(
+        json.dumps(experiment_payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:hash_length]
+
+
 def model_identity_from_config(
     *,
     model_name: str,
