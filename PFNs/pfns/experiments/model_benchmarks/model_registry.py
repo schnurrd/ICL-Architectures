@@ -81,7 +81,12 @@ GLA_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "GLA Interleaved Multi Target",
         "wandb_run_id": "fla_models/runs/4f224z23",
     },
-    
+    "GLA_Int_MT_new_cluster": {
+        "display_name": "GLA Interleaved Multi Target (new 2)",
+        "wandb_run_id": "fla_models/runs/4f224z23",
+        "eval_autocast_dtype": "bf16",
+        "note": "TEST3"
+    },   
 }
 
 DELTANET_MODELS_SIZE_CHANGES: dict[str, dict[str, Any]] = {
