@@ -16,6 +16,7 @@ from pfns.experiments.model_benchmarks.io import (
     save_results_bundle,
     upload_results_bundle_to_wandb,
 )
+from pfns.experiments.model_benchmarks.path_utils import build_repo_output_root
 from pfns.experiments.model_benchmarks.models import load_models_for_benchmark
 from pfns.experiments.model_benchmarks.model_registry import get_all_models
 from pfns.experiments.model_benchmarks.model_registry import (
@@ -109,7 +110,7 @@ def parse_cli_args():
 CLI_ARGS = parse_cli_args()
 EXPERIMENT["num_repetitions"] = CLI_ARGS.num_repetitions
 
-OUTPUT_ROOT = Path.cwd().resolve() / "exp_outputs" / "seq_len"
+OUTPUT_ROOT = build_repo_output_root(__file__, "seq_len")
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 print(f"Results are stored in: {OUTPUT_ROOT}")

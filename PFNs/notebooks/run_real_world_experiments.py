@@ -27,6 +27,7 @@ from pfns.experiments.model_benchmarks.model_registry import (
     get_models_from_families,
     get_models_from_names,
 )
+from pfns.experiments.model_benchmarks.path_utils import build_repo_output_root
 from pfns.experiments.model_benchmarks.real_world_presets import (
     DEFAULT_REAL_WORLD_PRESET,
     REAL_WORLD_PRESET_CHOICES,
@@ -189,7 +190,11 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="This run's shard index in [0, num_runs-1].",
     )
 
-    parser.add_argument("--output-root", type=Path, default=Path.cwd().resolve() / "exp_outputs" / "real_world_eval")
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=build_repo_output_root(__file__, "real_world_eval"),
+    )
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--verbose", action="store_true", help="Verbose dataset-level logging.")
 
