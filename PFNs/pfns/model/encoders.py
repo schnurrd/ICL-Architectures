@@ -800,6 +800,7 @@ class InputNormalizationEncoderStep(SeqEncStep):
         normalize_x: bool,
         remove_outliers: bool,
         remove_outliers_sigma: float = 4.0,
+        high_cardinality_categorical_threshold: int = 10,
         seed: int = 0,
         **kwargs: Any,
     ):
@@ -810,6 +811,9 @@ class InputNormalizationEncoderStep(SeqEncStep):
             normalize_x: Whether to normalize the input to have unit variance.
             remove_outliers: Whether to remove outliers from the input.
             remove_outliers_sigma: The number of standard deviations to use for outlier removal.
+            high_cardinality_categorical_threshold:
+                Normalize categorical features only above this many distinct finite
+                values on the train split.
             seed: Random seed for reproducibility.
             **kwargs: Keyword arguments passed to the parent SeqEncStep.
         """
@@ -818,12 +822,16 @@ class InputNormalizationEncoderStep(SeqEncStep):
         self.normalize_x = normalize_x
         self.remove_outliers = remove_outliers
         self.remove_outliers_sigma = remove_outliers_sigma
+        self.high_cardinality_categorical_threshold = (
+            high_cardinality_categorical_threshold
+        )
         self.seed = seed
         self.reset_seed()
         self.lower_for_outlier_removal = None
         self.upper_for_outlier_removal = None
         self.mean_for_normalization = None
         self.std_for_normalization = None
+        self.categorical_normalization_mask = None
 
     def reset_seed(self) -> None:
         """Reset the random seed."""
@@ -858,7 +866,52 @@ class InputNormalizationEncoderStep(SeqEncStep):
 
         return mask if mask.any() else None
 
-    def _fit(self, x: torch.Tensor, single_eval_pos: int, **kwargs: Any) -> None:
+    @staticmethod
+    def _build_high_cardinality_categorical_mask(
+        x: torch.Tensor,
+        categorical_mask: torch.Tensor | None,
+        normalize_position: int | None,
+        threshold: int,
+    ) -> torch.Tensor | None:
+        if categorical_mask is None:
+            return None
+
+        data = x if normalize_position in (-1, None) else x[:normalize_position]
+        high_cardinality_mask = torch.zeros_like(categorical_mask)
+        for sample_idx, sample_mask in enumerate(categorical_mask):
+            for feat_idx in torch.nonzero(sample_mask, as_tuple=True)[0].tolist():
+                values = data[:, sample_idx, feat_idx]
+                values = values[torch.isfinite(values)]
+                if values.numel() > 0 and torch.unique(values).numel() > threshold:
+                    high_cardinality_mask[sample_idx, feat_idx] = True
+        return high_cardinality_mask if high_cardinality_mask.any() else None
+
+    @staticmethod
+    def _build_normalization_mask(
+        continuous_mask: torch.Tensor,
+        categorical_normalization_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if categorical_normalization_mask is None:
+            return continuous_mask
+        return torch.logical_or(continuous_mask, categorical_normalization_mask)
+
+    @staticmethod
+    def _resolve_categorical_normalization_mask(
+        categorical_mask: torch.Tensor | None,
+        cached_mask: torch.Tensor | None,
+    ) -> torch.Tensor | None:
+        if categorical_mask is None or cached_mask is None:
+            return None
+        if cached_mask.shape != categorical_mask.shape:
+            return None
+        return cached_mask
+
+    def _fit(
+        self,
+        x: torch.Tensor,
+        single_eval_pos: int | None,
+        **kwargs: Any,
+    ) -> None:
         """Compute the normalization statistics on the training set.
 
         Args:
@@ -871,6 +924,14 @@ class InputNormalizationEncoderStep(SeqEncStep):
             x,
             kwargs.get("categorical_inds"),
         )
+        self.categorical_normalization_mask = (
+            self._build_high_cardinality_categorical_mask(
+                x,
+                categorical_mask,
+                normalize_position=normalize_position,
+                threshold=self.high_cardinality_categorical_threshold,
+            )
+        )
         if categorical_mask is not None:
             if self.remove_outliers:
                 self.lower_for_outlier_removal = torch.zeros_like(x[0])
@@ -881,27 +942,34 @@ class InputNormalizationEncoderStep(SeqEncStep):
 
             for sample_idx, sample_mask in enumerate(categorical_mask):
                 continuous_mask = ~sample_mask
-                if not continuous_mask.any():
-                    continue
-
-                sample_x = x[:, sample_idx : sample_idx + 1, continuous_mask]
                 if self.remove_outliers:
-                    _, (lower, upper) = remove_outliers(
-                        sample_x,
-                        normalize_positions=normalize_position,
-                        n_sigma=self.remove_outliers_sigma,
-                    )
-                    self.lower_for_outlier_removal[sample_idx, continuous_mask] = lower.squeeze(0)
-                    self.upper_for_outlier_removal[sample_idx, continuous_mask] = upper.squeeze(0)
+                    if continuous_mask.any():
+                        sample_x = x[:, sample_idx : sample_idx + 1, continuous_mask]
+                        _, (lower, upper) = remove_outliers(
+                            sample_x,
+                            normalize_positions=normalize_position,
+                            n_sigma=self.remove_outliers_sigma,
+                        )
+                        self.lower_for_outlier_removal[sample_idx, continuous_mask] = lower.squeeze(0)
+                        self.upper_for_outlier_removal[sample_idx, continuous_mask] = upper.squeeze(0)
 
                 if self.normalize_x:
+                    normalize_mask = self._build_normalization_mask(
+                        continuous_mask,
+                        None
+                        if self.categorical_normalization_mask is None
+                        else self.categorical_normalization_mask[sample_idx],
+                    )
+                    if not normalize_mask.any():
+                        continue
+                    sample_x = x[:, sample_idx : sample_idx + 1, normalize_mask]
                     _, (mean, std) = normalize_data(
                         sample_x,
                         normalize_positions=normalize_position,
                         return_scaling=True,
                     )
-                    self.mean_for_normalization[sample_idx, continuous_mask] = mean.squeeze(0)
-                    self.std_for_normalization[sample_idx, continuous_mask] = std.squeeze(0)
+                    self.mean_for_normalization[sample_idx, normalize_mask] = mean.squeeze(0)
+                    self.std_for_normalization[sample_idx, normalize_mask] = std.squeeze(0)
             return
 
         if self.remove_outliers:
@@ -933,7 +1001,7 @@ class InputNormalizationEncoderStep(SeqEncStep):
     def _transform(
         self,
         x: torch.Tensor,
-        single_eval_pos: int,
+        single_eval_pos: int | None,
         **kwargs: Any,
     ) -> tuple[torch.Tensor]:
         """Normalize the input tensor.
@@ -952,31 +1020,44 @@ class InputNormalizationEncoderStep(SeqEncStep):
             kwargs.get("categorical_inds"),
         )
         if categorical_mask is not None:
+            categorical_normalization_mask = (
+                self._resolve_categorical_normalization_mask(
+                    categorical_mask,
+                    self.categorical_normalization_mask,
+                )
+            )
             x_out = x.clone()
             for sample_idx, sample_mask in enumerate(categorical_mask):
                 continuous_mask = ~sample_mask
-                if not continuous_mask.any():
-                    continue
-
-                sample_x = x_out[:, sample_idx : sample_idx + 1, continuous_mask]
                 if self.remove_outliers:
-                    sample_x, _ = remove_outliers(
-                        sample_x,
-                        normalize_positions=normalize_position,
-                        lower=self.lower_for_outlier_removal[sample_idx, continuous_mask].unsqueeze(0),
-                        upper=self.upper_for_outlier_removal[sample_idx, continuous_mask].unsqueeze(0),
-                        n_sigma=self.remove_outliers_sigma,
-                    )
+                    if continuous_mask.any():
+                        sample_x = x_out[:, sample_idx : sample_idx + 1, continuous_mask]
+                        sample_x, _ = remove_outliers(
+                            sample_x,
+                            normalize_positions=normalize_position,
+                            lower=self.lower_for_outlier_removal[sample_idx, continuous_mask].unsqueeze(0),
+                            upper=self.upper_for_outlier_removal[sample_idx, continuous_mask].unsqueeze(0),
+                            n_sigma=self.remove_outliers_sigma,
+                        )
+                        x_out[:, sample_idx : sample_idx + 1, continuous_mask] = sample_x
 
                 if self.normalize_x:
+                    normalize_mask = self._build_normalization_mask(
+                        continuous_mask,
+                        None
+                        if categorical_normalization_mask is None
+                        else categorical_normalization_mask[sample_idx],
+                    )
+                    if not normalize_mask.any():
+                        continue
+                    sample_x = x_out[:, sample_idx : sample_idx + 1, normalize_mask]
                     sample_x = normalize_data(
                         sample_x,
                         normalize_positions=normalize_position,
-                        mean=self.mean_for_normalization[sample_idx, continuous_mask].unsqueeze(0),
-                        std=self.std_for_normalization[sample_idx, continuous_mask].unsqueeze(0),
+                        mean=self.mean_for_normalization[sample_idx, normalize_mask].unsqueeze(0),
+                        std=self.std_for_normalization[sample_idx, normalize_mask].unsqueeze(0),
                     )
-
-                x_out[:, sample_idx : sample_idx + 1, continuous_mask] = sample_x
+                    x_out[:, sample_idx : sample_idx + 1, normalize_mask] = sample_x
             return (x_out,)
 
         if self.remove_outliers:
