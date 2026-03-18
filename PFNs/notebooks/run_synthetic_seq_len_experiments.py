@@ -153,7 +153,6 @@ precomputed_batches = resolve_fixed_batches(
     output_root=OUTPUT_ROOT,
     default_device=device,
     wandb=WANDB,
-    task_kwargs={"data_generation_seed": EXPERIMENT["data_generation_seed"]},
 )
 print(f"Using {len(precomputed_batches)} fixed batches for this experiment.")
 

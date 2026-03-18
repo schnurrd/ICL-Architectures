@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .benchmark_batch_generators import create_seq_len_batch_generator
+from .benchmark_batch_generators import (
+    _set_data_generation_seed,
+    create_seq_len_batch_generator,
+)
 from .hashing import experiment_payload_hash
 from .io import (
     SEQ_LEN_BATCH_REQUIRED_FILES,
@@ -36,12 +39,20 @@ def resolve_fixed_batches(
     task_kwargs: dict[str, Any] | None = None,
 ) -> list[Any]:
     resolved_task_kwargs = dict(task_kwargs or {})
-    hash_payload = {
-        "experiment": experiment,
-        "task_variant": task_variant,
-        "task_kwargs": resolved_task_kwargs,
-    }
-    experiment_hash = experiment_payload_hash(experiment_payload=hash_payload)
+    generation_seed = experiment.get(
+        "data_generation_seed",
+        resolved_task_kwargs.pop("data_generation_seed", None),
+    )
+    if generation_seed is not None:
+        generation_seed = int(generation_seed)
+    experiment_hash = experiment_payload_hash(
+        experiment_payload={
+            "experiment": experiment,
+            "generation_seed": generation_seed,
+            "task_variant": task_variant,
+            "task_kwargs": resolved_task_kwargs,
+        }
+    )
     bundle_dir = (
         Path(output_root)
         / "fixed_batches"
@@ -71,6 +82,8 @@ def resolve_fixed_batches(
             return batches
 
     print(f"Generating fixed batches for experiment hash {experiment_hash}")
+    if generation_seed is not None:
+        _set_data_generation_seed(generation_seed)
     batches = list(
         create_seq_len_batch_generator(
             task_variant=task_variant,
@@ -102,6 +115,7 @@ def resolve_fixed_batches(
             ),
             metadata={
                 "experiment": experiment,
+                "generation_seed": generation_seed,
                 "task_variant": task_variant,
                 "task_kwargs": resolved_task_kwargs,
                 "experiment_hash": experiment_hash,
