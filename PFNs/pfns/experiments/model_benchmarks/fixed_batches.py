@@ -40,8 +40,7 @@ def resolve_fixed_batches(
 ) -> list[Any]:
     resolved_task_kwargs = dict(task_kwargs or {})
     generation_seed = experiment.get(
-        "data_generation_seed",
-        resolved_task_kwargs.pop("data_generation_seed", None),
+        "data_generation_seed", None
     )
     if generation_seed is not None:
         generation_seed = int(generation_seed)

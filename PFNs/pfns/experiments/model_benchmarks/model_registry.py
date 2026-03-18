@@ -23,6 +23,9 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
         # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
         # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
     },
+    "Softmax_Transformer_full_norm": {
+        "wandb_run_id": "tabpfn_transformer/runs/02e7n51p",  # no feature attention like fla
+    },
 }
 
 KDA_MODELS: dict[str, dict[str, Any]] = {
@@ -57,36 +60,42 @@ KDA_MODELS: dict[str, dict[str, Any]] = {
 }
 
 GLA_MODELS: dict[str, dict[str, Any]] = {
-    "GLA_Comb_MT": {
-        "display_name": "GLA Combined Multi Target",
-        "wandb_run_id": "fla_models/runs/yzw9d63f",
-    },
-    "GLA_Comb_ST": {
-        "display_name": "GLA Combined Single Target",
-        "wandb_run_id": "fla_models/runs/g1ul5lyc",
-    },
-    # "GLA_Comb_ST_short_conv": {
-    #     "display_name": "GLA Combined Single Target (Short Conv)",
-    #     "wandb_run_id": "fla_models/runs/47u2og3a",
+    # "GLA_Comb_MT": {
+    #     "display_name": "GLA Combined Multi Target",
+    #     "wandb_run_id": "fla_models/runs/yzw9d63f",
     # },
-    "GLA_Int_ST": {
-        "display_name": "GLA Interleaved Single Target",
-        "wandb_run_id": "fla_models/runs/9k1i2f9z",
-    },
+    # "GLA_Comb_ST": {
+    #     "display_name": "GLA Combined Single Target",
+    #     "wandb_run_id": "fla_models/runs/g1ul5lyc",
+    # },
+    # # "GLA_Comb_ST_short_conv": {
+    # #     "display_name": "GLA Combined Single Target (Short Conv)",
+    # #     "wandb_run_id": "fla_models/runs/47u2og3a",
+    # # },
+    # "GLA_Int_ST": {
+    #     "display_name": "GLA Interleaved Single Target",
+    #     "wandb_run_id": "fla_models/runs/9k1i2f9z",
+    # },
     # "GLA_Int_ST_short_conv": {
     #     "display_name": "GLA Interleaved Single Target (Short Conv)",
     #     "wandb_run_id": "fla_models/runs/do2tv5da",
     # },
     "GLA_Int_MT": {
-        "display_name": "GLA Interleaved Multi Target",
+        "display_name": "GLA Interleaved Multi Target (old cluster)",
         "wandb_run_id": "fla_models/runs/4f224z23",
     },
     "GLA_Int_MT_new_cluster": {
-        "display_name": "GLA Interleaved Multi Target (new 2)",
+        "display_name": "GLA Interleaved Multi Target (new cluster)",
         "wandb_run_id": "fla_models/runs/4f224z23",
         "eval_autocast_dtype": "bf16",
-        "note": "TEST3"
+        "note": "TEST5"
     },   
+    "GLA_Int_MT_new_local_test": {
+        "display_name": "GLA Interleaved Multi Target (local)",
+        "wandb_run_id": "fla_models/runs/4f224z23",
+        "eval_autocast_dtype": "bf16",
+        "note": "TEST4"
+    },  
 }
 
 DELTANET_MODELS_SIZE_CHANGES: dict[str, dict[str, Any]] = {
