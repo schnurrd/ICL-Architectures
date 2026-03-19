@@ -7,10 +7,11 @@ from pfns.utils import get_default_device
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
+        "eval_autocast_dtype": "bf16",
     },
     "Softmax_Transformer_with_feature_attention": {
         "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
-        #n ew smaller versions 
+        # new smaller versions 
         # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
         # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
     },
@@ -343,10 +344,10 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/gex7h68b", # fp 16 version 2wrxsh60, old 15.2M params version b56ohkmz
         "eval_mode": "forward",
     },
-    # "Transformer_Test_To_Train_Only": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
-    #     "eval_mode": "forward",
-    # },
+    "Transformer_Test_To_Train_Only": {
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
+        "eval_mode": "forward",
+    },
     "Transformer_Comb_MT": {
         "display_name": "Causal Multi Target",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",

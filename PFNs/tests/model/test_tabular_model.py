@@ -610,7 +610,7 @@ def test_separate_train_inference(
     ), f"{logits1} != {logits1a}"
 
 
-def test_input_normalization_encoder_step_skips_categorical_columns():
+def test_input_normalization_encoder_step_skips_low_cardinality_categorical_columns():
     step = encoders.InputNormalizationEncoderStep(
         normalize_on_train_only=True,
         normalize_x=True,
@@ -635,13 +635,83 @@ def test_input_normalization_encoder_step_skips_categorical_columns():
     assert not torch.equal(transformed[:, :, 0], x[:, :, 0])
 
 
+def test_input_normalization_encoder_step_normalizes_only_high_cardinality_categoricals():
+    step = encoders.InputNormalizationEncoderStep(
+        normalize_on_train_only=True,
+        normalize_x=True,
+        remove_outliers=True,
+    )
+
+    x = torch.zeros((12, 2, 2), dtype=torch.float32)
+    x[:, 0, 0] = torch.arange(12, dtype=torch.float32)
+    x[:, 0, 1] = torch.tensor([0, 1] * 6, dtype=torch.float32)
+    x[:, 1, 0] = 100.0 + torch.arange(12, dtype=torch.float32)
+    x[:, 1, 1] = torch.tensor(list(range(11)) + [100.0], dtype=torch.float32)
+    categorical_inds = [[1], [1]]
+
+    step._fit(x, single_eval_pos=11, categorical_inds=categorical_inds)
+    transformed, = step._transform(x, single_eval_pos=11, categorical_inds=categorical_inds)
+
+    torch.testing.assert_close(transformed[:, 0, 1], x[:, 0, 1])
+
+    expected_high_cardinality = encoders.normalize_data(
+        x[:, 1:2, 1:2],
+        normalize_positions=11,
+        mean=step.mean_for_normalization[1:2, 1:2],
+        std=step.std_for_normalization[1:2, 1:2],
+    ).squeeze(-1).squeeze(-1)
+    torch.testing.assert_close(transformed[:, 1, 1], expected_high_cardinality)
+
+
+def test_input_normalization_encoder_step_reuses_categorical_mask_for_predict_only():
+    step = encoders.InputNormalizationEncoderStep(
+        normalize_on_train_only=True,
+        normalize_x=True,
+        remove_outliers=True,
+    )
+
+    x_train = torch.tensor(
+        [
+            [[0.0, 0.0]],
+            [[1.0, 1.0]],
+            [[2.0, 2.0]],
+            [[3.0, 3.0]],
+            [[4.0, 4.0]],
+            [[5.0, 5.0]],
+            [[6.0, 6.0]],
+            [[7.0, 7.0]],
+            [[8.0, 8.0]],
+            [[9.0, 9.0]],
+            [[10.0, 10.0]],
+        ],
+        dtype=torch.float32,
+    )
+    x_test = torch.tensor(
+        [
+            [[11.0, 11.0]],
+            [[12.0, 100.0]],
+        ],
+        dtype=torch.float32,
+    )
+
+    step._fit(x_train, single_eval_pos=11, categorical_inds=[[1]])
+    transformed, = step._transform(x_test, single_eval_pos=None, categorical_inds=[[1]])
+
+    expected = encoders.normalize_data(
+        x_test,
+        mean=step.mean_for_normalization.unsqueeze(0),
+        std=step.std_for_normalization.unsqueeze(0),
+    )
+    torch.testing.assert_close(transformed, expected)
+
+
 class _RecordingInputNormalizationEncoderStep(encoders.InputNormalizationEncoderStep):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.last_input = None
         self.last_output = None
 
-    def _transform(self, x: torch.Tensor, single_eval_pos: int, **kwargs):
+    def _transform(self, x: torch.Tensor, single_eval_pos: int | None, **kwargs):
         self.last_input = x.detach().clone()
         out = super()._transform(x, single_eval_pos, **kwargs)
         self.last_output = out[0].detach().clone()
