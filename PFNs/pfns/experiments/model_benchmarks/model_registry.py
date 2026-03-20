@@ -7,7 +7,7 @@ from pfns.utils import get_default_device
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
+        #"eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
     },
     # "Softmax_Transformer_with_feature_attention": {
     #     "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
