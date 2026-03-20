@@ -155,6 +155,9 @@ def run_evaluation(
             model_string=str(model_config.get("checkpoint_name") or "checkpoint.pt"),
             wandb_run_id=model_config.get("wandb_run_id"),
             autocast_dtype=model_config.get("eval_autocast_dtype"),
+            high_cardinality_categorical_threshold=model_config.get(
+                "high_cardinality_categorical_threshold"
+            ),
             N_ensemble_configurations=n_ensemble_configurations,
             preprocess_transforms=list(preprocess_transforms),
             batch_size_inference=batch_size_inference,

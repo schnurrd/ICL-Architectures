@@ -549,6 +549,31 @@ class InferenceEngine:
 default_base_path = pathlib.Path(__file__).parent.parent.resolve()
 
 
+def _override_loaded_model_config(
+    checkpoint_config: dict[str, Any],
+    *,
+    high_cardinality_categorical_threshold: int | None = None,
+) -> dict[str, Any]:
+    if high_cardinality_categorical_threshold is None:
+        return checkpoint_config
+
+    config = dict(checkpoint_config)
+    model_config = dict(config["model"])
+    encoder_config = model_config.get("encoder")
+    if encoder_config is None:
+        raise ValueError(
+            "Cannot override high_cardinality_categorical_threshold because the checkpoint has no encoder config."
+        )
+
+    encoder_config = dict(encoder_config)
+    encoder_config["high_cardinality_categorical_threshold"] = int(
+        high_cardinality_categorical_threshold
+    )
+    model_config["encoder"] = encoder_config
+    config["model"] = model_config
+    return config
+
+
 class TabPFNClassifier(BaseEstimator, ClassifierMixin):
     """Refactored TabPFN Classifier with separated preprocessing and model."""
 
@@ -574,6 +599,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         preprocess_transforms: list[str] = None,
         fla_cache_chunk_size: int | None = None,
         autocast_dtype: str | None = None,
+        high_cardinality_categorical_threshold: int | None = None,
     ):
         """
         Initializes the classifier and loads the model.
@@ -610,6 +636,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         :param subsample_dataset_size: If set to an integer and the number of samples in the dataset exceeds this number, a subsample of the data is taken.
         :param preprocess_transforms: List of preprocessing transforms to consider during inference.
         :param fla_cache_chunk_size: If set and the model uses an FLA backbone, chunk size for cache-backed inference.
+        :param high_cardinality_categorical_threshold: Optional override for the encoder normalization threshold.
         """
         if wandb_run_id is not None:
             destination_path = (
@@ -640,12 +667,13 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.subsample_dataset_size = subsample_dataset_size
         self.preprocess_transforms = preprocess_transforms
         self.fla_cache_chunk_size = fla_cache_chunk_size
+        self.high_cardinality_categorical_threshold = high_cardinality_categorical_threshold
         self.categorical_feats: tuple[int, ...] = ()
         self.autocast_dtype = resolve_autocast_dtype(device, autocast_dtype)
 
         model_key = (
             f"{self.base_path.resolve()}|{self.model_string}|{self.device}|"
-            f"{self.wandb_run_id or ''}"
+            f"{self.wandb_run_id or ''}|{self.high_cardinality_categorical_threshold}"
         )
 
         if model_key in self.models_in_memory:
@@ -655,6 +683,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
                 name=self.model_string,
                 base_path=str(self.base_path),
                 device=self.device,
+                high_cardinality_categorical_threshold=self.high_cardinality_categorical_threshold,
             )
             self.models_in_memory[model_key] = (model, config, results_file)
             if len(self.models_in_memory) == 2:
@@ -870,7 +899,12 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         """Clear cached models."""
         self.models_in_memory.clear()
 
-def load_model_workflow(name, base_path, device="cpu"):
+def load_model_workflow(
+    name,
+    base_path,
+    device="cpu",
+    high_cardinality_categorical_threshold: int | None = None,
+):
     """
     Loads a saved model from the specified position. This function only restores inference capabilities and
     cannot be used for further training.
@@ -889,7 +923,11 @@ def load_model_workflow(name, base_path, device="cpu"):
             "Checkpoint is missing the serialized training config under key 'config'."
         )
     
-    config: BaseConfig = MainConfig.from_dict(checkpoint["config"])
+    config_dict = _override_loaded_model_config(
+        checkpoint["config"],
+        high_cardinality_categorical_threshold=high_cardinality_categorical_threshold,
+    )
+    config: BaseConfig = MainConfig.from_dict(config_dict)
     
     model = config.model.create_model()
     model_state = checkpoint["model_state_dict"]

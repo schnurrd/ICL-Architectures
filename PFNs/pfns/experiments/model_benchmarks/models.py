@@ -33,6 +33,9 @@ def load_models_for_benchmark(
             name=checkpoint_name,
             base_path=base_path,
             device=resolved_device,
+            high_cardinality_categorical_threshold=model_config.get(
+                "high_cardinality_categorical_threshold"
+            ),
         )
         model.eval()
         models[model_name] = model

@@ -55,6 +55,7 @@ class EncoderConfig(base_config.BaseConfig):
     constant_normalization_mean: float = 0.0
     constant_normalization_std: float = 1.0
     train_normalization: bool = False
+    high_cardinality_categorical_threshold: int = 10
     hidden_size: int | None = None
     use_categorical_encoder: bool = False
     max_categories: int = 100
@@ -90,6 +91,7 @@ class EncoderConfig(base_config.BaseConfig):
                     normalize_on_train_only=True,
                     normalize_x=True,
                     remove_outliers=True,
+                    high_cardinality_categorical_threshold=self.high_cardinality_categorical_threshold,
                 )
             )
         
