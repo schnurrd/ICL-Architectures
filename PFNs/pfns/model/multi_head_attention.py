@@ -13,6 +13,11 @@ TORCH_VERSION = torch.__version__.split(".")
 
 TORCH_2_ATTENTION_POSSIBLE = int(TORCH_VERSION[0]) >= 2
 
+BF16_SUPPORTED_NATIVELY = (
+    TORCH_2_ATTENTION_POSSIBLE and 
+    torch.cuda.is_available() and 
+    torch.cuda.get_device_capability(torch.cuda.current_device())[0] >= 8
+)
 
 def _gqa_is_supported() -> bool: # function copied from  https://github.com/PriorLabs/TabPFN/blob/ac6d961b052cdac5288a6b3be071f7e61029ad09/src/tabpfn/architectures/base/attention/full_attention.py#L25
     """Check if PyTorch's scaled_dot_product_attention supports enable_gqa parameter.
@@ -38,6 +43,15 @@ def _gqa_is_supported() -> bool: # function copied from  https://github.com/Prio
 
 
 USE_TORCH_2_GQA = _gqa_is_supported()
+
+
+def _should_run_bf16_sdpa_in_fp16(x: torch.Tensor, *, training: bool) -> bool: # If our GPU is to old this will otherwise cause OOM errors if not switched
+    return (
+        not BF16_SUPPORTED_NATIVELY
+        and not training
+        and x.is_cuda
+        and x.dtype == torch.bfloat16
+    )
 
 
 class MultiHeadAttention(torch.nn.Module):
@@ -611,6 +625,7 @@ class MultiHeadAttention(torch.nn.Module):
             self.dropout_p,
             self.softmax_scale,
             attn_mask,
+            training=self.training,
             is_causal=is_causal,
         )
         return torch.einsum(
@@ -721,6 +736,7 @@ class MultiHeadAttention(torch.nn.Module):
         dropout_p: float | None = None,
         softmax_scale: float | None = None,
         attn_mask: torch.Tensor | None = None,
+        training: bool = False,
         is_causal: bool = False,
     ) -> torch.Tensor:
         assert (k is None) == (v is None)
@@ -746,6 +762,11 @@ class MultiHeadAttention(torch.nn.Module):
 
         if TORCH_2_ATTENTION_POSSIBLE:
             extra_inputs = {}
+            sdpa_dtype = (
+                torch.float16
+                if _should_run_bf16_sdpa_in_fp16(q, training=training)
+                else q.dtype
+            )
             if softmax_scale is not None:
                 extra_inputs["scale"] = (
                     softmax_scale  # defaults to 1/sqrt(d_k) if None or not provided
@@ -761,7 +782,7 @@ class MultiHeadAttention(torch.nn.Module):
                     raise ValueError(
                         f"Expected attn_mask to have 2, 3, or 4 dims, got {attn_mask.shape}."
                     )
-                attn_mask = attn_mask.to(device=q.device, dtype=q.dtype)
+                attn_mask = attn_mask.to(device=q.device, dtype=sdpa_dtype)
                 extra_inputs["attn_mask"] = attn_mask
             if is_causal:
                 extra_inputs["is_causal"] = True
@@ -780,13 +801,13 @@ class MultiHeadAttention(torch.nn.Module):
                 # transposing just before and keeping the state in the transposed state
                 # makes things faster as this function internally transposes the state
                 # back and forth
-                    q.transpose(1, 2),
-                    k.transpose(1, 2),
-                    v.transpose(1, 2),
+                    q.transpose(1, 2).to(sdpa_dtype),
+                    k.transpose(1, 2).to(sdpa_dtype),
+                    v.transpose(1, 2).to(sdpa_dtype),
                     dropout_p=dropout_p,
                     **extra_inputs,
             )
-            attention_head_outputs = attention_head_outputs.transpose(1, 2)
+            attention_head_outputs = attention_head_outputs.transpose(1, 2).to(q.dtype)
         else:
             k = MultiHeadAttention.broadcast_kv_across_heads(k, share_kv_across_n_heads)
             v = MultiHeadAttention.broadcast_kv_across_heads(v, share_kv_across_n_heads)

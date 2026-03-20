@@ -9,8 +9,6 @@ Usage:
 import argparse
 from typing import Any
 
-import torch
-
 from pfns.scripts.tabpfn_interface import TabPFNClassifier
 from pfns.evaluation.baselines import get_baselines
 from pfns.evaluation.evaluate import evaluate_on_openml
@@ -35,14 +33,6 @@ BENCHMARK_CHOICES = [
     "tabarena_full",
     "tabarena_medium",
 ]
-
-
-def _is_oom_error(exc: BaseException) -> bool:
-    if isinstance(exc, torch.OutOfMemoryError | torch.cuda.OutOfMemoryError):
-        return True
-    return "out of memory" in str(exc).lower()
-
-
 def _resolve_summary_metrics(
     metric_specs: list[str | dict[str, Any]] | tuple[str | dict[str, Any], ...] | None,
 ) -> list[dict[str, Any]]:
@@ -260,22 +250,7 @@ def run_real_world_model_from_config(
         **exp,
     }
 
-    try:
-        return run_evaluation(**run_kwargs)
-    except Exception as exc:
-        is_tabpfn_runner = str(model_config.get("runner") or "tabpfn") == "tabpfn"
-        if not is_tabpfn_runner or exp["batch_size_inference"] <= 1 or not _is_oom_error(exc):
-            raise
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        print(
-            "Evaluation hit an OOM error. Retrying once with "
-            "batch_size_inference=1."
-        )
-        retry_kwargs = dict(run_kwargs)
-        retry_kwargs["batch_size_inference"] = 1
-        return run_evaluation(**retry_kwargs)
+    return run_evaluation(**run_kwargs)
 
 
 def print_results_summary(
