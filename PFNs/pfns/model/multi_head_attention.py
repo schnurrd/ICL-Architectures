@@ -40,6 +40,14 @@ def _gqa_is_supported() -> bool: # function copied from  https://github.com/Prio
 USE_TORCH_2_GQA = _gqa_is_supported()
 
 
+def _should_run_bf16_sdpa_in_fp16(x: torch.Tensor) -> bool:
+    return (
+        x.is_cuda
+        and x.dtype == torch.bfloat16
+        and torch.cuda.get_device_capability(x.device)[0] < 8
+    )
+
+
 class MultiHeadAttention(torch.nn.Module):
     """
     An implementation of multi-head attention, heavily relying on the pytorch
@@ -746,6 +754,9 @@ class MultiHeadAttention(torch.nn.Module):
 
         if TORCH_2_ATTENTION_POSSIBLE:
             extra_inputs = {}
+            sdpa_dtype = (
+                torch.float16 if _should_run_bf16_sdpa_in_fp16(q) else q.dtype
+            )
             if softmax_scale is not None:
                 extra_inputs["scale"] = (
                     softmax_scale  # defaults to 1/sqrt(d_k) if None or not provided
@@ -761,7 +772,7 @@ class MultiHeadAttention(torch.nn.Module):
                     raise ValueError(
                         f"Expected attn_mask to have 2, 3, or 4 dims, got {attn_mask.shape}."
                     )
-                attn_mask = attn_mask.to(device=q.device, dtype=q.dtype)
+                attn_mask = attn_mask.to(device=q.device, dtype=sdpa_dtype)
                 extra_inputs["attn_mask"] = attn_mask
             if is_causal:
                 extra_inputs["is_causal"] = True
@@ -780,13 +791,13 @@ class MultiHeadAttention(torch.nn.Module):
                 # transposing just before and keeping the state in the transposed state
                 # makes things faster as this function internally transposes the state
                 # back and forth
-                    q.transpose(1, 2),
-                    k.transpose(1, 2),
-                    v.transpose(1, 2),
+                    q.transpose(1, 2).to(sdpa_dtype),
+                    k.transpose(1, 2).to(sdpa_dtype),
+                    v.transpose(1, 2).to(sdpa_dtype),
                     dropout_p=dropout_p,
                     **extra_inputs,
             )
-            attention_head_outputs = attention_head_outputs.transpose(1, 2)
+            attention_head_outputs = attention_head_outputs.transpose(1, 2).to(q.dtype)
         else:
             k = MultiHeadAttention.broadcast_kv_across_heads(k, share_kv_across_n_heads)
             v = MultiHeadAttention.broadcast_kv_across_heads(v, share_kv_across_n_heads)
