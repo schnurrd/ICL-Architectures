@@ -4,37 +4,6 @@ from typing import Any, Iterable
 from pfns.training_utils import is_autocast_dtype_enabled, resolve_autocast_dtype
 from pfns.utils import get_default_device
 
-TRANSFORMER_DEBUG_MODELS: dict[str, dict[str, Any]] = {    
-    "Softmax_Transformer_trained_wo_norm_eval_no_norm": {
-        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
-        "high_cardinality_categorical_threshold": 1_000_000,
-    },
-    "Softmax_Transformer_trained_wo_norm_eval_half_norm": {
-        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
-        "high_cardinality_categorical_threshold": 10,
-    },
-    "Softmax_Transformer_trained_wo_norm_eval_full_norm": {
-        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
-        "high_cardinality_categorical_threshold": 0,
-    },
-    "Softmax_Transformer_trained_w_full_norm_eval_full_norm": {
-        "wandb_run_id": "icl_arch/tabpfn_transformer/02e7n51p",  # no feature attention like fla, old transformer
-        "high_cardinality_categorical_threshold": 0,
-    },
-    "Softmax_Transformer_trained_w_no_cat_norm_eval_half_norm": {
-        "wandb_run_id": "icl_arch/tabpfn_transformer/ajttwh65",  # no feature attention like fla, old transformer
-        "high_cardinality_categorical_threshold": 10,
-    },
-    "Softmax_Transformer_trained_w_no_cat_norm_eval_full_norm": {
-        "wandb_run_id": "icl_arch/tabpfn_transformer/ajttwh65",  # no feature attention like fla, old transformer
-        "high_cardinality_categorical_threshold": 0,
-    },
-    "Softmax_Transformer_trained_w_no_cat_norm_eval_no_norm": {
-        "wandb_run_id": "icl_arch/tabpfn_transformer/ajttwh65",  # no feature attention like fla, old transformer
-        "high_cardinality_categorical_threshold": 1_000_000,
-    },
-}
-
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
@@ -220,38 +189,6 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/hvmrqqbi",
     },
 }
-
-
-LINEAR_ATTENTION_DEBUG_MODELS: dict[str, dict[str, Any]] = {
-    "Linear_Attention_Non_Causal_Cat_Norm_Full_Norm": {
-        "wandb_run_id": "linear_attention/runs/ygawhsm9",
-        "high_cardinality_categorical_threshold": 0,
-    },
-    "Linear_Attention_Non_Causal_Cat_Norm_Half_Norm": {
-        "wandb_run_id": "linear_attention/runs/ygawhsm9",
-        "high_cardinality_categorical_threshold": 10,
-    },
-    "Linear_Attention_Non_Causal_Cat_Norm": {
-        "wandb_run_id": "linear_attention/runs/qqts8fpp",
-        "high_cardinality_categorical_threshold": 0,
-    },
-    "Linear_Attention_Non_Causal_Cat_Norm_Half_Norm": {
-        "wandb_run_id": "linear_attention/runs/qqts8fpp",
-        "high_cardinality_categorical_threshold": 10,
-    },
-    "Linear_Attention_Non_Causal_Half_Cat_Norm_Real": {
-        "wandb_run_id": "linear_attention/runs/hwsxnsho",
-        "high_cardinality_categorical_threshold": 10,
-    },
-    "Linear_Attention_Non_Causal_Half_Cat_Norm": {
-        "wandb_run_id": "linear_attention/runs/0j5sy87c",
-        "high_cardinality_categorical_threshold": 10,
-    },
-    "Linear_Attention_Causal": { # Comb_MT
-        "wandb_run_id": "linear_attention/runs/fdzuamc8",
-    },
-}
-
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Non_Causal": { # Trained without cat normalization
