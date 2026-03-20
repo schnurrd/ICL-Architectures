@@ -625,6 +625,7 @@ class MultiHeadAttention(torch.nn.Module):
             self.dropout_p,
             self.softmax_scale,
             attn_mask,
+            training=self.training,
             is_causal=is_causal,
         )
         return torch.einsum(
@@ -735,6 +736,7 @@ class MultiHeadAttention(torch.nn.Module):
         dropout_p: float | None = None,
         softmax_scale: float | None = None,
         attn_mask: torch.Tensor | None = None,
+        training: bool = False,
         is_causal: bool = False,
     ) -> torch.Tensor:
         assert (k is None) == (v is None)
@@ -762,7 +764,7 @@ class MultiHeadAttention(torch.nn.Module):
             extra_inputs = {}
             sdpa_dtype = (
                 torch.float16
-                if _should_run_bf16_sdpa_in_fp16(q, training=self.training)
+                if _should_run_bf16_sdpa_in_fp16(q, training=training)
                 else q.dtype
             )
             if softmax_scale is not None:
