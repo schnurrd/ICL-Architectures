@@ -74,7 +74,7 @@ def run_evaluation(
     n_splits: int = 5,
     n_jobs: int = 4,
     random_state: int = 42,
-    batch_size_inference: int = 16,
+    batch_size_inference: int = 32,
     n_ensemble_configurations: int = 10,
     preprocess_transforms: list[str] | tuple[str, ...] = ("none", "power"),
     sample_order_permutation: bool = False,
