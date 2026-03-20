@@ -13,6 +13,11 @@ TORCH_VERSION = torch.__version__.split(".")
 
 TORCH_2_ATTENTION_POSSIBLE = int(TORCH_VERSION[0]) >= 2
 
+BF16_SUPPORTED_NATIVELY = (
+    TORCH_2_ATTENTION_POSSIBLE and 
+    torch.cuda.is_available() and 
+    torch.cuda.get_device_capability(torch.cuda.current_device())[0] >= 8
+)
 
 def _gqa_is_supported() -> bool: # function copied from  https://github.com/PriorLabs/TabPFN/blob/ac6d961b052cdac5288a6b3be071f7e61029ad09/src/tabpfn/architectures/base/attention/full_attention.py#L25
     """Check if PyTorch's scaled_dot_product_attention supports enable_gqa parameter.
@@ -40,11 +45,12 @@ def _gqa_is_supported() -> bool: # function copied from  https://github.com/Prio
 USE_TORCH_2_GQA = _gqa_is_supported()
 
 
-def _should_run_bf16_sdpa_in_fp16(x: torch.Tensor) -> bool:
+def _should_run_bf16_sdpa_in_fp16(x: torch.Tensor, *, training: bool) -> bool: # If our GPU is to old this will otherwise cause OOM errors if not switched
     return (
-        x.is_cuda
+        not BF16_SUPPORTED_NATIVELY
+        and not training
+        and x.is_cuda
         and x.dtype == torch.bfloat16
-        and torch.cuda.get_device_capability(x.device)[0] < 8
     )
 
 
@@ -755,7 +761,9 @@ class MultiHeadAttention(torch.nn.Module):
         if TORCH_2_ATTENTION_POSSIBLE:
             extra_inputs = {}
             sdpa_dtype = (
-                torch.float16 if _should_run_bf16_sdpa_in_fp16(q) else q.dtype
+                torch.float16
+                if _should_run_bf16_sdpa_in_fp16(q, training=self.training)
+                else q.dtype
             )
             if softmax_scale is not None:
                 extra_inputs["scale"] = (
