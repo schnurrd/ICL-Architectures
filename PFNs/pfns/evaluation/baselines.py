@@ -288,7 +288,7 @@ class TabPFNV2_5Baseline:
         self.model = None
     
     def fit(self, X: np.ndarray, y: np.ndarray, categorical_feats=None):
-        self.model = TabPFNClassifier(categorical_features_indices=categorical_feats)
+        self.model = TabPFNClassifier(categorical_features_indices=categorical_feats, ignore_pretraining_limits=True)
         self.model.fit(X, y)
         return self
 

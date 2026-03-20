@@ -6,18 +6,14 @@ from pfns.utils import get_default_device
 
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
-        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
+        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
         "eval_autocast_dtype": "bf16",
     },
-    "Softmax_Transformer_with_feature_attention": {
-        "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
-        # new smaller versions 
-        # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
-        # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
-    },
-    # "Softmax_Transformer_full_norm": {
-    #     "wandb_run_id": "tabpfn_transformer/runs/02e7n51p",  # no feature attention like fla
-    #     "eval_autocast_dtype": "bf16",
+    # "Softmax_Transformer_with_feature_attention": {
+    #     "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
+    #     # new smaller versions 
+    #     # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
+    #     # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
     # },
 }
 
@@ -210,11 +206,16 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
 
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
-    # "Linear_Attention_Non_Causal": {
-    #     "wandb_run_id": "linear_attention/runs/ygawhsm9",
-    # },
-    # "Linear_Attention_Causal": { # Comb_MT
-    #     "wandb_run_id": "linear_attention/runs/fdzuamc8",
+    "Linear_Attention_Non_Causal": { # Trained without cat normalization
+        "wandb_run_id": "linear_attention/runs/0j5sy87c",
+        # "eval_autocast_dtype": "bf16",
+    },
+    "Linear_Attention_Causal_Comb_ST": { # Trained without cat normalization
+        "wandb_run_id": "linear_attention/runs/2qth8bnj",
+    },
+    # Not finished ep: 93
+    # "Linear_Attention_Causal_Comb_MT": { # Trained without cat normalization
+    #     "wandb_run_id": "linear_attention/runs/3lyr8wze",
     # },
 }
 
@@ -284,13 +285,13 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Non-Causal Transformer",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
     },
-    "equal_params:Rebased_Comb_ST": {
-        "display_name": "Linear Attention (Rebased $\\phi$)",
-        "wandb_run_id": "fla_models/runs/ntkpkzf3", 
-    },
+    # "equal_params:Rebased_Comb_ST": {
+    #     "display_name": "Linear Attention (Rebased $\\phi$)",
+    #     "wandb_run_id": "fla_models/runs/ntkpkzf3", 
+    # },
     "equal_params:Linear_Attention_Comb_ST": {
         "display_name": "Linear Attention",
-        "wandb_run_id": "linear_attention/runs/ygawhsm9",
+        "wandb_run_id": "linear_attention/runs/0j5sy87c",
     },
     "equal_params:DeltaNet_Comb_ST": {
         "display_name": "DeltaNet",
