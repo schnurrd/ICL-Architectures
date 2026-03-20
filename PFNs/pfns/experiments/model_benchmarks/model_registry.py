@@ -280,6 +280,22 @@ DELTANET_ADDED_REGULARIZATION: dict[str, dict[str, Any]] = {
     }
 }
 
+DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
+    "DeltaNet_Comb_ST_Finetuned_64K_1_e-5_new": {
+        "wandb_run_id": "icl_arch/fla_models/leaywm94",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Comb_ST_Finetuned_64K_5_e-6_new": {
+        "wandb_run_id": "icl_arch/fla_models/zmvzjsep",
+        "eval_autocast_dtype": "bf16",
+    },
+    "DeltaNet_Comb_ST_Reference": {
+        "display_name": "DeltaNet Reference",
+        "wandb_run_id": "fla_models/runs/ob2m9rth",
+        "eval_autocast_dtype": "bf16",
+    },
+}
+
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     "equal_params:Transformer_Comb_ST": { # non-causal version
         "display_name": "Non-Causal Transformer",
@@ -429,6 +445,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "transformer_masked": TRANSFORMER_MASKED_MODELS,
     "deltanet_high_seq_len": DELTANET_HIGH_SEQ_LEN_MODELS,
     "deltanet_added_regularization": DELTANET_ADDED_REGULARIZATION,
+    "deltanet_finetuned": DELTANET_FINETUNED_MODELS,
     "subsampled": SUBSAMPLED_MODELS,
     "fla_models": {
         **KDA_MODELS,
