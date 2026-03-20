@@ -775,6 +775,17 @@ class MultiHeadAttention(torch.nn.Module):
                     v,
                     share_kv_across_n_heads,
                 )
+            if (
+                q.is_cuda
+                and q.dtype == torch.bfloat16
+                and not torch.cuda.is_bf16_supported(False)
+            ):
+                q = q.to(torch.float16)
+                k = k.to(torch.float16)
+                v = v.to(torch.float16)
+                if attn_mask is not None and attn_mask.dtype == torch.bfloat16:
+                    attn_mask = attn_mask.to(torch.float16)
+                    extra_inputs["attn_mask"] = attn_mask
             print(
                 "DEBUG sdpa",
                 {
