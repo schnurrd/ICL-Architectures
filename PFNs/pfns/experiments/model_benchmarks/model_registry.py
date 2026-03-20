@@ -4,11 +4,50 @@ from typing import Any, Iterable
 from pfns.training_utils import is_autocast_dtype_enabled, resolve_autocast_dtype
 from pfns.utils import get_default_device
 
+TRANSFORMER_DEBUG_MODELS: dict[str, dict[str, Any]] = {    
+    "Softmax_Transformer_trained_wo_norm_eval_no_norm": {
+        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
+        "high_cardinality_categorical_threshold": 1_000_000,
+    },
+    "Softmax_Transformer_trained_wo_norm_eval_half_norm": {
+        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
+        "high_cardinality_categorical_threshold": 10,
+    },
+    "Softmax_Transformer_trained_wo_norm_eval_full_norm": {
+        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
+        "high_cardinality_categorical_threshold": 0,
+    },
+    "Softmax_Transformer_trained_w_full_norm_eval_full_norm": {
+        "wandb_run_id": "icl_arch/tabpfn_transformer/02e7n51p",  # no feature attention like fla, old transformer
+        "high_cardinality_categorical_threshold": 0,
+    },
+    "Softmax_Transformer_trained_w_no_cat_norm_eval_half_norm": {
+        "wandb_run_id": "icl_arch/tabpfn_transformer/ajttwh65",  # no feature attention like fla, old transformer
+        "high_cardinality_categorical_threshold": 10,
+    },
+    "Softmax_Transformer_trained_w_no_cat_norm_eval_full_norm": {
+        "wandb_run_id": "icl_arch/tabpfn_transformer/ajttwh65",  # no feature attention like fla, old transformer
+        "high_cardinality_categorical_threshold": 0,
+    },
+    "Softmax_Transformer_trained_w_no_cat_norm_eval_no_norm": {
+        "wandb_run_id": "icl_arch/tabpfn_transformer/ajttwh65",  # no feature attention like fla, old transformer
+        "high_cardinality_categorical_threshold": 1_000_000,
+    },
+}
+
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
     },
+    "Softmax_Transformer_new": {
+        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
+        "Note": "Rerun to see difference to bf16/fp16 handling now"
+    },
+    "Softmax_Transformer_new_fp16": {
+        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
+        "eval_autocast_dtype": "fp16",
+    },
+    
     # "Softmax_Transformer_with_feature_attention": {
     #     "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
     #     # new smaller versions 
@@ -190,6 +229,38 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+
+LINEAR_ATTENTION_DEBUG_MODELS: dict[str, dict[str, Any]] = {
+    "Linear_Attention_Non_Causal_Cat_Norm_Full_Norm": {
+        "wandb_run_id": "linear_attention/runs/ygawhsm9",
+        "high_cardinality_categorical_threshold": 0,
+    },
+    "Linear_Attention_Non_Causal_Cat_Norm_Half_Norm": {
+        "wandb_run_id": "linear_attention/runs/ygawhsm9",
+        "high_cardinality_categorical_threshold": 10,
+    },
+    "Linear_Attention_Non_Causal_Cat_Norm": {
+        "wandb_run_id": "linear_attention/runs/qqts8fpp",
+        "high_cardinality_categorical_threshold": 0,
+    },
+    "Linear_Attention_Non_Causal_Cat_Norm_Half_Norm": {
+        "wandb_run_id": "linear_attention/runs/qqts8fpp",
+        "high_cardinality_categorical_threshold": 10,
+    },
+    "Linear_Attention_Non_Causal_Half_Cat_Norm_Real": {
+        "wandb_run_id": "linear_attention/runs/hwsxnsho",
+        "high_cardinality_categorical_threshold": 10,
+    },
+    "Linear_Attention_Non_Causal_Half_Cat_Norm": {
+        "wandb_run_id": "linear_attention/runs/0j5sy87c",
+        "high_cardinality_categorical_threshold": 10,
+    },
+    "Linear_Attention_Causal": { # Comb_MT
+        "wandb_run_id": "linear_attention/runs/fdzuamc8",
+    },
+}
+
+
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Non_Causal": { # Trained without cat normalization
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
@@ -271,7 +342,6 @@ DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     "equal_params:Transformer_Comb_ST": { # non-causal version
         "display_name": "Non-Causal Transformer",
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
     },
     # "equal_params:Rebased_Comb_ST": {
@@ -317,50 +387,39 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Non-Causal", #"Non-Causal (Default)",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/f1lg4ch9", # fp16 version d4mttnjl, fp 32 version pmcn4brd, old 15.2M params version
         "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
-
     },
     "Transformer_Non_Causal_with_RoPE_pairwise": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xsbe5y6d", # old runs: xsbe5y6d, second run with fp32 as comparison: 0xi6dcvc
         "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
-
     },
     "Transformer_Non_Causal_interleaved_with_RoPE_pairwise": {
         "display_name": "Non-Causal Interleaved",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   # new one uses pairwise rope while old one does not jzs97xfg
         "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
     },
     "masked:Transformer_Comb_ST": {
         "display_name": "Causal Single Target",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/gex7h68b", # fp 16 version 2wrxsh60, old 15.2M params version b56ohkmz
         "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
     },
     "Transformer_Test_To_Train_Only": {
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
         "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
-
     },
     "Transformer_Comb_MT": {
         "display_name": "Causal Multi Target",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
         "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
     },
     "Transformer_Int_ST_with_RoPE_pairwise": { 
         "display_name": "Causal Interleaved Single Target",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
         "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
     },
     "Transformer_Int_MT_with_RoPE_pairwise": { 
         "display_name": "Causal Interleaved Multi Target",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
         "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16", # bf16 seems broken on rtx 2080 ti
     },
 }
 
