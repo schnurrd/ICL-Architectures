@@ -452,7 +452,7 @@ def main():
 
         print(
             "\nStarting automatic evaluation on OpenCC benchmark with TabPFN only "
-            "(n_splits=5, batch_size_inference=16, preprocess_transforms=['none','power','robust'], "
+            "(n_splits=5, batch_size_inference=16, preprocess_transforms=['none','power'], "
             "max_features=20, max_samples=1000, max_classes=10)..."
         )
 
@@ -471,8 +471,8 @@ def main():
             n_jobs=4,
             random_state=42,
             batch_size_inference=16,
-            n_ensemble_configurations=32,
-            preprocess_transforms=["none", "power", "robust"],
+            n_ensemble_configurations=10,
+            preprocess_transforms=["none", "power"],
             sample_order_permutation=True,
         )
 
