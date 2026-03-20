@@ -454,6 +454,19 @@ class InferenceEngine:
                     torch.split(batch_input, self.batch_size_inference, dim=1),
                     torch.split(batch_label, self.batch_size_inference, dim=1),
                 ):
+                    if self.device != "cpu":
+                        print(
+                            "DEBUG forward_batch",
+                            {
+                                "batch_size_inference": self.batch_size_inference,
+                                "split_input_shape": tuple(split_input.shape),
+                                "split_label_shape": tuple(split_label.shape),
+                                "autocast_enabled": autocast_enabled,
+                                "autocast_dtype": str(autocast_dtype),
+                                "cuda_allocated_mb": torch.cuda.memory_allocated() / 1024**2,
+                                "cuda_reserved_mb": torch.cuda.memory_reserved() / 1024**2,
+                            },
+                        )
                     if self.device == "cpu":
                         out = checkpoint(
                             self._forward_fn,
