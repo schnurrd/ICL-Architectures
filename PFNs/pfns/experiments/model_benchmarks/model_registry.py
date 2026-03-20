@@ -193,7 +193,6 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Non_Causal": { # Trained without cat normalization
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
-        # "eval_autocast_dtype": "bf16",
     },
     "Linear_Attention_Causal_Comb_ST": { # Trained without cat normalization
         "wandb_run_id": "linear_attention/runs/2qth8bnj",

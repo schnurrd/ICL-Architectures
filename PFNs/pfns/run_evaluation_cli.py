@@ -399,16 +399,18 @@ def compute_per_dataset_stats(results):
     if results.empty:
         return None
 
-    per_dataset = results.groupby(["model", "dataset"]).agg(
-        {
-            "accuracy": ["mean", "std"],
-            "roc_auc": ["mean", "std"],
-            "log_loss": ["mean", "std"],
-            "ece": ["mean", "std"],
-            "fit_time": ["mean"],
-            "predict_time": ["mean"],
-        }
-    )
+    agg_spec: dict[str, list[str]] = {
+        "accuracy": ["mean", "std"],
+        "roc_auc": ["mean", "std"],
+        "log_loss": ["mean", "std"],
+        "ece": ["mean", "std"],
+        "fit_time": ["mean"],
+        "predict_time": ["mean"],
+    }
+    if "dataset_num_rows" in results.columns:
+        agg_spec["dataset_num_rows"] = ["first"]
+
+    per_dataset = results.groupby(["model", "dataset"]).agg(agg_spec)
     per_dataset.columns = ["_".join(col).strip() for col in per_dataset.columns.values]
     per_dataset = per_dataset.reset_index()
     return per_dataset

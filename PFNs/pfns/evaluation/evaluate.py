@@ -72,6 +72,7 @@ def evaluate_model(
         )
 
     results: list[dict[str, Any]] = []
+    dataset_num_rows = int(X.shape[0])
     
     for train_idx, test_idx in splits:
         start = time.time()
@@ -109,6 +110,7 @@ def evaluate_model(
                 "ece": ece,
                 "fit_time": fit_time,
                 "predict_time": predict_time,
+                "dataset_num_rows": dataset_num_rows,
             }
         )
     return results
@@ -160,7 +162,9 @@ def compare_models(
     df = pd.DataFrame(results)
     desired_cols = [
         "model",
+        "dataset",
         "split",
+        "dataset_num_rows",
         "accuracy",
         "roc_auc",
         "log_loss",
