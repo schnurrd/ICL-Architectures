@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from typing import Any, Iterable
-from pfns.training_utils import resolve_autocast_dtype
+from pfns.training_utils import is_autocast_dtype_enabled, resolve_autocast_dtype
 from pfns.utils import get_default_device
 
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
-        "eval_autocast_dtype": "bf16",
     },
     # "Softmax_Transformer_with_feature_attention": {
     #     "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
@@ -79,32 +78,26 @@ DELTANET_MODELS_SIZE_CHANGES: dict[str, dict[str, Any]] = {
     "size_changes:DeltaNet_Comb_ST": {
         "display_name": "12 Layers, Hid. S. 320, Heads 6", # reference model for size changes
         "wandb_run_id": "fla_models/runs/q67a0x92", 
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Layers_24": {
         "display_name": "24 Layers",
         "wandb_run_id": "fla_models/runs/zbcsdb9h", # Twice the number of layers, currently running
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Hidden_Size_480": {
         "display_name": "Hidden Size 480", 
         "wandb_run_id": "fla_models/runs/tr0jxu69", # 1.5x hidden size, currently running
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Hidden_Size_480_Heads_6": {
         "display_name": "Hidden Size 480, Heads 6",
         "wandb_run_id": "fla_models/runs/gzag08i9", # 1.5x hidden size, 1.5x heads, currently running
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Hidden_Size_640_Heads_8": {
         "display_name": "Hidden Size 640, Heads 8",
         "wandb_run_id": "fla_models/runs/j8k7t7nb", # 2x hidden size, 2x heads, currently running
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Hidden_Size_640": {
         "display_name": "Hidden Size 640",
         "wandb_run_id": "fla_models/runs/niytteb0", # 2x hidden size,
-        "eval_autocast_dtype": "bf16",
     },
 }
 
@@ -112,42 +105,34 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
     "DeltaNet_Comb_MT": {
         "display_name": "DeltaNet Combined Multi Target",
         "wandb_run_id": "fla_models/runs/iwaesmvk",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_MT_short_conv": {
         "display_name": "DeltaNet Combined Multi Target (Short Conv)",
         "wandb_run_id": "fla_models/runs/j735qiit",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST": {
         "display_name": "DeltaNet Combined Single Target",
         "wandb_run_id": "fla_models/runs/q67a0x92", 
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_short_conv": {
         "display_name": "DeltaNet Combined Single Target (Short Conv)",
         "wandb_run_id": "fla_models/runs/nluohjzz", # second model nluohjzz
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Int_ST": {
         "display_name": "DeltaNet Interleaved Single Target",
         "wandb_run_id": "fla_models/runs/0r7dz00x",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Int_ST_short_conv": {
         "display_name": "DeltaNet Interleaved Single Target (Short Conv)",
         "wandb_run_id": "fla_models/runs/9v4hbvug",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Int_MT": {
         "display_name": "DeltaNet Interleaved Multi Target",
         "wandb_run_id": "fla_models/runs/alqp1bd2",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Int_MT_short_conv": {
         "display_name": "DeltaNet Interleaved Multi Target (Short Conv)",
         "wandb_run_id": "fla_models/runs/fm8kzerj",
-        "eval_autocast_dtype": "bf16",
     },
 }
 
@@ -241,58 +226,46 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
 DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
     "DeltaNet_Int_MT_Increasing_seq_1K->32K": {
         "wandb_run_id": "fla_models/runs/vo5mkuwt",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Increasing_seq_1K->32K": {
         "wandb_run_id": "fla_models/runs/58w3kifz",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Int_MT_Seq_Len_500-64K_uniform": {
         "wandb_run_id": "fla_models/runs/tou1nzi5",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Int_MT_Seq_Len_500-64K_loguniform": {
         "wandb_run_id": "fla_models/runs/pyfldrsm",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Int_MT_Seq_Len_1K": {
         "wandb_run_id": "fla_models/runs/ji6lw9hu",
-        "eval_autocast_dtype": "bf16",
     },
 }
 
 DELTANET_ADDED_REGULARIZATION: dict[str, dict[str, Any]] = {
     "DeltaNet_Comb_ST_reg_1e-6": {
         "wandb_run_id": "fla_models/runs/f6ynrp4l",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_reg_1e-5": {
         "wandb_run_id": "fla_models/runs/bfr8qhfh",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_reg_1e-4": {
         "wandb_run_id": "fla_models/runs/lzodfrv5",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Reference": {
         "wandb_run_id": "fla_models/runs/ob2m9rth",
-        "eval_autocast_dtype": "bf16",
     }
 }
 
 DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
     "DeltaNet_Comb_ST_Finetuned_64K_1_e-5_new": {
         "wandb_run_id": "icl_arch/fla_models/leaywm94",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Finetuned_64K_5_e-6_new": {
         "wandb_run_id": "icl_arch/fla_models/zmvzjsep",
-        "eval_autocast_dtype": "bf16",
     },
     "DeltaNet_Comb_ST_Reference": {
         "display_name": "DeltaNet Reference",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
-        "eval_autocast_dtype": "bf16",
     },
 }
 
@@ -312,7 +285,6 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     "equal_params:DeltaNet_Comb_ST": {
         "display_name": "DeltaNet",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
-        "eval_autocast_dtype": "bf16",
     },
     "equal_params:GLA_Comb_ST": {
         "display_name": "Gated Linear Attention",
@@ -325,7 +297,6 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     "equal_params:DeltaNet_Int_MT": {
         "display_name": "DeltaNet (Int MT)",
         "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
-        "eval_autocast_dtype": "bf16",
     },
     "equal_params:Gated_DeltaNet_Int_MT": {
         "display_name": "Gated DeltaNet (Int MT)",
@@ -386,19 +357,16 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
     "subsampled:DeltaNet_Comb_ST_1K": {
         "display_name": "DeltaNet Comb ST (Subsampled 1K)",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
-        "eval_autocast_dtype": "bf16",
         "subsample_dataset_size": 1_000
     },
     "subsampled:DeltaNet_Comb_ST_3K": {
         "display_name": "DeltaNet Comb ST (Subsampled 3K)",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
-        "eval_autocast_dtype": "bf16",
         "subsample_dataset_size": 3_000
     },
     "subsampled:DeltaNet_Comb_ST_10K": {
         "display_name": "DeltaNet Comb ST (Subsampled 10K)",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
-        "eval_autocast_dtype": "bf16",
         "subsample_dataset_size": 10_000
     },
     "subsampled:Transformer_Comb_ST_1K": {
@@ -577,10 +545,11 @@ def get_autocast_models_from_registry(
     resolved_device = device or get_default_device()
     autocast_models: dict[str, Any] = {}
     for model_name, model_config in model_configs.items():
-        dtype_spec = model_config.get("eval_autocast_dtype")
-        if dtype_spec is None:
+        dtype_spec = model_config.get("eval_autocast_dtype", "auto")
+        resolved_dtype = resolve_autocast_dtype(resolved_device, dtype_spec)
+        if not is_autocast_dtype_enabled(resolved_dtype):
             continue
-        autocast_models[model_name] = resolve_autocast_dtype(resolved_device, dtype_spec)
+        autocast_models[model_name] = resolved_dtype
     return autocast_models
 
 

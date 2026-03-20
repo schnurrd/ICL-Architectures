@@ -275,7 +275,7 @@ def compute_losses(
 
 
 def resolve_autocast_dtype(device: str, dtype_spec: str | None) -> torch.dtype:
-    dtype_spec = (dtype_spec or "fp32").lower()
+    dtype_spec = (dtype_spec or "auto").lower()
     if dtype_spec in ("fp16", "float16"):
         return torch.float16
     if dtype_spec in ("bf16", "bfloat16"):
@@ -284,9 +284,17 @@ def resolve_autocast_dtype(device: str, dtype_spec: str | None) -> torch.dtype:
                 "Requested bf16 autocast but CUDA device does not support bf16."
             )
         return torch.bfloat16
-    if dtype_spec in ("fp32", "float32", "auto"):
+    if dtype_spec in ("fp32", "float32"):
+        return torch.float32
+    if dtype_spec == "auto":
+        if device.startswith("cuda") and torch.cuda.is_bf16_supported():
+            return torch.bfloat16
         return torch.float32
     raise ValueError(
         f"Unsupported train_mixed_precision_dtype '{dtype_spec}'. "
         "Use 'auto', 'bf16', 'fp16', or 'fp32'."
     )
+
+
+def is_autocast_dtype_enabled(dtype: torch.dtype | None) -> bool:
+    return dtype in (torch.float16, torch.bfloat16)

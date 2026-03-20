@@ -13,6 +13,7 @@ from pfns.scripts.tabular_metrics import auc_metric
 from pfns.training_utils import (
     categorical_mask_to_inds,
     compute_losses,
+    is_autocast_dtype_enabled,
     move_style_and_check_shape,
     move_y_style_and_check_shape,
     resolve_autocast_dtype
@@ -304,10 +305,11 @@ def evaluate_models_over_seqlens(
     is_cuda = device_type == "cuda"
     if autocast_models == "auto":
         print("Inferring autocast settings from configs...")
+        resolved_eval_dtype = resolve_autocast_dtype(resolved_device, "auto")
         autocast_models = { 
-            name: resolve_autocast_dtype(resolved_device, configs[name].train_mixed_precision_dtype )
+            name: resolved_eval_dtype
             for name in configs.keys() 
-            if configs[name].train_mixed_precision
+            if is_autocast_dtype_enabled(resolved_eval_dtype)
         }
     elif autocast_models is None:
         autocast_models = {}

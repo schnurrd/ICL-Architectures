@@ -140,7 +140,8 @@ def parse_args():
         help=(
             "Override mixed precision dtype after loading a checkpoint config. "
             "Supported values include: auto, fp16, bf16, fp32 "
-            "(aliases: float16, bfloat16, float32)."
+            "(aliases: float16, bfloat16, float32). "
+            "'auto' selects bf16 on supported CUDA devices and fp32 otherwise."
         ),
     )
 

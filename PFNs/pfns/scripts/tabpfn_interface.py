@@ -32,6 +32,7 @@ from pfns.utils import (
 from pfns.base_config import BaseConfig
 from pfns.train import MainConfig, resolve_autocast_dtype
 from pfns.run_logger import download_model_from_wandb
+from pfns.training_utils import is_autocast_dtype_enabled
 
 
 # =============================================================================
@@ -435,7 +436,7 @@ class InferenceEngine:
 
         inference_mode_ctx = torch.inference_mode() if self.no_grad else NOP()
         autocast_dtype = self.autocast_dtype
-        autocast_enabled = autocast_dtype is not None
+        autocast_enabled = is_autocast_dtype_enabled(autocast_dtype)
 
         with inference_mode_ctx:
             with warnings.catch_warnings():
@@ -669,7 +670,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         self.fla_cache_chunk_size = fla_cache_chunk_size
         self.high_cardinality_categorical_threshold = high_cardinality_categorical_threshold
         self.categorical_feats: tuple[int, ...] = ()
-        self.autocast_dtype = resolve_autocast_dtype(device, autocast_dtype)
+        self.autocast_dtype = resolve_autocast_dtype(device, autocast_dtype or "auto")
 
         model_key = (
             f"{self.base_path.resolve()}|{self.model_string}|{self.device}|"
