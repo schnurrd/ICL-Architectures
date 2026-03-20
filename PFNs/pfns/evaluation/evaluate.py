@@ -3,6 +3,7 @@ import time
 import numpy as np
 import pandas as pd
 from typing import List, Any
+import torch
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, roc_auc_score, log_loss
 from tqdm.auto import tqdm
@@ -42,6 +43,12 @@ def _normalize_probabilities(y_proba: np.ndarray, *, n_classes: int) -> np.ndarr
 
     probs /= row_sums
     return probs
+
+
+def _is_oom_error(exc: BaseException) -> bool:
+    if isinstance(exc, torch.OutOfMemoryError | torch.cuda.OutOfMemoryError):
+        return True
+    return "out of memory" in str(exc).lower()
 
 
 def evaluate_model(
@@ -231,7 +238,9 @@ def evaluate_on_openml(
         dataset_results: list[dict[str, Any]] = []
         dataset_failed_models: list[str] = []
         for model, model_name in zip(models, model_names):
-            try:
+            retry_batch_size = getattr(model, "batch_size_inference", None)
+
+            def _run_model() -> list[dict[str, Any]]:
                 split_results = evaluate_model(
                     model,
                     X_np,
@@ -244,22 +253,52 @@ def evaluate_on_openml(
                 for row in split_results:
                     row.update({"model": model_name, "dataset": name})
                 dataset_results.extend(split_results)
+                return split_results
 
-                mean_acc = float(np.mean([r["accuracy"] for r in split_results])) if split_results else float("nan")
-                mean_auc = float(np.mean([r["roc_auc"] for r in split_results])) if split_results else float("nan")
-                mean_ll = float(np.mean([r["log_loss"] for r in split_results])) if split_results else float("nan")
-                mean_ece = float(np.mean([r["ece"] for r in split_results])) if split_results else float("nan")
-                mean_fit = float(np.mean([r["fit_time"] for r in split_results])) if split_results else float("nan")
-                mean_pred = float(np.mean([r["predict_time"] for r in split_results])) if split_results else float("nan")
-                if verbose:
-                    print(
-                        f"{model_name:<18} {mean_acc:>10.4f} {mean_auc:>10.4f} "
-                        f"{mean_ll:>10.4f} {mean_ece:>10.4f} {mean_fit:>10.2f} "
-                        f"{mean_pred:>10.2f}"
-                    )
+            try:
+                split_results = _run_model()
             except Exception as e:
-                dataset_failed_models.append(model_name)
-                print(f"{model_name:<20} {'Error':>10} - {e}")
+                can_retry_with_batch_size_one = (
+                    hasattr(model, "batch_size_inference")
+                    and isinstance(retry_batch_size, int)
+                    and retry_batch_size > 1
+                    and _is_oom_error(e)
+                )
+                if not can_retry_with_batch_size_one:
+                    dataset_failed_models.append(model_name)
+                    print(f"{model_name:<20} {'Error':>10} - {e}")
+                    continue
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                print(f"{model_name:<20} {'OOM':>10} - {e}")
+                print(
+                    f"Retrying dataset {name!r} for model {model_name!r} "
+                    "with batch_size_inference=1."
+                )
+
+                model.batch_size_inference = 1
+                try:
+                    split_results = _run_model()
+                except Exception as retry_exc:
+                    dataset_failed_models.append(model_name)
+                    print(f"{model_name:<20} {'Error':>10} - {retry_exc}")
+                    continue
+                finally:
+                    model.batch_size_inference = retry_batch_size
+
+            mean_acc = float(np.mean([r["accuracy"] for r in split_results])) if split_results else float("nan")
+            mean_auc = float(np.mean([r["roc_auc"] for r in split_results])) if split_results else float("nan")
+            mean_ll = float(np.mean([r["log_loss"] for r in split_results])) if split_results else float("nan")
+            mean_ece = float(np.mean([r["ece"] for r in split_results])) if split_results else float("nan")
+            mean_fit = float(np.mean([r["fit_time"] for r in split_results])) if split_results else float("nan")
+            mean_pred = float(np.mean([r["predict_time"] for r in split_results])) if split_results else float("nan")
+            if verbose:
+                print(
+                    f"{model_name:<18} {mean_acc:>10.4f} {mean_auc:>10.4f} "
+                    f"{mean_ll:>10.4f} {mean_ece:>10.4f} {mean_fit:>10.2f} "
+                    f"{mean_pred:>10.2f}"
+                )
 
         if dataset_failed_models:
             failed_str = ", ".join(dataset_failed_models)
