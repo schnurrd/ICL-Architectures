@@ -37,12 +37,25 @@ from pfns.utils import get_default_device
 
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
-        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
+        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
         "eval_autocast_dtype": "fp16", # bf16 is broken on rtx 2080 ti due to the GPU being to old -> OOM error in scaled dot product attention
     },
     "Softmax_Transformer_fp32": {
-        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
+        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
         "eval_autocast_dtype": "fp32",
+    },
+    # "Softmax_Transformer_Cat_10_Training": {
+    #     "wandb_run_id": "tabpfn_transformer/runs/m5zgo8r3",  # not finished ep
+    #     "eval_autocast_dtype": "fp16",
+    # },
+    "Softmax_Transformer_No_Cat_Norm": {
+        "wandb_run_id": "tabpfn_transformer/runs/ajttwh65",  
+        "eval_autocast_dtype": "fp16",
+    },
+    "Softmax_Transformer_Full_Cat_Norm": {
+        "wandb_run_id": "tabpfn_transformer/runs/ajttwh65",  
+        "high_cardinality_categorical_threshold": 0,
+        "eval_autocast_dtype": "fp16",
     },
     # "Softmax_Transformer_with_feature_attention": {
     #     "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
@@ -105,7 +118,7 @@ GLA_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/do2tv5da",
     },
     "GLA_Int_MT": {
-        "display_name": "GLA Interleaved Multi Target (old cluster)",
+        "display_name": "GLA Interleaved Multi Target",
         "wandb_run_id": "fla_models/runs/4f224z23",
     },
 }
@@ -258,7 +271,7 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
 
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
-    "Linear_Attention_Non_Causal_Cat_10_Training": { # Trained without cat normalization
+    "Linear_Attention_Non_Causal_Cat_10_Training": { 
         "wandb_run_id": "linear_attention/runs/hwsxnsho",
     },
     "Linear_Attention_Non_Causal": { # Trained without cat normalization

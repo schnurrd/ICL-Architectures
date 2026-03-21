@@ -57,7 +57,7 @@ class MainConfig(base_config.BaseConfig):
     # LR Scheduler
     scheduler: str = "cosine_decay"
     warmup_epochs: int = 10
-    min_lr: float = 5e-6
+    min_lr: float = 2e-6
 
     # Checkpointing
     train_state_dict_save_path: tp.Optional[str] = None

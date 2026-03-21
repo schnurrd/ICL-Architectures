@@ -135,6 +135,18 @@ def test_raises_if_sampled_seq_len_is_too_small_for_fixed_test_instances():
         cfg.sample_batch_shape(epoch=1, step=0)
 
 
+def test_fixed_test_instances_respect_seq_len_budget_and_eval_split_pct():
+    shape = BatchShapeSamplerConfig(
+        batch_size=8, max_seq_len=20, min_single_eval_pos=1, fixed_num_test_instances=19, seed=0
+    ).sample_batch_shape(epoch=1, step=0)
+    assert (shape.single_eval_pos, shape.seq_len) == (1, 20)
+
+    shape = BatchShapeSamplerConfig(
+        batch_size=8, max_seq_len=100, fixed_num_test_instances=30, eval_pos_split_pct_min=50.0, eval_pos_split_pct_max=50.0, seed=0
+    ).sample_batch_shape(epoch=1, step=0)
+    assert (shape.single_eval_pos, shape.seq_len) == (30, 60)
+
+
 @pytest.mark.parametrize(
     "stages,match",
     [

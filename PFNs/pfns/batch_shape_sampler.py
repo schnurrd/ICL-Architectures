@@ -412,6 +412,20 @@ class BatchShapeSamplerConfig(BaseConfig):
             return 1.0
         return float(dynamic_batch_size) / float(self.batch_size)
 
+    @staticmethod
+    def _eval_pos_bounds_for_fixed_test_instances(
+        fixed_num_test_instances: int, eval_pct_min: float, eval_pct_max: float, max_single_eval_pos: int
+    ) -> tuple[int, int]:
+        if fixed_num_test_instances == 0:
+            return 0, max_single_eval_pos if eval_pct_max >= 100.0 else 0
+        eval_min = max_single_eval_pos + 1 if eval_pct_min >= 100.0 else 0 if eval_pct_min <= 0.0 else int(
+            math.ceil(fixed_num_test_instances * eval_pct_min / (100.0 - eval_pct_min))
+        )
+        eval_max = max_single_eval_pos if eval_pct_max >= 100.0 else 0 if eval_pct_max <= 0.0 else int(
+            math.floor(fixed_num_test_instances * eval_pct_max / (100.0 - eval_pct_max))
+        )
+        return eval_min, eval_max
+
     def sample_batch_shape(self, epoch: int, step: int) -> BatchShape:
         # Create deterministic seed based on epoch and step
         seed = self.seed + epoch * 10000 + step
@@ -433,25 +447,29 @@ class BatchShapeSamplerConfig(BaseConfig):
             max_seq_len=stage_max_seq_len,
             seq_len_distribution=stage_seq_len_distribution,
         )
+        fixed_num_test_instances = self.fixed_num_test_instances
         max_single_eval_pos = (
             seq_len_cap
-            - 1
-            - (
-                self.fixed_num_test_instances
-                if self.fixed_num_test_instances is not None
-                else 0
-            )
+            - (fixed_num_test_instances if fixed_num_test_instances is not None else 1)
         )
         if max_single_eval_pos < 0:
             raise ValueError(
                 "Sampled seq_len is too small for fixed_num_test_instances. "
-                f"Got seq_len={seq_len_cap}, fixed_num_test_instances={self.fixed_num_test_instances}."
+                f"Got seq_len={seq_len_cap}, fixed_num_test_instances={fixed_num_test_instances}."
             )
 
         min_single_eval_pos = self.min_single_eval_pos
         if eval_pct_min is not None and eval_pct_max is not None:
-            eval_min = int(math.floor(float(seq_len_cap) * (eval_pct_min / 100.0)))
-            eval_max = int(math.floor(float(seq_len_cap) * (eval_pct_max / 100.0)))
+            eval_min, eval_max = (
+                (
+                    int(math.floor(float(seq_len_cap) * (eval_pct_min / 100.0))),
+                    int(math.floor(float(seq_len_cap) * (eval_pct_max / 100.0))),
+                )
+                if fixed_num_test_instances is None
+                else self._eval_pos_bounds_for_fixed_test_instances(
+                    fixed_num_test_instances, eval_pct_min, eval_pct_max, max_single_eval_pos
+                )
+            )
             min_single_eval_pos = max(min_single_eval_pos, eval_min)
             max_single_eval_pos = min(max_single_eval_pos, eval_max)
 
@@ -469,8 +487,8 @@ class BatchShapeSamplerConfig(BaseConfig):
         single_eval_pos = rng.randint(min_single_eval_pos, max_single_eval_pos)
 
         seq_len = seq_len_cap
-        if self.fixed_num_test_instances is not None:
-            seq_len = self.fixed_num_test_instances + single_eval_pos
+        if fixed_num_test_instances is not None:
+            seq_len = fixed_num_test_instances + single_eval_pos
 
         dynamic_batch_size = self._dynamic_batch_size(seq_len)
         return BatchShape(

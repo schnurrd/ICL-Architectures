@@ -52,26 +52,17 @@ def apply_state_to_query_4d(
     k_sum: torch.Tensor,
     *,
     eps: float,
-    k_self: torch.Tensor | None = None,
-    v_self: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Apply cached state.
 
     Base form:
         out = (q^T KV) / (q^T K_sum + eps)
-
-    With a self term:
-        out = (q^T KV + (q·k_self) v_self) / (q^T K_sum + (q·k_self) + eps)
     """
     # q: (batch, seq, heads, qk_dim)
     # kv_state: (batch, heads, qk_dim, v_dim)
     # k_sum: (batch, heads, qk_dim)
     num = torch.einsum("bshf,bhfd->bshd", q, kv_state)
     denom = torch.einsum("bshf,bhf->bsh", q, k_sum)
-    if k_self is not None and v_self is not None:
-        self_score = (q * k_self).sum(dim=-1)
-        num = num + self_score.unsqueeze(-1) * v_self
-        denom = denom + self_score
     return num / (denom.unsqueeze(-1) + eps)
 
 
@@ -93,24 +84,15 @@ def apply_state_to_query_5d(
     k_sum: torch.Tensor,
     *,
     eps: float,
-    k_self: torch.Tensor | None = None,
-    v_self: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Apply cached per-feature state.
 
     Base form:
         out = (q^T KV) / (q^T K_sum + eps)
-
-    With a self term:
-        out = (q^T KV + (q·k_self) v_self) / (q^T K_sum + (q·k_self) + eps)
     """
     # q: (batch, seq, features, heads, qk_dim)
     # kv_state: (batch, features, heads, qk_dim, v_dim)
     # k_sum: (batch, features, heads, qk_dim)
     num = torch.einsum("bsnhf,bnhfd->bsnhd", q, kv_state)
     denom = torch.einsum("bsnhf,bnhf->bsnh", q, k_sum)
-    if k_self is not None and v_self is not None:
-        self_score = (q * k_self).sum(dim=-1)
-        num = num + self_score.unsqueeze(-1) * v_self
-        denom = denom + self_score
     return num / (denom.unsqueeze(-1) + eps)

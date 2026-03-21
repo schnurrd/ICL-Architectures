@@ -45,6 +45,25 @@ def _normalize_probabilities(y_proba: np.ndarray, *, n_classes: int) -> np.ndarr
     return probs
 
 
+def _compute_roc_auc(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    *,
+    labels: np.ndarray,
+) -> float:
+    if labels.size == 2:
+        return float(roc_auc_score(y_true, y_proba[:, 1], labels=labels))
+    return float(
+        roc_auc_score(
+            y_true,
+            y_proba,
+            labels=labels,
+            multi_class="ovr",
+            average="weighted",
+        )
+    )
+
+
 def _is_oom_error(exc: BaseException) -> bool:
     if isinstance(exc, torch.OutOfMemoryError | torch.cuda.OutOfMemoryError):
         return True
@@ -65,7 +84,8 @@ def evaluate_model(
     """Evaluate a model with cross-validation. Returns per-split metrics (no aggregation)."""
     X = np.asarray(X, dtype=np.float32)
     y = np.asarray(y, dtype=np.int64)
-    total_classes = int(np.unique(y).size)
+    all_labels = np.unique(y)
+    total_classes = int(all_labels.size)
 
     if categorical_feats is not None and hasattr(model, "categorical_feats"):
         model.categorical_feats = tuple(categorical_feats)
@@ -98,14 +118,16 @@ def evaluate_model(
         predict_time = time.time() - start
         
         acc = accuracy_score(y[test_idx], y_pred)
-        n_classes = len(np.unique(y[test_idx]))
         
         y_proba = y_proba.astype(np.float32) # Renorm to float32 as with fp16 auc calculation is unstable (probs. deviate from 1.0)
         y_proba = _normalize_probabilities(y_proba, n_classes=total_classes)
         
-        auc = roc_auc_score(y[test_idx], y_proba[:, 1]) if n_classes == 2 else \
-              roc_auc_score(y[test_idx], y_proba, multi_class="ovr", average="weighted")
-        ll = log_loss(y[test_idx], y_proba)
+        auc = _compute_roc_auc(y[test_idx], y_proba, labels=all_labels)
+        ll = log_loss(
+            y[test_idx],
+            y_proba,
+            labels=all_labels,
+        )
         ece = expected_calibration_error(y[test_idx], y_proba)
         
         results.append(
