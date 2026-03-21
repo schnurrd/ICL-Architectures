@@ -96,6 +96,24 @@ MODEL_SETTINGS = {
             "vocab_size": 1, # dummy value, not used default 32000
         },
     },
+    # Linear Attention Config: fla/models/linear_attn/configuration_linear_attn.py
+    # Intended as the FLA-backed alternative to the local causal linear attention backbone.
+    "linear_attn": {
+        "emsize": 320,
+        "config_kwargs": {
+            "attn_mode": "chunk",
+            "hidden_size": 320,
+            "use_short_conv": False,
+            "num_heads": 4,
+            "feature_map": "elu",
+            "num_hidden_layers": 15,
+            "intermediate_size": 320 * 2,
+            "hidden_act": "swish",
+            "norm_eps": 1e-6,
+            "use_cache": True,
+            "vocab_size": 1,
+        },
+    },
     # Mamba2 Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/mamba2/configuration_mamba2.py#L21
     # Model size: 12.86 M
     # Training speed on different gpus (uncompiled): 
@@ -164,6 +182,8 @@ def _normalize_model_type(model_type: str) -> str:
     model_type = model_type.strip().lower().replace("-", "_").replace(" ", "_")
     if model_type == "mamba":
         return "mamba2"
+    if model_type == "linear_attention":
+        return "linear_attn"
     if model_type == "delta_net":
         return "deltanet"
     if model_type == "gated_delta_net":

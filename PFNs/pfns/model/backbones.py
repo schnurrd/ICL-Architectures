@@ -20,6 +20,12 @@ from fla.models import Mamba2Config, Mamba2Model
 from fla.models import KDAConfig, KDAModel
 from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
+from fla.models.linear_attn.configuration_linear_attn import (
+    LinearAttentionConfig as FLALinearAttentionConfig,
+)
+from fla.models.linear_attn.modeling_linear_attn import (
+    LinearAttentionModel as FLALinearAttentionModel,
+)
 
 from pfns import base_config
 from pfns.model.fla_patches import (
@@ -45,7 +51,15 @@ FLA_MODEL_REGISTRY = {
     "kda": (KDAConfig, KDAModel),
     "deltanet": (DeltaNetConfig, DeltaNetModel),
     "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
+    "linear_attn": (FLALinearAttentionConfig, FLALinearAttentionModel),
 }
+_FLA_PAST_KEY_VALUES_MODELS: tuple[type[nn.Module], ...] = (
+    GLAModel,
+    KDAModel,
+    DeltaNetModel,
+    GatedDeltaNetModel,
+    FLALinearAttentionModel,
+)
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 
 
@@ -416,7 +430,9 @@ class TransformerBackbone(Backbone):
 class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
-    model_type: tp.Literal["gla", "mamba2", "kda", "deltanet", "gated_deltanet"] = "gla"
+    model_type: tp.Literal[
+        "gla", "mamba2", "kda", "deltanet", "gated_deltanet", "linear_attn"
+    ] = "gla"
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
@@ -703,7 +719,7 @@ class FLABackbone(Backbone):
                     cache_position_start + x.size(1),
                     device=x.device,
                 ).unsqueeze(0).expand(x.size(0), -1)
-            elif isinstance(self.fla, (GLAModel, KDAModel, DeltaNetModel, GatedDeltaNetModel)):
+            elif isinstance(self.fla, _FLA_PAST_KEY_VALUES_MODELS):
                 kwargs["past_key_values"] = cache_params
             else:
                 raise ValueError("Unsupported FLA model type for cache_params.")
