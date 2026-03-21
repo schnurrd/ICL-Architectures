@@ -128,6 +128,7 @@ def build_fla_backbone(
     size: str = "small",
     sequence_mode: str = "Comb_ST",
     cache_chunk_size: int | None = None,
+    memetic_init: bool = False,
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -138,6 +139,7 @@ def build_fla_backbone(
         config_kwargs=kwargs,
         sequence_mode=sequence_mode,
         cache_chunk_size=cache_chunk_size,
+        memetic_init=memetic_init,
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)

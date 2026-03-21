@@ -191,6 +191,7 @@ def get_config(
     aggregate_k_gradients: int | None = None,
     # Model options
     cache_chunk_size: int | None = None,
+    memetic_init: bool = False,
     use_short_conv: bool | None = None,
     feature_positional_embedding: str | None = None,
     config_kwargs_override: dict[str, object] | None = None,
@@ -313,6 +314,7 @@ def get_config(
         "model_type": model_type,
         "config_kwargs": resolved_config_kwargs,
         "sequence_mode": sequence_mode,
+        "memetic_init": bool(memetic_init),
     }
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
@@ -370,6 +372,7 @@ def get_config(
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
+        "memetic" if memetic_init else None,
         f"fpe_{feature_positional_embedding}",
     ]
     extras_str = "_".join(e for e in extras if e)
