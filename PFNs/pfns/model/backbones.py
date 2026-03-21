@@ -29,6 +29,7 @@ from fla.models.linear_attn.modeling_linear_attn import (
 
 from pfns import base_config
 from pfns.model.fla_patches import (
+    _maybe_patch_linear_attn_with_cache,
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
@@ -766,6 +767,8 @@ class FLABackbone(Backbone):
         model = self.fla
         contexts: list[tp.ContextManager[tp.Any]] = []
         contexts.append(_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv or use_custom_recurrent))
+        if isinstance(model, FLALinearAttentionModel):
+            contexts.append(_maybe_patch_linear_attn_with_cache(True))
         if not use_custom_recurrent:
             return contexts
 

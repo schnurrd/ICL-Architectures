@@ -98,6 +98,7 @@ MODEL_SETTINGS = {
     },
     # Linear Attention Config: fla/models/linear_attn/configuration_linear_attn.py
     # Intended as the FLA-backed alternative to the local causal linear attention backbone.
+    # Keep this close to the other ~12.5M FLA presets by using 12 layers at hidden size 320.
     "linear_attn": {
         "emsize": 320,
         "config_kwargs": {
@@ -106,7 +107,7 @@ MODEL_SETTINGS = {
             "use_short_conv": False,
             "num_heads": 4,
             "feature_map": "elu",
-            "num_hidden_layers": 15,
+            "num_hidden_layers": 12,
             "intermediate_size": 320 * 2,
             "hidden_act": "swish",
             "norm_eps": 1e-6,

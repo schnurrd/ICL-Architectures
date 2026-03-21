@@ -129,6 +129,180 @@ def _maybe_patch_shortconv_forward_pytorch(enabled: bool):
     finally:
         conv_module.ShortConvolution.forward = original_forward
 
+
+@contextmanager
+def _maybe_patch_linear_attn_with_cache(enabled: bool):
+    if not enabled:
+        yield
+        return
+
+    import fla.layers.linear_attn as linear_attn_layer
+    import fla.models.linear_attn.modeling_linear_attn as linear_attn_module
+
+    original_attn_forward = linear_attn_layer.LinearAttention.forward
+    original_block_forward = linear_attn_module.LinearAttentionBlock.forward
+
+    def _linear_attn_initial_state(past_key_values, layer_idx: int | None):
+        if past_key_values is None or layer_idx is None:
+            return None
+        if layer_idx >= len(past_key_values):
+            return None
+        state = past_key_values[layer_idx]
+        if not isinstance(state, dict):
+            return None
+        recurrent_state = state.get("recurrent_state")
+        if isinstance(recurrent_state, (tuple, list)):
+            return recurrent_state[0]
+        return recurrent_state
+
+    def _linear_attn_kernel(
+        *,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        initial_state: torch.Tensor | None,
+        use_cache: bool,
+        normalize: bool,
+        mode: str,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        if initial_state is not None or mode == "fused_recurrent":
+            return linear_attn_layer.fused_recurrent_linear_attn(
+                q=q,
+                k=k,
+                v=v,
+                initial_state=initial_state,
+                output_final_state=use_cache,
+                normalize=normalize,
+            )
+        if mode == "chunk":
+            return linear_attn_layer.chunk_linear_attn(
+                q=q,
+                k=k,
+                v=v,
+                output_final_state=use_cache,
+                normalize=normalize,
+            )
+        if mode == "fused_chunk":
+            return linear_attn_layer.fused_chunk_linear_attn(
+                q=q,
+                k=k,
+                v=v,
+                output_final_state=use_cache,
+                normalize=normalize,
+            )
+        raise NotImplementedError
+
+    def _attn_forward_with_cache(
+        self,
+        hidden_states: torch.Tensor,
+        *,
+        past_key_values=None,
+        use_cache: bool = False,
+        layer_idx: int | None = None,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        if not use_cache and past_key_values is None:
+            return original_attn_forward(self, hidden_states, **kwargs), None
+
+        q = self.q_proj(hidden_states)
+        k = self.k_proj(hidden_states)
+        v = self.v_proj(hidden_states)
+
+        q = linear_attn_layer.rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
+        if self.num_kv_groups > 1:
+            k = linear_attn_layer.repeat(
+                k, "... (h d) -> ... (h g) d", d=self.head_k_dim, g=self.num_kv_groups
+            )
+            v = linear_attn_layer.repeat(
+                v, "... (h d) -> ... (h g) d", d=self.head_v_dim, g=self.num_kv_groups
+            )
+        else:
+            k = linear_attn_layer.rearrange(k, "... (h d) -> ... h d", d=self.head_k_dim)
+            v = linear_attn_layer.rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
+
+        q = self.feature_map_q(q)
+        k = self.feature_map_k(k)
+
+        if self.norm_q:
+            q = q / (q.sum(-1, True) + 1e-4)
+        if self.norm_k:
+            k = k / (k.sum(-1, True) + 1e-4)
+
+        o, final_state = _linear_attn_kernel(
+            q=q,
+            k=k,
+            v=v,
+            initial_state=_linear_attn_initial_state(past_key_values, layer_idx),
+            use_cache=use_cache,
+            normalize=self.do_feature_map_norm,
+            mode=self.mode,
+        )
+
+        o = self.norm(o)
+        o = linear_attn_layer.rearrange(o, "... h d -> ... (h d)")
+        o = self.o_proj(o)
+        return o, final_state
+
+    def _block_forward_with_cache(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        past_key_values=None,
+        use_cache: bool | None = False,
+        output_attentions: bool | None = False,
+        **kwargs,
+    ):
+        if (
+            not isinstance(self.attn, linear_attn_layer.LinearAttention)
+            or (not use_cache and past_key_values is None)
+        ):
+            return original_block_forward(
+                self,
+                hidden_states,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                **kwargs,
+            )
+
+        residual = hidden_states
+        attentions = None
+        hidden_states = self.attn_norm(hidden_states)
+        hidden_states, final_state = self.attn(
+            hidden_states=hidden_states,
+            past_key_values=past_key_values,
+            use_cache=bool(use_cache),
+            layer_idx=self.layer_idx,
+            **kwargs,
+        )
+        if bool(use_cache):
+            if past_key_values is None:
+                past_key_values = linear_attn_module.Cache()
+            past_key_values.update(
+                recurrent_state=(final_state,),
+                layer_idx=self.layer_idx,
+                offset=hidden_states.shape[1],
+            )
+        if self.config.fuse_norm:
+            hidden_states, residual = self.mlp_norm(hidden_states, residual, True)
+        else:
+            hidden_states = residual + hidden_states
+            residual = hidden_states
+            hidden_states = self.mlp_norm(hidden_states)
+        hidden_states = self.mlp(hidden_states, **kwargs)
+        hidden_states = residual + hidden_states
+
+        return hidden_states, attentions, past_key_values
+
+    linear_attn_layer.LinearAttention.forward = _attn_forward_with_cache
+    linear_attn_module.LinearAttentionBlock.forward = _block_forward_with_cache
+    try:
+        yield
+    finally:
+        linear_attn_layer.LinearAttention.forward = original_attn_forward
+        linear_attn_module.LinearAttentionBlock.forward = original_block_forward
+
 @contextmanager
 def _maybe_patch_gla_with_stateless_recurrent(
     enabled: bool,
