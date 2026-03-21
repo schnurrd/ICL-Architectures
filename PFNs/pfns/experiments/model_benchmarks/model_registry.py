@@ -432,7 +432,7 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
     "subsampled:DeltaNet_Comb_ST_1K": {
         "display_name": "DeltaNet Comb ST (Subsampled 1K)",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
-        "subsample_dataset_size": 1_000
+        "subsample_dataset_size": 1_000,
     },
     "subsampled:DeltaNet_Comb_ST_3K": {
         "display_name": "DeltaNet Comb ST (Subsampled 3K)",
@@ -447,17 +447,20 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
     "subsampled:Transformer_Comb_ST_1K": {
         "display_name": "Transformer Comb ST (Subsampled 1K)",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
-        "subsample_dataset_size": 1_000
+        "subsample_dataset_size": 1_000,
+        "eval_autocast_dtype": "fp16",
     },
     "subsampled:Transformer_Comb_ST_3K": {
         "display_name": "Transformer Comb ST (Subsampled 3K)",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
-        "subsample_dataset_size": 3_000
+        "subsample_dataset_size": 3_000,
+        "eval_autocast_dtype": "fp16",
     },
     "subsampled:Transformer_Comb_ST_10K": {
         "display_name": "Transformer Comb ST (Subsampled 10K)",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
-        "subsample_dataset_size": 10_000
+        "subsample_dataset_size": 10_000,
+        "eval_autocast_dtype": "fp16",
     },
 }
 
