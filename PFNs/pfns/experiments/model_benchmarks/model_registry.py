@@ -258,16 +258,31 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
 
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
+    "Linear_Attention_Non_Causal_Cat_10_Training": { # Trained without cat normalization
+        "wandb_run_id": "linear_attention/runs/hwsxnsho",
+    },
     "Linear_Attention_Non_Causal": { # Trained without cat normalization
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
     },
     "Linear_Attention_Causal_Comb_ST": { # Trained without cat normalization
         "wandb_run_id": "linear_attention/runs/2qth8bnj",
     },
-    # Not finished ep: 93
+    # Not finished ep: 163
     # "Linear_Attention_Causal_Comb_MT": { # Trained without cat normalization
     #     "wandb_run_id": "linear_attention/runs/3lyr8wze",
     # },
+    "Linear_Attention_Causal_Comb_ST_Cat_Norm_Full_Norm": {
+        "wandb_run_id": "linear_attention/runs/v14em9ik",
+        "high_cardinality_categorical_threshold": 0,
+    },
+    "Linear_Attention_Non_Causal_Cat_Norm_Full_Norm": {
+        "wandb_run_id": "linear_attention/runs/qqts8fpp",
+        "high_cardinality_categorical_threshold": 0,
+    },
+    "Linear_Attention_Causal_Comb_MT_Cat_Norm_Full_Norm": { # never finished ep 172
+        "wandb_run_id": "linear_attention/runs/3yp9x3kf",
+        "high_cardinality_categorical_threshold": 0,
+    },
 }
 
 BASED_MODELS: dict[str, dict[str, Any]] = {
