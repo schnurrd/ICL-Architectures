@@ -52,6 +52,12 @@ def _repeat_head_blocks(
     repeat_factor: int,
     head_dim: int,
 ) -> torch.Tensor:
+    expected_rows = num_heads * head_dim
+    if weight.shape[0] != expected_rows:
+        raise ValueError(
+            "Expected weight.shape[0] == num_heads * head_dim, "
+            f"got {weight.shape[0]} != {num_heads} * {head_dim}."
+        )
     return (
         weight.view(num_heads, head_dim, weight.shape[1])
         .repeat_interleave(repeat_factor, dim=0)
@@ -100,7 +106,6 @@ def _set_memetic_query_key_(
         )
 
         if perturb_std > 0.0:
-            q_weight = F.normalize(q_weight + perturb_std * torch.randn_like(q_weight), dim=-1)
             k_weight = F.normalize(k_weight + perturb_std * torch.randn_like(k_weight), dim=-1)
 
         attn.q_proj.weight.copy_(q_weight)
