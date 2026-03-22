@@ -80,9 +80,9 @@ class BidirectionalFLALayer(nn.Module):
         self.forward_layer = layer
         self.backward_layer = layer if share_weights else copy.deepcopy(layer)
         fusion_hidden_size = (
-            int(fusion_hidden_size)
+            fusion_hidden_size
             if fusion_hidden_size is not None
-            else int(hidden_size) * 2
+            else hidden_size * 2
         )
         # Keep this norm parameter-free to avoid bf16 autocast warnings from
         # fp32 affine weights in torch.rms_norm.
@@ -113,7 +113,7 @@ class BidirectionalFLALayer(nn.Module):
     ) -> dict[str, tp.Any]:
         branch_kwargs: dict[str, tp.Any] = {}
         for key, value in kwargs.items():
-            if key == "_bidirectional_forward_only":
+            if key in {"_bidirectional_forward_only", "_bidirectional_build_cache"}:
                 continue
             if key in {"past_key_values", "cache_params"} and not include_cache_inputs:
                 continue
@@ -180,6 +180,7 @@ class BidirectionalFLALayer(nn.Module):
             or kwargs.get("cache_params") is not None
         )
         forward_only = bool(kwargs.get("_bidirectional_forward_only"))
+        build_cache = bool(kwargs.get("_bidirectional_build_cache"))
         use_cache = bool(kwargs.get("use_cache"))
         forward_kwargs = self._prepare_branch_kwargs(
             kwargs,
@@ -187,7 +188,7 @@ class BidirectionalFLALayer(nn.Module):
             include_cache_inputs=True,
             use_cache=use_cache,
         )
-        if forward_only or has_cache_input:
+        if forward_only or (has_cache_input and not build_cache):
             return self.forward_layer(hidden_states, **forward_kwargs)
 
         backward_kwargs = self._prepare_branch_kwargs(
@@ -830,7 +831,13 @@ class FLABackbone(Backbone):
         use_custom_shortconv: bool = False,
         _bidirectional_forward_only: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        if self.bidirectional and return_cache and cache_params is None and not _bidirectional_forward_only:
+        if (
+            self.bidirectional
+            and return_cache
+            and cache_params is None
+            and not _bidirectional_forward_only
+            and isinstance(self.fla, Mamba2Model)
+        ):
             bidirectional_out, _ = self._run_fla(
                 x,
                 cache_params=None,
@@ -857,6 +864,12 @@ class FLABackbone(Backbone):
         kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": use_cache}
         if self.bidirectional:
             kwargs["_bidirectional_forward_only"] = _bidirectional_forward_only
+            kwargs["_bidirectional_build_cache"] = (
+                return_cache
+                and cache_params is None
+                and not _bidirectional_forward_only
+                and not isinstance(self.fla, Mamba2Model)
+            )
         if cache_params is not None:
             if isinstance(self.fla, Mamba2Model):
                 kwargs["cache_params"] = cache_params
