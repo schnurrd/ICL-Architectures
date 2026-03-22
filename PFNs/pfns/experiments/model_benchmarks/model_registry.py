@@ -45,7 +45,7 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
         "eval_autocast_dtype": "fp32",
     },
     "Softmax_Transformer_Cat_10_Training": {
-        "wandb_run_id": "tabpfn_transformer/runs/m5zgo8r3",  # not finished ep
+        "wandb_run_id": "tabpfn_transformer/runs/m5zgo8r3", 
         "eval_autocast_dtype": "fp16",
     },
     "Softmax_Transformer_No_Cat_Norm": {
