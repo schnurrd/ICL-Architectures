@@ -46,8 +46,8 @@ def test_gated_deltanet_memetic_gate_init() -> None:
     backbone = build_fla_backbone("gated_deltanet", size="small", memetic_init=True, train=False)
     attn = backbone.fla.layers[0].attn
 
-    torch.testing.assert_close(attn.q_proj.weight, torch.eye(attn.q_proj.weight.shape[0]))
-    torch.testing.assert_close(attn.k_proj.weight, torch.eye(attn.k_proj.weight.shape[0]))
+    torch.testing.assert_close(attn.q_proj.weight, _expected_block_identity_like(attn.q_proj.weight))
+    torch.testing.assert_close(attn.k_proj.weight, _expected_block_identity_like(attn.k_proj.weight))
     _assert_encoder_decoder_identity(attn.v_proj, attn.o_proj)
     torch.testing.assert_close(attn.a_proj.weight, torch.zeros_like(attn.a_proj.weight))
     torch.testing.assert_close(attn.A_log, torch.full_like(attn.A_log, _MEMETIC_A_LOG))

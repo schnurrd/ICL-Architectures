@@ -15,21 +15,16 @@ import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
+from fla.layers.gated_deltanet import GatedDeltaNet
+from fla.layers.gla import GatedLinearAttention
 from fla.models import GLAConfig, GLAModel
 from fla.models import Mamba2Config, Mamba2Model
 from fla.models import KDAConfig, KDAModel
 from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
-from fla.models.linear_attn.configuration_linear_attn import (
-    LinearAttentionConfig as FLALinearAttentionConfig,
-)
-from fla.models.linear_attn.modeling_linear_attn import (
-    LinearAttentionModel as FLALinearAttentionModel,
-)
 
 from pfns import base_config
 from pfns.model.fla_patches import (
-    _maybe_patch_linear_attn_with_cache,
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
@@ -52,14 +47,12 @@ FLA_MODEL_REGISTRY = {
     "kda": (KDAConfig, KDAModel),
     "deltanet": (DeltaNetConfig, DeltaNetModel),
     "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
-    "linear_attn": (FLALinearAttentionConfig, FLALinearAttentionModel),
 }
 _FLA_PAST_KEY_VALUES_MODELS: tuple[type[nn.Module], ...] = (
     GLAModel,
     KDAModel,
     DeltaNetModel,
     GatedDeltaNetModel,
-    FLALinearAttentionModel,
 )
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 
@@ -134,9 +127,7 @@ def _zero_gate_(module: nn.Module, *, final_bias_value: float = 0.0) -> None:
 
 def _apply_memetic_fla_gate_init(model: nn.Module) -> None:
     for module in model.modules():
-        class_name = type(module).__name__
-
-        if class_name == "GatedLinearAttention":
+        if isinstance(module, GatedLinearAttention):
             if hasattr(module, "q_proj"):
                 _set_block_identity_(module.q_proj)
             if hasattr(module, "k_proj"):
@@ -147,7 +138,7 @@ def _apply_memetic_fla_gate_init(model: nn.Module) -> None:
                 _zero_gate_(module.gk_proj, final_bias_value=_MEMETIC_OPEN_GATE_BIAS)
             continue
 
-        if class_name == "GatedDeltaNet":
+        if isinstance(module, GatedDeltaNet):
             if hasattr(module, "q_proj"):
                 _set_block_identity_(module.q_proj)
             if hasattr(module, "k_proj"):
@@ -432,7 +423,7 @@ class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
     model_type: tp.Literal[
-        "gla", "mamba2", "kda", "deltanet", "gated_deltanet", "linear_attn"
+        "gla", "mamba2", "kda", "deltanet", "gated_deltanet"
     ] = "gla"
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
@@ -767,8 +758,6 @@ class FLABackbone(Backbone):
         model = self.fla
         contexts: list[tp.ContextManager[tp.Any]] = []
         contexts.append(_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv or use_custom_recurrent))
-        if isinstance(model, FLALinearAttentionModel):
-            contexts.append(_maybe_patch_linear_attn_with_cache(True))
         if not use_custom_recurrent:
             return contexts
 

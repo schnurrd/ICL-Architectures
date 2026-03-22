@@ -3,9 +3,6 @@ import torch
 
 pytest.importorskip("fla")
 
-from pfns.model.fla_patches import (
-    _maybe_patch_shortconv_forward_pytorch,
-)
 from tests.model.fla_test_utils import (
     fla_cache_equivalence_tolerances,
     FLA_MODEL_TYPES,
@@ -224,24 +221,14 @@ def test_stateless_matches_repeated_cache_outputs_and_grads(model_type: str):
     repeated_cache = backbone_reference._repeat_cache(past_ref, test_len)
     test_x_flat = test_x_ref.contiguous().view(batch_size * num_tokens * test_len, 1, embed_dim)
     
-    if model_type == "mamba2":
-        # Mamba2 uses cache_params (not past_key_values) and requires use_cache=True
-        cache_position = torch.arange(train_len, train_len + 1, device=device).unsqueeze(0).expand(test_x_flat.size(0), -1)
-        out_ref = backbone_reference.fla(
-            inputs_embeds=test_x_flat,
-            cache_params=repeated_cache,
-            cache_position=cache_position,
-            use_cache=True,
-            return_dict=True,
-        ).last_hidden_state
-    else:
-        with _maybe_patch_shortconv_forward_pytorch(True):
-            out_ref = backbone_reference.fla(
-                inputs_embeds=test_x_flat,
-                past_key_values=repeated_cache,
-                use_cache=False,
-                return_dict=True,
-            ).last_hidden_state
+    out_ref, _ = backbone_reference._run_fla(
+        test_x_flat,
+        cache_params=repeated_cache,
+        cache_position_start=train_len,
+        return_cache=False,
+        use_custom_recurrent=False,
+        use_custom_shortconv=True,
+    )
     out_ref = out_ref.view(batch_size * num_tokens, test_len, embed_dim)
     
     out_ref.sum().backward()

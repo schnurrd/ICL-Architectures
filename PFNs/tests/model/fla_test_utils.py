@@ -16,7 +16,7 @@ def _filter_model_types(model_types: tuple[str, ...]) -> tuple[str, ...]:
 
 
 FLA_MODEL_TYPES = _filter_model_types(
-    ("gla", "kda", "deltanet", "gated_deltanet", "mamba2", "linear_attn")
+    ("gla", "kda", "deltanet", "gated_deltanet", "mamba2")
 )
 
 
@@ -100,19 +100,6 @@ def fla_model_config_kwargs(
             "norm_eps": 1e-5,
             "use_cache": True,
             "use_short_conv": True,
-        }
-    if model_type == "linear_attn":
-        return {
-            "attn_mode": "chunk",
-            "hidden_size": hidden_size,
-            "num_hidden_layers": num_layers,
-            "num_heads": num_heads,
-            "feature_map": "elu",
-            "intermediate_size": intermediate_size,
-            "hidden_act": "swish",
-            "norm_eps": 1e-5,
-            "use_cache": True,
-            "use_short_conv": False,
         }
     raise ValueError(f"Unsupported model_type: {model_type}")
 
