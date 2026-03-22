@@ -15,8 +15,6 @@ import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
-from fla.layers.gated_deltanet import GatedDeltaNet
-from fla.layers.gla import GatedLinearAttention
 from fla.models import GLAConfig, GLAModel
 from fla.models import Mamba2Config, Mamba2Model
 from fla.models import KDAConfig, KDAModel
@@ -24,6 +22,7 @@ from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 
 from pfns import base_config
+from pfns.model.fla_memetic_init import apply_memetic_fla_init
 from pfns.model.fla_patches import (
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
@@ -59,98 +58,6 @@ FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 
 def _resolve_fla_sequence_mode(sequence_mode: str) -> str:
     return resolve_sequence_mode(sequence_mode)
-
-
-_MEMETIC_OPEN_GATE_BIAS = 6.0
-_MEMETIC_A_LOG = -8.0
-_MEMETIC_DT_BIAS = float(torch.log(torch.expm1(torch.tensor(1.0, dtype=torch.float32))))
-
-
-def _zero_linear_(linear: nn.Linear, *, bias_value: float = 0.0) -> None:
-    with torch.no_grad():
-        linear.weight.zero_()
-        if linear.bias is not None:
-            linear.bias.fill_(bias_value)
-
-
-def _set_block_identity_(linear: nn.Linear) -> None:
-    with torch.no_grad():
-        linear.weight.zero_()
-        diag = min(linear.weight.shape)
-        linear.weight[:diag, :diag] = torch.eye(
-            diag,
-            device=linear.weight.device,
-            dtype=linear.weight.dtype,
-        )
-        if linear.bias is not None:
-            linear.bias.zero_()
-
-
-def _set_encoder_decoder_identity_(encoder: nn.Linear, decoder: nn.Linear) -> None:
-    with torch.no_grad():
-        encoder.weight.zero_()
-        decoder.weight.zero_()
-        if encoder.bias is not None:
-            encoder.bias.zero_()
-        if decoder.bias is not None:
-            decoder.bias.zero_()
-
-        enc_out, enc_in = encoder.weight.shape
-        dec_out, dec_in = decoder.weight.shape
-        if enc_out != dec_in or enc_in != dec_out:
-            raise ValueError("Encoder/decoder shapes must compose back to the input size.")
-
-        counts = torch.zeros(enc_in, device=encoder.weight.device, dtype=torch.int64)
-        for row in range(enc_out):
-            col = row % enc_in
-            encoder.weight[row, col] = 1.0
-            counts[col] += 1
-
-        for col in range(dec_out):
-            matching_rows = torch.arange(
-                col,
-                dec_in,
-                dec_out,
-                device=decoder.weight.device,
-            )
-            decoder.weight[col, matching_rows] = 1.0 / float(counts[col].item())
-
-
-def _zero_gate_(module: nn.Module, *, final_bias_value: float = 0.0) -> None:
-    linears = [child for child in module.modules() if isinstance(child, nn.Linear)]
-    for idx, linear in enumerate(linears):
-        _zero_linear_(
-            linear,
-            bias_value=final_bias_value if idx == len(linears) - 1 else 0.0,
-        )
-
-
-def _apply_memetic_fla_gate_init(model: nn.Module) -> None:
-    for module in model.modules():
-        if isinstance(module, GatedLinearAttention):
-            if hasattr(module, "q_proj"):
-                _set_block_identity_(module.q_proj)
-            if hasattr(module, "k_proj"):
-                _set_block_identity_(module.k_proj)
-            if hasattr(module, "v_proj") and hasattr(module, "o_proj"):
-                _set_encoder_decoder_identity_(module.v_proj, module.o_proj)
-            if hasattr(module, "gk_proj"):
-                _zero_gate_(module.gk_proj, final_bias_value=_MEMETIC_OPEN_GATE_BIAS)
-            continue
-
-        if isinstance(module, GatedDeltaNet):
-            if hasattr(module, "q_proj"):
-                _set_block_identity_(module.q_proj)
-            if hasattr(module, "k_proj"):
-                _set_block_identity_(module.k_proj)
-            if hasattr(module, "v_proj") and hasattr(module, "o_proj"):
-                _set_encoder_decoder_identity_(module.v_proj, module.o_proj)
-            if hasattr(module, "a_proj"):
-                _zero_gate_(module.a_proj)
-            with torch.no_grad():
-                module.A_log.fill_(_MEMETIC_A_LOG)
-                module.dt_bias.fill_(_MEMETIC_DT_BIAS)
-            continue
 
 
 class Backbone(nn.Module, ABC):
@@ -461,7 +368,7 @@ class FLABackboneConfig(BackboneConfig):
         config = ConfigClass(**self.config_kwargs)
         fla_model = ModelClass(config)
         if self.memetic_init:
-            _apply_memetic_fla_gate_init(fla_model)
+            apply_memetic_fla_init(fla_model)
 
         return FLABackbone(
             fla_model=fla_model,
