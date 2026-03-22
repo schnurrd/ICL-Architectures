@@ -5,6 +5,8 @@ different backbones that can be used within the ModelConfig.
 """
 from __future__ import annotations
 
+import copy
+import inspect
 import os
 import typing as tp
 from abc import ABC, abstractmethod
@@ -47,10 +49,207 @@ FLA_MODEL_REGISTRY = {
     "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
 }
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
+FLA_SPLIT_SEQUENCE_MODES = {"Comb_ST", "Int_ST"}
+BIDIRECTIONAL_FLA_SEQUENCE_MODES = FLA_SPLIT_SEQUENCE_MODES
 
 
 def _resolve_fla_sequence_mode(sequence_mode: str) -> str:
     return resolve_sequence_mode(sequence_mode)
+
+
+def _get_fla_layers(fla_model: nn.Module) -> nn.ModuleList:
+    layers = getattr(fla_model, "layers", None)
+    if not isinstance(layers, nn.ModuleList):
+        raise ValueError("FLA model does not expose layers as an nn.ModuleList.")
+    return layers
+
+
+class BidirectionalFLALayer(nn.Module):
+    """Wrap an FLA layer with forward/reverse passes fused back to one state."""
+
+    def __init__(
+        self,
+        layer: nn.Module,
+        *,
+        hidden_size: int,
+        share_weights: bool = True,
+        fusion_hidden_size: int | None = None,
+    ) -> None:
+        super().__init__()
+        self.share_weights = bool(share_weights)
+        self.forward_layer = layer
+        self.backward_layer = layer if share_weights else copy.deepcopy(layer)
+        fusion_hidden_size = (
+            int(fusion_hidden_size)
+            if fusion_hidden_size is not None
+            else int(hidden_size) * 2
+        )
+        # Keep this norm parameter-free to avoid bf16 autocast warnings from
+        # fp32 affine weights in torch.rms_norm.
+        self.fusion_norm = nn.RMSNorm(hidden_size * 2, elementwise_affine=False)
+        self.fusion_in = nn.Linear(hidden_size * 2, fusion_hidden_size)
+        self.fusion_out = nn.Linear(fusion_hidden_size, hidden_size)
+        self.fusion_act = nn.SiLU()
+        nn.init.zeros_(self.fusion_out.weight)
+        if self.fusion_out.bias is not None:
+            nn.init.zeros_(self.fusion_out.bias)
+
+        signature = inspect.signature(layer.forward)
+        self._accepts_var_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        )
+        self._accepted_kwargs = {
+            name for name in signature.parameters if name != "hidden_states"
+        }
+
+    def _prepare_branch_kwargs(
+        self,
+        kwargs: dict[str, tp.Any],
+        *,
+        reverse: bool,
+        include_cache_inputs: bool,
+        use_cache: bool,
+    ) -> dict[str, tp.Any]:
+        branch_kwargs: dict[str, tp.Any] = {}
+        for key, value in kwargs.items():
+            if key == "_bidirectional_forward_only":
+                continue
+            if key in {"past_key_values", "cache_params"} and not include_cache_inputs:
+                continue
+            if key == "use_cache":
+                value = use_cache
+            if key == "output_attentions":
+                value = False
+            if reverse and key in {"attention_mask", "cache_position"}:
+                if torch.is_tensor(value) and value.ndim >= 1:
+                    value = value.flip(-1)
+            branch_kwargs[key] = value
+
+        if self._accepts_var_kwargs:
+            return branch_kwargs
+        return {
+            key: value
+            for key, value in branch_kwargs.items()
+            if key in self._accepted_kwargs
+        }
+
+    @staticmethod
+    def _extract_hidden_states(output: tp.Any) -> torch.Tensor:
+        if torch.is_tensor(output):
+            return output
+        if isinstance(output, tuple) and output and torch.is_tensor(output[0]):
+            return output[0]
+        raise TypeError("Unsupported FLA layer output for bidirectional fusion.")
+
+    @staticmethod
+    def _rebuild_output_like(reference_output: tp.Any, hidden_states: torch.Tensor) -> tp.Any:
+        if torch.is_tensor(reference_output):
+            return hidden_states
+        if isinstance(reference_output, tuple) and reference_output:
+            return (hidden_states, *reference_output[1:])
+        raise TypeError("Unsupported FLA layer output for bidirectional fusion.")
+
+    @staticmethod
+    def _combine_branch_kwargs(
+        forward_kwargs: dict[str, tp.Any],
+        backward_kwargs: dict[str, tp.Any],
+    ) -> dict[str, tp.Any] | None:
+        if forward_kwargs.keys() != backward_kwargs.keys():
+            return None
+
+        combined_kwargs: dict[str, tp.Any] = {}
+        for key, forward_value in forward_kwargs.items():
+            backward_value = backward_kwargs[key]
+            if torch.is_tensor(forward_value):
+                if (
+                    not torch.is_tensor(backward_value)
+                    or forward_value.shape != backward_value.shape
+                ):
+                    return None
+                combined_kwargs[key] = torch.cat([forward_value, backward_value], dim=0)
+                continue
+            if forward_value != backward_value:
+                return None
+            combined_kwargs[key] = forward_value
+        return combined_kwargs
+
+    def forward(self, hidden_states: torch.Tensor, **kwargs: tp.Any) -> tp.Any:
+        has_cache_input = (
+            kwargs.get("past_key_values") is not None
+            or kwargs.get("cache_params") is not None
+        )
+        forward_only = bool(kwargs.get("_bidirectional_forward_only"))
+        use_cache = bool(kwargs.get("use_cache"))
+        forward_kwargs = self._prepare_branch_kwargs(
+            kwargs,
+            reverse=False,
+            include_cache_inputs=True,
+            use_cache=use_cache,
+        )
+        if forward_only or has_cache_input:
+            return self.forward_layer(hidden_states, **forward_kwargs)
+
+        backward_kwargs = self._prepare_branch_kwargs(
+            kwargs,
+            reverse=True,
+            include_cache_inputs=False,
+            use_cache=False,
+        )
+
+        reference_output: tp.Any
+        if self.share_weights and not use_cache:
+            combined_kwargs = self._combine_branch_kwargs(forward_kwargs, backward_kwargs)
+        else:
+            combined_kwargs = None
+
+        if combined_kwargs is not None:
+            combined_output = self.forward_layer(
+                torch.cat([hidden_states, hidden_states.flip(1)], dim=0),
+                **combined_kwargs,
+            )
+            combined_hidden = self._extract_hidden_states(combined_output)
+            forward_hidden, backward_hidden = combined_hidden.chunk(2, dim=0)
+            backward_hidden = backward_hidden.flip(1)
+            reference_output = combined_output
+        else:
+            forward_output = self.forward_layer(hidden_states, **forward_kwargs)
+            forward_hidden = self._extract_hidden_states(forward_output)
+
+            backward_output = self.backward_layer(
+                hidden_states.flip(1),
+                **backward_kwargs,
+            )
+            backward_hidden = self._extract_hidden_states(backward_output).flip(1)
+            reference_output = forward_output
+
+        fusion_input = torch.cat([forward_hidden, backward_hidden], dim=-1)
+        fused_hidden = forward_hidden + self.fusion_out(
+            self.fusion_act(self.fusion_in(self.fusion_norm(fusion_input)))
+        )
+        return self._rebuild_output_like(reference_output, fused_hidden)
+
+
+def _make_fla_model_bidirectional(
+    fla_model: nn.Module,
+    *,
+    hidden_size: int,
+    share_weights: bool = True,
+    fusion_hidden_size: int | None = None,
+) -> nn.Module:
+    layers = _get_fla_layers(fla_model)
+    fla_model.layers = nn.ModuleList(
+        [
+            BidirectionalFLALayer(
+                layer,
+                hidden_size=hidden_size,
+                share_weights=share_weights,
+                fusion_hidden_size=fusion_hidden_size,
+            )
+            for layer in layers
+        ]
+    )
+    return fla_model
 
 
 class Backbone(nn.Module, ABC):
@@ -326,6 +525,9 @@ class FLABackboneConfig(BackboneConfig):
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
+    bidirectional: bool = False
+    bidirectional_share_weights: bool = True
+    bidirectional_fusion_hidden_size: int | None = None
     # Backward-compatibility only: older checkpoints may serialize this field.
     # It is ignored by FLABackbone and has no effect on training/inference.
     deltanet_state_reg_weight: float | None = None
@@ -340,6 +542,17 @@ class FLABackboneConfig(BackboneConfig):
             "sequence_mode",
             _resolve_fla_sequence_mode(self.sequence_mode),
         )
+        if (
+            self.bidirectional_fusion_hidden_size is not None
+            and int(self.bidirectional_fusion_hidden_size) <= 0
+        ):
+            raise ValueError("bidirectional_fusion_hidden_size must be >= 1")
+        if self.bidirectional and self.sequence_mode not in BIDIRECTIONAL_FLA_SEQUENCE_MODES:
+            raise ValueError(
+                "Bidirectional FLA currently supports only sequence_mode "
+                f"in {sorted(BIDIRECTIONAL_FLA_SEQUENCE_MODES)}, "
+                f"got {self.sequence_mode!r}."
+            )
 
     def create_backbone(self, ninp: int, attention_between_features: bool, **kwargs: tp.Any) -> "Backbone":
         ConfigClass, ModelClass = FLA_MODEL_REGISTRY[self.model_type]
@@ -357,11 +570,20 @@ class FLABackboneConfig(BackboneConfig):
 
         config = ConfigClass(**self.config_kwargs)
         fla_model = ModelClass(config)
+        if self.bidirectional:
+            wrapped_model = fla_model.model if hasattr(fla_model, "model") else fla_model
+            _make_fla_model_bidirectional(
+                wrapped_model,
+                hidden_size=int(config.hidden_size),
+                share_weights=self.bidirectional_share_weights,
+                fusion_hidden_size=self.bidirectional_fusion_hidden_size,
+            )
 
         return FLABackbone(
             fla_model=fla_model,
             sequence_mode=self.sequence_mode,
             cache_chunk_size=self.cache_chunk_size,
+            bidirectional=self.bidirectional,
         )
 
 
@@ -373,11 +595,17 @@ class FLABackbone(Backbone):
         fla_model: nn.Module,
         sequence_mode: str = "Comb_ST",
         cache_chunk_size: int | None = None,
+        bidirectional: bool = False,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
         self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
+        self.bidirectional = bool(bidirectional)
+
+    @property
+    def layers(self) -> nn.ModuleList:
+        return _get_fla_layers(self.fla)
 
     @staticmethod
     def _summarize_cache(cache_params: tp.Any) -> str:
@@ -543,6 +771,18 @@ class FLABackbone(Backbone):
             .transpose(1, 2)
         )
 
+    def _run_split_sequence(
+        self,
+        x_batched: torch.Tensor,
+        *,
+        train_len: int,
+    ) -> torch.Tensor:
+        train_x = x_batched[:, :train_len]
+        test_x = x_batched[:, train_len:]
+        train_out, state = self.incontext_fit(train_x)
+        test_out = self.incontext_predict(test_x, state)
+        return torch.cat([train_out, test_out], dim=1)
+
     def incontext_fit(
         self,
         train_x: torch.Tensor,
@@ -569,10 +809,9 @@ class FLABackbone(Backbone):
         **kwargs: tp.Any,
     ) -> torch.Tensor:
         """Run the FLA model on test inputs using cached past key values in parallel."""
+        x_batched, shape_info = self._prepare_fla_input(test_x)
         cache_position_start = cached_state.get("cache_position_start", None)
         cache_params = cached_state["cache_params"]
-
-        x_batched, shape_info = self._prepare_fla_input(test_x)
         output = self._run_test_with_cache(
             x_batched,
             cache_params,
@@ -589,11 +828,35 @@ class FLABackbone(Backbone):
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
+        _bidirectional_forward_only: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
+        if self.bidirectional and return_cache and cache_params is None and not _bidirectional_forward_only:
+            bidirectional_out, _ = self._run_fla(
+                x,
+                cache_params=None,
+                cache_position_start=cache_position_start,
+                return_cache=False,
+                use_custom_recurrent=use_custom_recurrent,
+                use_custom_shortconv=use_custom_shortconv,
+                _bidirectional_forward_only=False,
+            )
+            _, cache_params = self._run_fla(
+                x,
+                cache_params=None,
+                cache_position_start=cache_position_start,
+                return_cache=True,
+                use_custom_recurrent=use_custom_recurrent,
+                use_custom_shortconv=use_custom_shortconv,
+                _bidirectional_forward_only=True,
+            )
+            return bidirectional_out, cache_params
+
         use_cache = return_cache or (
             cache_params is not None and isinstance(self.fla, Mamba2Model)
         )
         kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": use_cache}
+        if self.bidirectional:
+            kwargs["_bidirectional_forward_only"] = _bidirectional_forward_only
         if cache_params is not None:
             if isinstance(self.fla, Mamba2Model):
                 kwargs["cache_params"] = cache_params
@@ -788,25 +1051,16 @@ class FLABackbone(Backbone):
         )
         assert single_eval_pos is not None, "single_eval_pos must be provided for FLA backbone"
 
-        batch_size, seq_len, num_tokens, embed_dim = x.shape
-        # Input x is usually [Batch, SeqLen, NumTokens, EmSize]
-        # FLA expects [Batch, SeqLen, EmSize] -> so we flatten NumTokens into Batch
-        x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
-
+        x_batched, shape_info = self._prepare_fla_input(x)
+        seq_len = x_batched.size(1)
         train_len = min(single_eval_pos, seq_len)
-    
-        if self.sequence_mode in {"Comb_ST", "Int_ST"} or not self.training:
-            train_x = x_batched[:, :train_len]
-            test_x = x_batched[:, train_len:]
 
-            train_out, state = self.incontext_fit(train_x)
-            test_out = self.incontext_predict(test_x, state)
-            attn_out = torch.cat([train_out, test_out], dim=1)
+        if self.sequence_mode in FLA_SPLIT_SEQUENCE_MODES or not self.training:
+            attn_out = self._run_split_sequence(x_batched, train_len=train_len)
         else:
             attn_out, _ = self._run_fla(x_batched, return_cache=False)
-        
-        out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
-        return out
+
+        return self._unprepare_fla_output(attn_out, shape_info)
 
 
 @dataclass(frozen=True)

@@ -177,6 +177,9 @@ def get_config(
     model_type: str = "kda",
     hidden_size: int | None = None,
     sequence_mode: str = "Comb_ST",
+    bidirectional: bool = False,
+    bidirectional_share_weights: bool = True,
+    bidirectional_fusion_hidden_size: int | None = None,
     task_variant: str = "tabular_prior",
     # Training
     training_setup: str = "high",
@@ -313,6 +316,9 @@ def get_config(
         "model_type": model_type,
         "config_kwargs": resolved_config_kwargs,
         "sequence_mode": sequence_mode,
+        "bidirectional": bidirectional,
+        "bidirectional_share_weights": bidirectional_share_weights,
+        "bidirectional_fusion_hidden_size": bidirectional_fusion_hidden_size,
     }
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
@@ -370,6 +376,17 @@ def get_config(
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
+        "bidir" if bidirectional else None,
+        (
+            f"bidirfusion{bidirectional_fusion_hidden_size}"
+            if bidirectional_fusion_hidden_size is not None
+            else None
+        ),
+        (
+            f"bidirshare_{int(bidirectional_share_weights)}"
+            if bidirectional
+            else None
+        ),
         f"fpe_{feature_positional_embedding}",
     ]
     extras_str = "_".join(e for e in extras if e)
