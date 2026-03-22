@@ -314,6 +314,10 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
     #     "display_name": "Based $\\phi$ with 16-dim features",
     #     "wandb_run_id": "fla_models/runs/kxe10m62"
     # },
+    "Rebased_feat_dim_32": {
+        "display_name": "Rebased $\\phi$ with 32-dim features", # todo retrain and delete rerun
+        "wandb_run_id": "fla_models/runs/7z1vh7vl"
+    },
 }
 
 DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
