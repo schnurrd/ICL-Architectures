@@ -63,6 +63,7 @@ def add_numeric_buckets(
     *,
     value_col: str = "seqlen",
     bucket_col: str = "bucket",
+    q: int | None = None,
     bins: list[float] | None = None,
     labels: list[str] | None = None,
 ) -> pd.DataFrame:
@@ -70,14 +71,47 @@ def add_numeric_buckets(
         return df.copy()
 
     out = df.copy()
-    out[bucket_col] = pd.cut(
-        out[value_col],
-        bins=bins or DEFAULT_BUCKET_BINS,
-        labels=labels or DEFAULT_BUCKET_LABELS,
-        include_lowest=True,
-        right=True,
+    if q is not None:
+        if bins is not None:
+            raise ValueError("Pass either q or bins to add_numeric_buckets, not both.")
+        effective_q = max(1, min(int(q), out[value_col].dropna().nunique()))
+        out[bucket_col] = pd.qcut(
+            out[value_col],
+            q=effective_q,
+            duplicates="drop",
+        )
+        categories = out[bucket_col].cat.categories
+        if labels is None:
+            labels = [
+                f"{_format_bucket_value(interval.left)}-{_format_bucket_value(interval.right)}"
+                for interval in categories
+            ]
+        if len(labels) != len(categories):
+            raise ValueError("labels must match the number of quantile buckets.")
+        out[bucket_col] = out[bucket_col].cat.rename_categories(labels)
+    else:
+        out[bucket_col] = pd.cut(
+            out[value_col],
+            bins=bins or DEFAULT_BUCKET_BINS,
+            labels=labels or DEFAULT_BUCKET_LABELS,
+            include_lowest=True,
+            right=True,
     )
     return out
+
+
+def _format_bucket_value(value: float) -> str:
+    if pd.isna(value):
+        return "NA"
+    value = float(value)
+    abs_value = abs(value)
+    if abs_value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if abs_value >= 1_000:
+        return f"{value / 1_000:.1f}k"
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:.0f}"
 
 
 def add_normalized_comparison_metrics(
@@ -163,6 +197,7 @@ def add_normalized_comparison_metrics(
         return metric_df.copy()
 
     return pd.concat([metric_df.copy(), normalized_metric_df], ignore_index=True)
+
 
 
 def compute_mean_rank_tables(
