@@ -130,7 +130,6 @@ def build_fla_backbone(
     cache_chunk_size: int | None = None,
     bidirectional: bool = False,
     bidirectional_share_weights: bool = True,
-    bidirectional_fusion_hidden_size: int | None = None,
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -143,7 +142,6 @@ def build_fla_backbone(
         cache_chunk_size=cache_chunk_size,
         bidirectional=bidirectional,
         bidirectional_share_weights=bidirectional_share_weights,
-        bidirectional_fusion_hidden_size=bidirectional_fusion_hidden_size,
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)
