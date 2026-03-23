@@ -125,21 +125,34 @@ def add_normalized_comparison_metrics(
     value_col: str = "value",
     neutral_value: float = 0.5,
     normalized_prefix: str = "normalized_",
+    normalization_scope: str = "comparison",
 ) -> pd.DataFrame:
     """Append min-max-normalized comparison metrics to a long-form metric dataframe.
 
-    For each `(metric, *group_cols)` slice, values are normalized across `comparison_col`.
-    Lower-is-better metrics are sign-flipped before normalization so that larger normalized
-    values always indicate better performance.
+    `normalization_scope="comparison"` preserves the existing behavior:
+    for each `(metric, *group_cols)` slice, values are normalized across
+    `comparison_col`, which requires one row per comparison target within a slice.
+
+    `normalization_scope="group"` normalizes over the full `(metric, *group_cols)`
+    slice, which is useful when the min/max reference should span several
+    comparison targets such as both models and sequence lengths.
+
+    Lower-is-better metrics are sign-flipped before normalization so that larger
+    normalized values always indicate better performance.
     """
     if metric_df.empty:
         return metric_df.copy()
 
     metric_keys = list(dict.fromkeys(str(metric) for metric in metric_keys))
     higher_is_better_metrics = {str(metric) for metric in higher_is_better_metrics}
-    group_cols = list(dict.fromkeys(str(col) for col in group_cols))
+    normalization_group_cols = list(dict.fromkeys(str(col) for col in group_cols))
+    normalization_scope = str(normalization_scope)
+    if normalization_scope not in {"comparison", "group"}:
+        raise ValueError(
+            "normalization_scope must be either 'comparison' or 'group'."
+        )
 
-    required_cols = {comparison_col, metric_col, value_col, *group_cols}
+    required_cols = {comparison_col, metric_col, value_col, *normalization_group_cols}
     missing_cols = sorted(required_cols - set(metric_df.columns))
     if missing_cols:
         raise RuntimeError(
@@ -150,43 +163,60 @@ def add_normalized_comparison_metrics(
     if raw_metric_df.empty:
         return metric_df.copy()
 
-    subset_cols = [metric_col, comparison_col, *group_cols]
-    duplicate_mask = raw_metric_df.duplicated(subset=subset_cols, keep=False)
-    if duplicate_mask.any():
-        duplicate_preview = raw_metric_df.loc[duplicate_mask, subset_cols].head().to_dict("records")
-        raise RuntimeError(
-            "Normalization requires one row per comparison slice. "
-            f"Found duplicates for columns {subset_cols}: {duplicate_preview}"
-        )
-
-    def _normalize_group(group: pd.DataFrame) -> pd.DataFrame:
-        normalized_group = group.copy()
-        raw_scores = normalized_group[value_col].to_numpy(dtype=float, copy=True)
-        finite_mask = np.isfinite(raw_scores)
-        metric_name = str(normalized_group[metric_col].iloc[0])
-        scores = raw_scores if metric_name in higher_is_better_metrics else -raw_scores
-        normalized = np.full_like(scores, np.nan, dtype=float)
-        finite_scores = scores[finite_mask]
-        if finite_scores.size:
-            score_min = float(finite_scores.min())
-            score_max = float(finite_scores.max())
-            normalized[finite_mask] = (
-                float(neutral_value)
-                if np.isclose(score_min, score_max)
-                else (finite_scores - score_min) / (score_max - score_min)
+    if normalization_scope == "comparison":
+        # In comparison mode we normalize across `comparison_col` within each
+        # normalization slice, so each comparison target must appear only once.
+        uniqueness_cols = [metric_col, comparison_col, *normalization_group_cols]
+        duplicate_mask = raw_metric_df.duplicated(subset=uniqueness_cols, keep=False)
+        if duplicate_mask.any():
+            duplicate_preview = raw_metric_df.loc[duplicate_mask, uniqueness_cols].head().to_dict("records")
+            raise RuntimeError(
+                "Normalization requires one row per comparison slice. "
+                f"Found duplicates for columns {uniqueness_cols}: {duplicate_preview}"
             )
 
-        normalized_group[value_col] = normalized
-        normalized_group[metric_col] = (
-            normalized_prefix + normalized_group[metric_col].astype(str)
+    grouping_keys = [metric_col, *normalization_group_cols]
+
+    def _normalize_slice(slice_df: pd.DataFrame) -> pd.DataFrame:
+        """Normalize one `(metric, *group_cols)` slice to [0, 1].
+
+        The slice can represent:
+        - one sequence length across models (`normalization_scope="comparison"`)
+        - one dataset or repetition across sequence lengths (`normalization_scope="group"`)
+        """
+        normalized_slice = slice_df.copy()
+        original_values = normalized_slice[value_col].to_numpy(dtype=float, copy=True)
+        finite_mask = np.isfinite(original_values)
+
+        metric_name = str(normalized_slice[metric_col].iloc[0])
+        oriented_values = (
+            original_values
+            if metric_name in higher_is_better_metrics
+            else -original_values
         )
-        return normalized_group.dropna(subset=[value_col])
+
+        normalized_values = np.full_like(oriented_values, np.nan, dtype=float)
+        finite_oriented_values = oriented_values[finite_mask]
+        if finite_oriented_values.size:
+            slice_min = float(finite_oriented_values.min())
+            slice_max = float(finite_oriented_values.max())
+            normalized_values[finite_mask] = (
+                float(neutral_value)
+                if np.isclose(slice_min, slice_max)
+                else (finite_oriented_values - slice_min) / (slice_max - slice_min)
+            )
+
+        normalized_slice[value_col] = normalized_values
+        normalized_slice[metric_col] = (
+            normalized_prefix + normalized_slice[metric_col].astype(str)
+        )
+        return normalized_slice.dropna(subset=[value_col])
 
     normalized_metric_df = pd.concat(
         [
-            _normalize_group(group)
+            _normalize_slice(group)
             for _, group in raw_metric_df.groupby(
-                [metric_col, *group_cols],
+                grouping_keys,
                 observed=True,
                 sort=True,
             )
