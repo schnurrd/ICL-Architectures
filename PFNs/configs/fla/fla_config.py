@@ -192,6 +192,7 @@ def get_config(
     # Model options
     cache_chunk_size: int | None = None,
     memetic_init: bool = False,
+    memetic_init_layer_indices: str | tuple[int, ...] | list[int] | None = "middle",
     use_short_conv: bool | None = None,
     feature_positional_embedding: str | None = None,
     config_kwargs_override: dict[str, object] | None = None,
@@ -315,6 +316,7 @@ def get_config(
         "config_kwargs": resolved_config_kwargs,
         "sequence_mode": sequence_mode,
         "memetic_init": memetic_init,
+        "memetic_init_layer_indices": memetic_init_layer_indices,
     }
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
