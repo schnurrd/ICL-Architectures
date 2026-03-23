@@ -47,6 +47,33 @@ def test_bidirectional_wraps_every_layer(model_type: str) -> None:
     assert all(isinstance(layer, BidirectionalFLALayer) for layer in backbone.layers)
 
 
+def test_bidirectional_mamba2_incontext_fit_uses_single_model_pass() -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("FLA backend requires CUDA/Triton for this test.")
+
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+    backbone = build_fla_backbone("mamba2", size="small", bidirectional=True).to(device)
+    embed_dim = fla_hidden_size("mamba2", size="small")
+    train_x = torch.randn(2, 5, embed_dim, device=device)
+
+    call_count = 0
+    original_forward = backbone.fla.forward
+
+    def counted_forward(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original_forward(*args, **kwargs)
+
+    backbone.fla.forward = counted_forward
+
+    with torch.no_grad():
+        _, state = backbone.incontext_fit(train_x)
+
+    assert call_count == 1
+    assert state["cache_params"] is not None
+
+
 @pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
 def test_bidirectional_incontext_fit_matches_non_cached_train_pass(model_type: str) -> None:
     if not torch.cuda.is_available():

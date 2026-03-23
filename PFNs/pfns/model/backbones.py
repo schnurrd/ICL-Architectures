@@ -10,7 +10,7 @@ import inspect
 import os
 import typing as tp
 from abc import ABC, abstractmethod
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 
 import torch
@@ -51,6 +51,8 @@ FLA_MODEL_REGISTRY = {
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 FLA_SPLIT_SEQUENCE_MODES = {"Comb_ST", "Int_ST"}
 BIDIRECTIONAL_FLA_SEQUENCE_MODES = FLA_SPLIT_SEQUENCE_MODES
+_BIDIRECTIONAL_FORWARD_ONLY_KEY = "_bidirectional_forward_only"
+_BIDIRECTIONAL_BUILD_CACHE_KEY = "_bidirectional_build_cache"
 
 
 def _resolve_fla_sequence_mode(sequence_mode: str) -> str:
@@ -102,6 +104,13 @@ class BidirectionalFLALayer(nn.Module):
         self._accepted_kwargs = {
             name for name in signature.parameters if name != "hidden_states"
         }
+        self._runtime_kwargs: dict[str, tp.Any] | None = None
+
+    def set_runtime_kwargs(
+        self,
+        runtime_kwargs: dict[str, tp.Any] | None = None,
+    ) -> None:
+        self._runtime_kwargs = runtime_kwargs
 
     def _prepare_branch_kwargs(
         self,
@@ -113,7 +122,10 @@ class BidirectionalFLALayer(nn.Module):
     ) -> dict[str, tp.Any]:
         branch_kwargs: dict[str, tp.Any] = {}
         for key, value in kwargs.items():
-            if key in {"_bidirectional_forward_only", "_bidirectional_build_cache"}:
+            if key in {
+                _BIDIRECTIONAL_FORWARD_ONLY_KEY,
+                _BIDIRECTIONAL_BUILD_CACHE_KEY,
+            }:
                 continue
             if key in {"past_key_values", "cache_params"} and not include_cache_inputs:
                 continue
@@ -179,8 +191,9 @@ class BidirectionalFLALayer(nn.Module):
             kwargs.get("past_key_values") is not None
             or kwargs.get("cache_params") is not None
         )
-        forward_only = bool(kwargs.get("_bidirectional_forward_only"))
-        build_cache = bool(kwargs.get("_bidirectional_build_cache"))
+        runtime_kwargs = self._runtime_kwargs or {}
+        forward_only = bool(kwargs.get(_BIDIRECTIONAL_FORWARD_ONLY_KEY, runtime_kwargs.get(_BIDIRECTIONAL_FORWARD_ONLY_KEY)))
+        build_cache = bool(kwargs.get(_BIDIRECTIONAL_BUILD_CACHE_KEY, runtime_kwargs.get(_BIDIRECTIONAL_BUILD_CACHE_KEY)))
         use_cache = bool(kwargs.get("use_cache"))
         forward_kwargs = self._prepare_branch_kwargs(
             kwargs,
@@ -742,6 +755,24 @@ class FLABackbone(Backbone):
             return cache_params_copy
         return FLABackbone._shallow_copy(cache_params)
 
+    @contextmanager
+    def _bidirectional_runtime_mode(
+        self,
+        runtime_kwargs: dict[str, tp.Any] | None,
+    ) -> tp.Iterator[None]:
+        if runtime_kwargs is None or not isinstance(self.fla, Mamba2Model):
+            yield
+            return
+
+        layers = tuple(layer for layer in self.layers if isinstance(layer, BidirectionalFLALayer))
+        for layer in layers:
+            layer.set_runtime_kwargs(runtime_kwargs)
+        try:
+            yield
+        finally:
+            for layer in layers:
+                layer.set_runtime_kwargs()
+
     @staticmethod
     def _prepare_fla_input(
         x: torch.Tensor,
@@ -831,47 +862,25 @@ class FLABackbone(Backbone):
         use_custom_shortconv: bool = False,
         _bidirectional_forward_only: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        if (
-            self.bidirectional
-            and return_cache
+        is_mamba2 = isinstance(self.fla, Mamba2Model)
+        build_bidirectional_cache = (
+            return_cache
             and cache_params is None
             and not _bidirectional_forward_only
-            and isinstance(self.fla, Mamba2Model)
-        ):
-            bidirectional_out, _ = self._run_fla(
-                x,
-                cache_params=None,
-                cache_position_start=cache_position_start,
-                return_cache=False,
-                use_custom_recurrent=use_custom_recurrent,
-                use_custom_shortconv=use_custom_shortconv,
-                _bidirectional_forward_only=False,
-            )
-            _, cache_params = self._run_fla(
-                x,
-                cache_params=None,
-                cache_position_start=cache_position_start,
-                return_cache=True,
-                use_custom_recurrent=use_custom_recurrent,
-                use_custom_shortconv=use_custom_shortconv,
-                _bidirectional_forward_only=True,
-            )
-            return bidirectional_out, cache_params
-
-        use_cache = return_cache or (
-            cache_params is not None and isinstance(self.fla, Mamba2Model)
         )
+        use_cache = return_cache or (cache_params is not None and is_mamba2)
         kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": use_cache}
         if self.bidirectional:
-            kwargs["_bidirectional_forward_only"] = _bidirectional_forward_only
-            kwargs["_bidirectional_build_cache"] = (
-                return_cache
-                and cache_params is None
-                and not _bidirectional_forward_only
-                and not isinstance(self.fla, Mamba2Model)
-            )
+            bidirectional_runtime_kwargs = {
+                _BIDIRECTIONAL_FORWARD_ONLY_KEY: _bidirectional_forward_only,
+                _BIDIRECTIONAL_BUILD_CACHE_KEY: build_bidirectional_cache,
+            }
+            if not is_mamba2:
+                kwargs.update(bidirectional_runtime_kwargs)
+        else:
+            bidirectional_runtime_kwargs = None
         if cache_params is not None:
-            if isinstance(self.fla, Mamba2Model):
+            if is_mamba2:
                 kwargs["cache_params"] = cache_params
                 if cache_position_start is None:
                     raise ValueError(
@@ -886,6 +895,7 @@ class FLABackbone(Backbone):
                 kwargs["past_key_values"] = cache_params
             else:
                 raise ValueError("Unsupported FLA model type for cache_params.")
+
         try:
             with ExitStack() as stack:
                 for ctx in self._patch_contexts(
@@ -893,6 +903,7 @@ class FLABackbone(Backbone):
                     use_custom_shortconv=use_custom_shortconv,
                 ):
                     stack.enter_context(ctx)
+                stack.enter_context(self._bidirectional_runtime_mode(bidirectional_runtime_kwargs))
                 out = self.fla(**kwargs)
         except TypeError as exc:
             raise TypeError(
