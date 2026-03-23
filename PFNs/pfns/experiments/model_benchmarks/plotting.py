@@ -63,6 +63,228 @@ def build_model_style_map(
     }
 
 
+def _compute_dodged_positions(
+    x_values: np.ndarray,
+    *,
+    model_index: int,
+    model_count: int,
+    log_x: bool,
+    dodge_strength: float = 0.045,
+) -> np.ndarray:
+    if model_count <= 1:
+        return x_values.astype(float, copy=True)
+
+    slot = model_index - (model_count - 1) / 2.0
+    if log_x:
+        return x_values.astype(float, copy=True) * (1.0 + slot * dodge_strength)
+
+    unique_x = np.unique(x_values.astype(float, copy=False))
+    if unique_x.size <= 1:
+        base_width = max(abs(float(unique_x[0])) * 0.08, 1.0) if unique_x.size == 1 else 1.0
+    else:
+        diffs = np.diff(np.sort(unique_x))
+        positive_diffs = diffs[diffs > 0.0]
+        base_width = float(positive_diffs.min()) if positive_diffs.size > 0 else 1.0
+    return x_values.astype(float, copy=True) + slot * base_width * dodge_strength
+
+
+def _compute_violin_widths(
+    x_values: np.ndarray,
+    *,
+    model_count: int,
+    log_x: bool,
+    width_frac: float = 0.18,
+) -> np.ndarray:
+    x_values = x_values.astype(float, copy=True)
+    if x_values.size == 0:
+        return x_values
+
+    if log_x:
+        widths = x_values * (width_frac / max(1, model_count))
+        return np.maximum(widths, np.finfo(float).tiny)
+
+    if x_values.size == 1:
+        return np.array([1.0], dtype=float)
+
+    sorted_x = np.sort(np.unique(x_values))
+    left_gaps = np.diff(sorted_x, prepend=sorted_x[0])
+    right_gaps = np.diff(sorted_x, append=sorted_x[-1])
+    local_span = np.minimum(
+        np.where(left_gaps > 0.0, left_gaps, np.inf),
+        np.where(right_gaps > 0.0, right_gaps, np.inf),
+    )
+    finite_span = local_span[np.isfinite(local_span)]
+    fallback_span = float(finite_span.min()) if finite_span.size > 0 else 1.0
+    local_span = np.where(np.isfinite(local_span), local_span, fallback_span)
+    width_lookup = {float(x): float(span * width_frac / max(1, model_count)) for x, span in zip(sorted_x, local_span)}
+    return np.array([width_lookup[float(x)] for x in x_values], dtype=float)
+
+
+def _half_violin_side(*, model_index: int, model_count: int) -> Literal["left", "right"]:
+    if model_count <= 1:
+        return "right"
+    return "left" if model_index < (model_count / 2.0) else "right"
+
+
+def _clip_violin_to_half(
+    violin: dict[str, Any],
+    *,
+    positions: np.ndarray,
+    side: Literal["left", "right"],
+) -> None:
+    for body, center in zip(violin["bodies"], positions):
+        for path in body.get_paths():
+            vertices = path.vertices
+            if side == "left":
+                vertices[:, 0] = np.minimum(vertices[:, 0], center)
+            else:
+                vertices[:, 0] = np.maximum(vertices[:, 0], center)
+
+
+def _compute_strip_positions(
+    center: float,
+    values: np.ndarray,
+    *,
+    width: float,
+    log_x: bool,
+) -> np.ndarray:
+    if values.size <= 1:
+        return np.array([center], dtype=float)
+
+    offsets = np.linspace(-0.5, 0.5, values.size, dtype=float)
+    ordered_offsets = np.empty_like(offsets)
+    ordered_offsets[np.argsort(values, kind="mergesort")] = offsets
+
+    if log_x:
+        return center * (1.0 + ordered_offsets * width)
+    return center + ordered_offsets * width
+
+
+def _plot_individual_runs_for_model(
+    *,
+    ax: Any,
+    sub: pd.DataFrame,
+    x_col: str,
+    value_col: str,
+    rep_col: str,
+    model_label: str | None,
+    marker: str,
+    linestyle: Any,
+    color: str | None,
+    run_alpha: float,
+    log_x: bool,
+    distribution_style: Literal["none", "half_violin", "strip"],
+    model_index: int,
+    model_count: int,
+) -> bool:
+    unique_x = np.sort(sub[x_col].dropna().unique().astype(float))
+    if unique_x.size == 0:
+        return False
+
+    plot_x = _compute_dodged_positions(
+        unique_x,
+        model_index=model_index,
+        model_count=model_count,
+        log_x=log_x,
+    )
+    x_position_lookup = {float(base_x): float(curr_x) for base_x, curr_x in zip(unique_x, plot_x)}
+
+    for _, run_df in sub.groupby(rep_col, observed=True, sort=True):
+        run_df = run_df.sort_values(x_col)
+        if run_df.empty:
+            continue
+        run_x = run_df[x_col].to_numpy(dtype=float, copy=True)
+        ax.plot(
+            np.array([x_position_lookup[float(x)] for x in run_x], dtype=float),
+            run_df[value_col],
+            label="_nolegend_",
+            linestyle=linestyle,
+            color=color,
+            linewidth=0.55,
+            marker=None,
+            alpha=run_alpha,
+            zorder=2,
+        )
+
+    grouped = list(sub.groupby(x_col, observed=True, sort=True))
+    distribution = (
+        sub.groupby(x_col, observed=True)[value_col]
+        .agg(
+            median="median",
+            q25=lambda values: values.quantile(0.25),
+            q75=lambda values: values.quantile(0.75),
+        )
+        .reset_index()
+        .sort_values(x_col)
+    )
+    if distribution.empty:
+        return False
+
+    if distribution_style == "half_violin":
+        violin = ax.violinplot(
+            dataset=[group[value_col].to_numpy(dtype=float, copy=False) for _, group in grouped],
+            positions=plot_x,
+            widths=_compute_violin_widths(
+                plot_x,
+                model_count=model_count,
+                log_x=log_x,
+            ),
+            showmeans=False,
+            showmedians=False,
+            showextrema=False,
+        )
+        _clip_violin_to_half(
+            violin,
+            positions=plot_x,
+            side=_half_violin_side(
+                model_index=model_index,
+                model_count=model_count,
+            ),
+        )
+        for body in violin["bodies"]:
+            body.set_facecolor(color)
+            body.set_edgecolor("none")
+            body.set_alpha(0.14)
+            body.set_zorder(3)
+    elif distribution_style == "strip":
+        strip_widths = _compute_violin_widths(
+            plot_x,
+            model_count=model_count,
+            log_x=log_x,
+        )
+        for x_idx, (_, group) in enumerate(grouped):
+            values = group[value_col].to_numpy(dtype=float, copy=False)
+            strip_x = _compute_strip_positions(
+                float(plot_x[x_idx]),
+                values,
+                width=float(strip_widths[x_idx]) * 0.7,
+                log_x=log_x,
+            )
+            ax.scatter(
+                strip_x,
+                values,
+                s=8.0,
+                color=color,
+                alpha=min(0.22, max(0.08, run_alpha * 3.0)),
+                linewidths=0.0,
+                zorder=3,
+            )
+
+    ax.plot(
+        plot_x,
+        distribution["median"],
+        label=model_label,
+        linestyle=linestyle,
+        color=color,
+        linewidth=2.6,
+        marker=marker,
+        markersize=7,
+        alpha=0.95,
+        zorder=4,
+    )
+    return True
+
+
 def plot_curves_from_df(
     df: pd.DataFrame,
     *,
@@ -75,6 +297,10 @@ def plot_curves_from_df(
     show_std: bool = False,
     error_bars: Literal["std", "ci95"] | None = None,
     error_style: Literal["bars", "band"] = "bars",
+    plot_mode: Literal["aggregate", "individual_runs"] = "aggregate",
+    rep_col: str = "rep",
+    run_alpha: float = 0.35,
+    distribution_style: Literal["none", "half_violin", "strip"] = "half_violin",
     log_x: bool = False,
     log_y: bool = False,
     invert_y: bool = False,
@@ -92,6 +318,20 @@ def plot_curves_from_df(
         raise ValueError("error_bars must be one of None, 'std', or 'ci95'.")
     if error_style not in {"bars", "band"}:
         raise ValueError("error_style must be 'bars' or 'band'.")
+    if plot_mode not in {"aggregate", "individual_runs"}:
+        raise ValueError("plot_mode must be 'aggregate' or 'individual_runs'.")
+    if distribution_style not in {"none", "half_violin", "strip"}:
+        raise ValueError("distribution_style must be 'none', 'half_violin', or 'strip'.")
+    if plot_mode == "individual_runs" and rep_col not in df.columns:
+        raise RuntimeError(
+            f"plot_mode='individual_runs' requires a '{rep_col}' column in the dataframe."
+        )
+    if not 0.0 < run_alpha <= 1.0:
+        raise ValueError("run_alpha must be in the interval (0, 1].")
+
+    if plot_mode == "individual_runs":
+        show_std = False
+        error_bars = None
 
     display_name_map = resolve_display_name_map(df)
     sns.set_theme(style="whitegrid", font_scale=1.2)
@@ -132,6 +372,29 @@ def plot_curves_from_df(
 
         for model in model_names:
             sub = subset_metric[subset_metric["model"] == model]
+            marker, linestyle, color = style_map.get(model, ("o", "-", None))
+            model_label = display_name_map.get(str(model), str(model)) if idx == 0 else None
+            if plot_mode == "individual_runs":
+                plotted = _plot_individual_runs_for_model(
+                    ax=ax,
+                    sub=sub,
+                    x_col=x_col,
+                    value_col=value_col,
+                    rep_col=rep_col,
+                    model_label=model_label,
+                    marker=marker,
+                    linestyle=linestyle,
+                    color=color,
+                    run_alpha=run_alpha,
+                    log_x=log_x,
+                    distribution_style=distribution_style,
+                    model_index=model_names.index(model),
+                    model_count=len(model_names),
+                )
+                if not plotted:
+                    continue
+                continue
+
             agg = (
                 sub.groupby(x_col, observed=True)[value_col]
                 .agg(mean="mean", std="std", ci95=ci95_halfwidth)
@@ -141,11 +404,10 @@ def plot_curves_from_df(
             if agg.empty:
                 continue
 
-            marker, linestyle, color = style_map.get(model, ("o", "-", None))
             ax.plot(
                 agg[x_col],
                 agg["mean"],
-                label=display_name_map.get(str(model), str(model)) if idx == 0 else None,
+                label=model_label,
                 linestyle=linestyle,
                 color=color,
                 linewidth=2.5,
@@ -178,7 +440,10 @@ def plot_curves_from_df(
                         )
                     else:
                         if log_y:
-                            lower_err = np.minimum(err, np.maximum(mean_values - np.finfo(float).tiny, 0.0))
+                            lower_err = np.minimum(
+                                err,
+                                np.maximum(mean_values - np.finfo(float).tiny, 0.0),
+                            )
                             yerr = np.vstack([lower_err, err])
                         else:
                             yerr = err
