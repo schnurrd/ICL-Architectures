@@ -12,13 +12,13 @@ from fla.layers.gla import GatedLinearAttention
 
 
 # Large positive bias => logsigmoid(bias) ~ 0 => minimal decay / open recurrent gate
-_MEMETIC_OPEN_GATE_BIAS = 6.0
+_MIMETIC_OPEN_GATE_BIAS = 6.0
 
 # Keep Q and K very strongly correlated at init
-_MEMETIC_QK_PERTURB_STD = 1e-3
+_MIMETIC_QK_PERTURB_STD = 1e-3
 
 # Small positive delta-rule decay => recurrent gate starts nearly open
-_MEMETIC_DELTA_DECAY = 1e-3
+_MIMETIC_DELTA_DECAY = 1e-3
 
 def _zero_linear_(linear: nn.Linear, *, bias_value: float = 0.0) -> None:
     with torch.no_grad():
@@ -92,10 +92,10 @@ def _expand_grouped_weight(
     )
 
 
-def _set_memetic_query_key_(
+def _set_mimetic_query_key_(
     attn: GatedLinearAttention | GatedDeltaNet,
     *,
-    perturb_std: float = _MEMETIC_QK_PERTURB_STD,
+    perturb_std: float = _MIMETIC_QK_PERTURB_STD,
 ) -> None:
     """
     Initialize Q/K from one shared semi-orthogonal key map.
@@ -129,7 +129,7 @@ def _set_memetic_query_key_(
             attn.k_proj.bias.zero_()
 
 
-def _set_memetic_value_output_(attn: GatedLinearAttention | GatedDeltaNet) -> None:
+def _set_mimetic_value_output_(attn: GatedLinearAttention | GatedDeltaNet) -> None:
     """
     Initialize V/O so o_proj reconstructs the repeated grouped-V map as well as
     the parameterization allows. For the standard case this reduces to transpose.
@@ -188,7 +188,7 @@ def _set_causal_identity_short_conv_(conv: nn.Conv1d) -> None:
             conv.bias.zero_()
 
 
-def _set_memetic_gated_deltanet_beta_(attn: GatedDeltaNet) -> None:
+def _set_mimetic_gated_deltanet_beta_(attn: GatedDeltaNet) -> None:
     with torch.no_grad():
         q_blocks = attn.q_proj.weight.view(attn.num_heads, attn.head_k_dim, attn.hidden_size)
         beta_rows = q_blocks.abs().mean(dim=1)
@@ -208,33 +208,33 @@ def _set_memetic_gated_deltanet_beta_(attn: GatedDeltaNet) -> None:
         attn.b_proj.weight.copy_(beta_rows * 4.0)
 
 
-def _apply_memetic_gated_deltanet_init(
+def _apply_mimetic_gated_deltanet_init(
     attn: GatedDeltaNet,
     *,
-    qk_perturb_std: float = _MEMETIC_QK_PERTURB_STD,
+    qk_perturb_std: float = _MIMETIC_QK_PERTURB_STD,
 ) -> None:
     if getattr(attn, "use_short_conv", False):
         for conv in (attn.q_conv1d, attn.k_conv1d, attn.v_conv1d):
             _set_causal_identity_short_conv_(conv)
 
-    _set_memetic_query_key_(attn, perturb_std=qk_perturb_std)
-    _set_memetic_value_output_(attn)
+    _set_mimetic_query_key_(attn, perturb_std=qk_perturb_std)
+    _set_mimetic_value_output_(attn)
     with torch.no_grad():
         _zero_linear_(attn.a_proj)
         attn.A_log.zero_()
-        attn.dt_bias.fill_(_inverse_softplus(_MEMETIC_DELTA_DECAY))
-    _set_memetic_gated_deltanet_beta_(attn)
+        attn.dt_bias.fill_(_inverse_softplus(_MIMETIC_DELTA_DECAY))
+    _set_mimetic_gated_deltanet_beta_(attn)
 
 
-def apply_memetic_fla_init(
+def apply_mimetic_fla_init(
     model: nn.Module,
     *,
     layer_indices: Iterable[int] | None = None,
-    qk_perturb_std: float = _MEMETIC_QK_PERTURB_STD,
+    qk_perturb_std: float = _MIMETIC_QK_PERTURB_STD,
     allow_short_conv: bool = False,
 ) -> None:
     """
-    Apply memetic init to selected supported FLA layers.
+    Apply mimetic init to selected supported FLA layers.
 
     layer_indices:
         None      -> all supported layers
@@ -247,7 +247,7 @@ def apply_memetic_fla_init(
     ]
     if not supported_layers:
         raise ValueError(
-            "Expected at least one supported memetic-init layer "
+            "Expected at least one supported mimetic-init layer "
             f"({GatedLinearAttention.__name__} or {GatedDeltaNet.__name__}) in "
             f"{type(model).__name__}, but found none."
         )
@@ -262,14 +262,14 @@ def apply_memetic_fla_init(
         if isinstance(module, GatedLinearAttention):
             if getattr(module, "use_short_conv", False) and not allow_short_conv:
                 raise ValueError(
-                    "Memetic GLA init assumes use_short_conv=False. "
+                    "Mimetic GLA init assumes use_short_conv=False. "
                     "Set allow_short_conv=True only if you explicitly want to apply it anyway."
                 )
-            _set_memetic_query_key_(module, perturb_std=qk_perturb_std)
-            _set_memetic_value_output_(module)
-            _set_final_constant_gate_(module.gk_proj, final_bias_value=_MEMETIC_OPEN_GATE_BIAS)
+            _set_mimetic_query_key_(module, perturb_std=qk_perturb_std)
+            _set_mimetic_value_output_(module)
+            _set_final_constant_gate_(module.gk_proj, final_bias_value=_MIMETIC_OPEN_GATE_BIAS)
         else:
-            _apply_memetic_gated_deltanet_init(
+            _apply_mimetic_gated_deltanet_init(
                 module,
                 qk_perturb_std=qk_perturb_std,
             )
@@ -277,5 +277,5 @@ def apply_memetic_fla_init(
 
     if not applied_any:
         raise ValueError(
-            f"No supported memetic-init layer matched layer_indices={sorted(selected)}."
+            f"No supported mimetic-init layer matched layer_indices={sorted(selected)}."
         )

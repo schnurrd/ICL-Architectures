@@ -22,7 +22,7 @@ from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 
 from pfns import base_config
-from pfns.model.fla_memetic_init import apply_memetic_fla_init
+from pfns.model.fla_mimetic_init import apply_mimetic_fla_init
 from pfns.model.fla_patches import (
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
@@ -335,8 +335,8 @@ class FLABackboneConfig(BackboneConfig):
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
-    memetic_init: bool = False
-    memetic_init_layer_indices: tp.Literal["middle"] | tuple[int, ...] | list[int] | None = "middle"
+    mimetic_init: bool = False
+    mimetic_init_layer_indices: tp.Literal["middle"] | tuple[int, ...] | list[int] | None = "middle"
     # Backward-compatibility only: older checkpoints may serialize this field.
     # It is ignored by FLABackbone and has no effect on training/inference.
     deltanet_state_reg_weight: float | None = None
@@ -368,11 +368,11 @@ class FLABackboneConfig(BackboneConfig):
 
         config = ConfigClass(**self.config_kwargs)
         fla_model = ModelClass(config)
-        if self.memetic_init:
-            layer_indices = self.memetic_init_layer_indices
+        if self.mimetic_init:
+            layer_indices = self.mimetic_init_layer_indices
             if layer_indices == "middle":
                 layer_indices = (config.num_hidden_layers // 2,)
-            apply_memetic_fla_init(
+            apply_mimetic_fla_init(
                 fla_model,
                 layer_indices=layer_indices,
             )

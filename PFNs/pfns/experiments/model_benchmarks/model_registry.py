@@ -495,6 +495,25 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+MIMETIC_INITALIZATION_MODELS: dict[str, dict[str, Any]] = {
+    "mimetic:GLA_Comb_ST_Ref": {
+        "display_name": "GLA Comb ST (Reference)",
+        "wandb_run_id": "fla_models/runs/2v2xw7d2",
+    },
+    "mimetic:GLA_Comb_ST_Simple": {
+        "display_name": "Mimetic GLA Comb ST (Simple)",
+        "wandb_run_id": "fla_models/runs/5r6j4hjs",
+    },
+    "mimetic:GLA_Comb_ST_Improved_1_layer": {
+        "display_name": "Mimetic GLA Comb ST (Improved, 1 Layer)",
+        "wandb_run_id": "fla_models/runs/bvqfpbpl",
+    },
+    "mimetic:GLA_Comb_ST_Improved_all_layer": {
+        "display_name": "Mimetic GLA Comb ST (Improved, All Layers)",
+        "wandb_run_id": "fla_models/runs/7mkque2f",
+    },
+}
+
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
 
 BASELINE_MODEL_NAMES: tuple[str, ...] = (
@@ -523,6 +542,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "deltanet_high_seq_len": DELTANET_HIGH_SEQ_LEN_MODELS,
     "deltanet_added_regularization": DELTANET_ADDED_REGULARIZATION,
     "deltanet_finetuned": DELTANET_FINETUNED_MODELS,
+    "mimetic_initialization": MIMETIC_INITALIZATION_MODELS,
     "subsampled": SUBSAMPLED_MODELS,
     "fla_models": {
         **KDA_MODELS,

@@ -129,8 +129,8 @@ def build_fla_backbone(
     size: str = "small",
     sequence_mode: str = "Comb_ST",
     cache_chunk_size: int | None = None,
-    memetic_init: bool = False,
-    memetic_init_layer_indices: tp.Literal["middle"] | tuple[int, ...] | list[int] | None = "middle",
+    mimetic_init: bool = False,
+    mimetic_init_layer_indices: tp.Literal["middle"] | tuple[int, ...] | list[int] | None = "middle",
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -141,8 +141,8 @@ def build_fla_backbone(
         config_kwargs=kwargs,
         sequence_mode=sequence_mode,
         cache_chunk_size=cache_chunk_size,
-        memetic_init=memetic_init,
-        memetic_init_layer_indices=memetic_init_layer_indices,
+        mimetic_init=mimetic_init,
+        mimetic_init_layer_indices=mimetic_init_layer_indices,
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)
