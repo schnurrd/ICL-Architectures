@@ -370,12 +370,7 @@ class FLABackboneConfig(BackboneConfig):
         fla_model = ModelClass(config)
         if self.mimetic_init:
             layer_indices = self.mimetic_init_layer_indices
-            if layer_indices == "middle":
-                layer_indices = (config.num_hidden_layers // 2,)
-            apply_mimetic_fla_init(
-                fla_model,
-                layer_indices=layer_indices,
-            )
+            apply_mimetic_fla_init(fla_model, layer_indices=layer_indices)
 
         return FLABackbone(
             fla_model=fla_model,

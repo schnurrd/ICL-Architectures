@@ -3,78 +3,88 @@ import torch
 
 pytest.importorskip("fla")
 
-from pfns.model.backbones import FLABackboneConfig
 from pfns.model.fla_mimetic_init import (
-    _repeat_head_blocks,
+    _MIMETIC_A_LOG,
+    _MIMETIC_DT_BIAS,
+    _MIMETIC_OPEN_GATE_BIAS,
     apply_mimetic_fla_init,
 )
 from tests.model.fla_test_utils import build_fla_backbone
 
 
-def _query_key_cosine_mean(attn: torch.nn.Module) -> torch.Tensor:
-    overlap = min(attn.q_proj.weight.shape[0], attn.k_proj.weight.shape[0])
-    return torch.nn.functional.cosine_similarity(
-        attn.q_proj.weight[:overlap],
-        attn.k_proj.weight[:overlap],
-        dim=-1,
-    ).mean()
+def _expected_block_identity_like(weight: torch.Tensor) -> torch.Tensor:
+    expected = torch.zeros_like(weight)
+    diag = min(weight.shape)
+    expected[:diag, :diag] = torch.eye(diag, device=weight.device, dtype=weight.dtype)
+    return expected
 
 
-def test_mimetic_init_defaults_to_middle_layer_only() -> None:
+def _assert_encoder_decoder_identity(encoder: torch.nn.Linear, decoder: torch.nn.Linear) -> None:
+    composed = decoder.weight @ encoder.weight
+    expected = torch.eye(
+        composed.shape[0],
+        device=composed.device,
+        dtype=composed.dtype,
+    )
+    torch.testing.assert_close(composed, expected)
+
+
+def test_gla_mimetic_gate_init() -> None:
+    backbone = build_fla_backbone("gla", size="small", mimetic_init=True, train=False)
+    attn = backbone.fla.layers[0].attn
+
+    torch.testing.assert_close(attn.q_proj.weight, _expected_block_identity_like(attn.q_proj.weight))
+    torch.testing.assert_close(attn.k_proj.weight, _expected_block_identity_like(attn.k_proj.weight))
+    _assert_encoder_decoder_identity(attn.v_proj, attn.o_proj)
+    torch.testing.assert_close(attn.gk_proj[0].weight, torch.zeros_like(attn.gk_proj[0].weight))
+    torch.testing.assert_close(attn.gk_proj[1].weight, torch.zeros_like(attn.gk_proj[1].weight))
+    torch.testing.assert_close(
+        attn.gk_proj[1].bias,
+        torch.full_like(attn.gk_proj[1].bias, _MIMETIC_OPEN_GATE_BIAS),
+    )
+
+
+def test_mimetic_init_applies_to_all_layers_by_default() -> None:
+    baseline = build_fla_backbone("gla", size="medium", mimetic_init=False, train=False)
+    mimetic = build_fla_backbone("gla", size="medium", mimetic_init=True, train=False)
+
+    for idx in range(len(mimetic.fla.layers)):
+        baseline_attn = baseline.fla.layers[idx].attn
+        mimetic_attn = mimetic.fla.layers[idx].attn
+        assert not torch.allclose(mimetic_attn.q_proj.weight, baseline_attn.q_proj.weight)
+
+
+def test_mimetic_init_honors_explicit_layer_indices() -> None:
     torch.manual_seed(0)
     baseline = build_fla_backbone("gla", size="medium", mimetic_init=False, train=False)
     torch.manual_seed(0)
-    mimetic = build_fla_backbone("gla", size="medium", mimetic_init=True, train=False)
-
-    first_layer = mimetic.fla.layers[0].attn
-    middle_layer = mimetic.fla.layers[1].attn
-    last_layer = mimetic.fla.layers[-1].attn
-
-    torch.testing.assert_close(first_layer.q_proj.weight, baseline.fla.layers[0].attn.q_proj.weight)
-    assert _query_key_cosine_mean(middle_layer) > _query_key_cosine_mean(
-        baseline.fla.layers[1].attn
+    targeted = build_fla_backbone(
+        "gla",
+        size="medium",
+        mimetic_init=True,
+        mimetic_init_layer_indices=[1],
+        train=False,
     )
-    torch.testing.assert_close(last_layer.q_proj.weight, baseline.fla.layers[-1].attn.q_proj.weight)
+
+    torch.testing.assert_close(targeted.fla.layers[0].attn.q_proj.weight, baseline.fla.layers[0].attn.q_proj.weight)
+    assert not torch.allclose(targeted.fla.layers[1].attn.q_proj.weight, baseline.fla.layers[1].attn.q_proj.weight)
+    torch.testing.assert_close(targeted.fla.layers[-1].attn.q_proj.weight, baseline.fla.layers[-1].attn.q_proj.weight)
 
 
-def test_mimetic_init_supports_gated_deltanet_default_short_conv() -> None:
-    torch.manual_seed(0)
-    baseline = build_fla_backbone("gated_deltanet", size="small", mimetic_init=False, train=False)
-    torch.manual_seed(0)
-    mimetic = build_fla_backbone("gated_deltanet", size="small", mimetic_init=True, train=False)
+def test_mimetic_init_supports_gated_deltanet() -> None:
+    backbone = build_fla_backbone("gated_deltanet", size="small", mimetic_init=True, train=False)
+    attn = backbone.fla.layers[0].attn
 
-    first_layer = mimetic.fla.layers[0].attn
-    middle_layer = mimetic.fla.layers[1].attn
-
-    torch.testing.assert_close(first_layer.q_proj.weight, baseline.fla.layers[0].attn.q_proj.weight)
-    assert _query_key_cosine_mean(middle_layer) > _query_key_cosine_mean(
-        baseline.fla.layers[1].attn
-    )
-    assert torch.count_nonzero(middle_layer.a_proj.weight) == 0
-    beta = middle_layer.b_proj(torch.ones(2, 3, middle_layer.hidden_size)).sigmoid()
-    assert torch.all(beta > 0.5)
+    torch.testing.assert_close(attn.q_proj.weight, _expected_block_identity_like(attn.q_proj.weight))
+    torch.testing.assert_close(attn.k_proj.weight, _expected_block_identity_like(attn.k_proj.weight))
+    _assert_encoder_decoder_identity(attn.v_proj, attn.o_proj)
+    torch.testing.assert_close(attn.a_proj.weight, torch.zeros_like(attn.a_proj.weight))
+    torch.testing.assert_close(attn.A_log, torch.full_like(attn.A_log, _MIMETIC_A_LOG))
+    torch.testing.assert_close(attn.dt_bias, torch.full_like(attn.dt_bias, _MIMETIC_DT_BIAS))
 
 
-def test_mimetic_init_rejects_invalid_usage() -> None:
-    short_conv = FLABackboneConfig(
-        model_type="gla",
-        config_kwargs={
-            "hidden_size": 8,
-            "num_hidden_layers": 1,
-            "num_heads": 2,
-            "intermediate_size": 32,
-            "hidden_act": "swish",
-            "norm_eps": 1e-5,
-            "use_cache": True,
-            "use_short_conv": True,
-        },
-        mimetic_init=False,
-    ).create_backbone(ninp=8, attention_between_features=False)
+def test_mimetic_init_rejects_unsupported_models() -> None:
     unsupported = build_fla_backbone("deltanet", size="small", mimetic_init=False, train=False)
 
-    with pytest.raises(ValueError, match="use_short_conv=False"):
-        apply_mimetic_fla_init(short_conv.fla)
     with pytest.raises(ValueError, match="Expected at least one supported mimetic-init layer"):
         apply_mimetic_fla_init(unsupported.fla)
-    with pytest.raises(ValueError, match="num_heads \\* head_dim"):
-        _repeat_head_blocks(torch.randn(3, 8), num_heads=2, repeat_factor=2, head_dim=2)

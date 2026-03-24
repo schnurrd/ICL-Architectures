@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import math
 from collections.abc import Iterable
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 from fla.layers.gated_deltanet import GatedDeltaNet
@@ -13,12 +11,8 @@ from fla.layers.gla import GatedLinearAttention
 
 # Large positive bias => logsigmoid(bias) ~ 0 => minimal decay / open recurrent gate
 _MIMETIC_OPEN_GATE_BIAS = 6.0
-
-# Keep Q and K very strongly correlated at init
-_MIMETIC_QK_PERTURB_STD = 1e-3
-
-# Small positive delta-rule decay => recurrent gate starts nearly open
-_MIMETIC_DELTA_DECAY = 1e-3
+_MIMETIC_A_LOG = -8.0
+_MIMETIC_DT_BIAS = float(torch.log(torch.expm1(torch.tensor(1.0, dtype=torch.float32))))
 
 def _zero_linear_(linear: nn.Linear, *, bias_value: float = 0.0) -> None:
     with torch.no_grad():
@@ -27,157 +21,56 @@ def _zero_linear_(linear: nn.Linear, *, bias_value: float = 0.0) -> None:
             linear.bias.fill_(bias_value)
 
 
-def _inverse_softplus(value: float) -> float:
-    if value <= 0.0:
-        raise ValueError(f"Expected positive value for inverse softplus, got {value}.")
-    return value + math.log(-math.expm1(-value))
-
-
-def _sample_semi_orthogonal(
-    shape: tuple[int, int],
-    *,
-    device: torch.device,
-    dtype: torch.dtype,
-) -> torch.Tensor:
-    """
-    Return a semi orthogonal matrix:
-    - if rows <= cols: orthonormal rows
-    - if rows > cols: orthonormal columns
-    """
-    rows, cols = shape
-    basis = torch.randn(rows, cols, device=device, dtype=torch.float32)
-
-    if rows <= cols:
-        q, _ = torch.linalg.qr(basis.T, mode="reduced")
-        return q.T.to(dtype=dtype)
-
-    q, _ = torch.linalg.qr(basis, mode="reduced")
-    return q.to(dtype=dtype)
-
-
-def _repeat_head_blocks(
-    weight: torch.Tensor,
-    *,
-    num_heads: int,
-    repeat_factor: int,
-    head_dim: int,
-) -> torch.Tensor:
-    expected_rows = num_heads * head_dim
-    if weight.shape[0] != expected_rows:
-        raise ValueError(
-            "Expected weight.shape[0] == num_heads * head_dim, "
-            f"got {weight.shape[0]} != {num_heads} * {head_dim}."
-        )
-    return (
-        weight.view(num_heads, head_dim, weight.shape[1])
-        .repeat_interleave(repeat_factor, dim=0)
-        .reshape(num_heads * repeat_factor * head_dim, weight.shape[1])
-    )
-
-
-def _expand_grouped_weight(
-    weight: torch.Tensor,
-    *,
-    num_heads: int,
-    repeat_factor: int,
-    head_dim: int,
-) -> torch.Tensor:
-    if repeat_factor == 1:
-        return weight
-    return _repeat_head_blocks(
-        weight,
-        num_heads=num_heads,
-        repeat_factor=repeat_factor,
-        head_dim=head_dim,
-    )
-
-
-def _set_mimetic_query_key_(
-    attn: GatedLinearAttention | GatedDeltaNet,
-    *,
-    perturb_std: float = _MIMETIC_QK_PERTURB_STD,
-) -> None:
-    """
-    Initialize Q/K from one shared semi-orthogonal key map.
-    For grouped-KV attention, query heads follow the repeated key structure used
-    in the GLA forward pass.
-    """
+def _set_block_identity_(linear: nn.Linear) -> None:
     with torch.no_grad():
-        num_key_heads = getattr(attn, "num_kv_heads", getattr(attn, "num_heads"))
-        key_repeat_factor = getattr(attn, "num_kv_groups", 1)
-        k_weight = _sample_semi_orthogonal(
-            attn.k_proj.weight.shape,
-            device=attn.k_proj.weight.device,
-            dtype=attn.k_proj.weight.dtype,
+        linear.weight.zero_()
+        diag = min(linear.weight.shape)
+        linear.weight[:diag, :diag] = torch.eye(
+            diag,
+            device=linear.weight.device,
+            dtype=linear.weight.dtype,
         )
-        q_weight = _expand_grouped_weight(
-            k_weight.clone(),
-            num_heads=num_key_heads,
-            repeat_factor=key_repeat_factor,
-            head_dim=attn.head_k_dim,
-        )
-
-        if perturb_std > 0.0:
-            k_weight = F.normalize(k_weight + perturb_std * torch.randn_like(k_weight), dim=-1)
-
-        attn.q_proj.weight.copy_(q_weight)
-        attn.k_proj.weight.copy_(k_weight)
-
-        if attn.q_proj.bias is not None:
-            attn.q_proj.bias.zero_()
-        if attn.k_proj.bias is not None:
-            attn.k_proj.bias.zero_()
+        if linear.bias is not None:
+            linear.bias.zero_()
 
 
-def _set_mimetic_value_output_(attn: GatedLinearAttention | GatedDeltaNet) -> None:
-    """
-    Initialize V/O so o_proj reconstructs the repeated grouped-V map as well as
-    the parameterization allows. For the standard case this reduces to transpose.
-    """
+def _set_encoder_decoder_identity_(encoder: nn.Linear, decoder: nn.Linear) -> None:
     with torch.no_grad():
-        num_value_heads = getattr(
-            attn,
-            "num_v_heads",
-            getattr(attn, "num_kv_heads", getattr(attn, "num_heads")),
-        )
-        value_repeat_factor = getattr(attn, "num_kv_groups", 1)
-        v_weight = _sample_semi_orthogonal(
-            attn.v_proj.weight.shape,
-            device=attn.v_proj.weight.device,
-            dtype=attn.v_proj.weight.dtype,
-        )
-        expanded_v_weight = _expand_grouped_weight(
-            v_weight,
-            num_heads=num_value_heads,
-            repeat_factor=value_repeat_factor,
-            head_dim=attn.head_v_dim,
-        )
-        if value_repeat_factor == 1 and v_weight.shape[0] >= v_weight.shape[1]:
-            o_weight = v_weight.T
-        else:
-            o_weight = torch.linalg.pinv(expanded_v_weight.to(dtype=torch.float32)).to(
-                dtype=attn.o_proj.weight.dtype
+        encoder.weight.zero_()
+        decoder.weight.zero_()
+        if encoder.bias is not None:
+            encoder.bias.zero_()
+        if decoder.bias is not None:
+            decoder.bias.zero_()
+
+        enc_out, enc_in = encoder.weight.shape
+        dec_out, dec_in = decoder.weight.shape
+        if enc_out != dec_in or enc_in != dec_out:
+            raise ValueError("Encoder/decoder shapes must compose back to the input size.")
+
+        counts = torch.zeros(enc_in, device=encoder.weight.device, dtype=torch.int64)
+        for row in range(enc_out):
+            col = row % enc_in
+            encoder.weight[row, col] = 1.0
+            counts[col] += 1
+
+        for col in range(dec_out):
+            matching_rows = torch.arange(
+                col,
+                dec_in,
+                dec_out,
+                device=decoder.weight.device,
             )
-
-        attn.v_proj.weight.copy_(v_weight)
-        attn.o_proj.weight.copy_(o_weight)
-
-        if attn.v_proj.bias is not None:
-            attn.v_proj.bias.zero_()
-        if attn.o_proj.bias is not None:
-            attn.o_proj.bias.zero_()
+            decoder.weight[col, matching_rows] = 1.0 / float(counts[col].item())
 
 
-def _set_final_constant_gate_(module: nn.Module, *, final_bias_value: float) -> None:
-    """
-    Zero only the final linear layer so the gate output starts as a constant.
-    This is sufficient for the current GLA gate MLP, which has no hidden activation.
-    """
+def _zero_gate_(module: nn.Module, *, final_bias_value: float = 0.0) -> None:
     linears = [child for child in module.modules() if isinstance(child, nn.Linear)]
-    if not linears:
-        raise ValueError("Expected at least one nn.Linear inside gate module.")
-
-    _zero_linear_(linears[-1], bias_value=final_bias_value)
+    for idx, linear in enumerate(linears):
+        _zero_linear_(
+            linear,
+            bias_value=final_bias_value if idx == len(linears) - 1 else 0.0,
+        )
 
 
 def _set_causal_identity_short_conv_(conv: nn.Conv1d) -> None:
@@ -188,58 +81,46 @@ def _set_causal_identity_short_conv_(conv: nn.Conv1d) -> None:
             conv.bias.zero_()
 
 
-def _set_mimetic_gated_deltanet_beta_(attn: GatedDeltaNet) -> None:
-    with torch.no_grad():
-        q_blocks = attn.q_proj.weight.view(attn.num_heads, attn.head_k_dim, attn.hidden_size)
-        beta_rows = q_blocks.abs().mean(dim=1)
-        if attn.num_v_heads > attn.num_heads:
-            if attn.num_v_heads % attn.num_heads != 0:
-                raise ValueError(
-                    f"Cannot expand num_heads={attn.num_heads} to num_v_heads={attn.num_v_heads}."
-                )
-            beta_rows = beta_rows.repeat_interleave(attn.num_v_heads // attn.num_heads, dim=0)
-        elif attn.num_heads > attn.num_v_heads:
-            if attn.num_heads % attn.num_v_heads != 0:
-                raise ValueError(
-                    f"Cannot reduce num_heads={attn.num_heads} to num_v_heads={attn.num_v_heads}."
-                )
-            beta_rows = beta_rows.view(attn.num_v_heads, -1, attn.hidden_size).mean(dim=1)
-        beta_rows = F.normalize(beta_rows, dim=-1)
-        attn.b_proj.weight.copy_(beta_rows * 4.0)
-
-
-def _apply_mimetic_gated_deltanet_init(
-    attn: GatedDeltaNet,
+def _maybe_perturb_query_key_(
+    q_proj: nn.Linear,
+    k_proj: nn.Linear,
     *,
-    qk_perturb_std: float = _MIMETIC_QK_PERTURB_STD,
+    perturb_std: float,
 ) -> None:
-    if getattr(attn, "use_short_conv", False):
-        for conv in (attn.q_conv1d, attn.k_conv1d, attn.v_conv1d):
-            _set_causal_identity_short_conv_(conv)
-
-    _set_mimetic_query_key_(attn, perturb_std=qk_perturb_std)
-    _set_mimetic_value_output_(attn)
+    if perturb_std <= 0.0:
+        return
     with torch.no_grad():
-        _zero_linear_(attn.a_proj)
-        attn.A_log.zero_()
-        attn.dt_bias.fill_(_inverse_softplus(_MIMETIC_DELTA_DECAY))
-    _set_mimetic_gated_deltanet_beta_(attn)
+        q_proj.weight.add_(torch.randn_like(q_proj.weight) * perturb_std)
+        k_proj.weight.add_(torch.randn_like(k_proj.weight) * perturb_std)
+
+
+def _require_attrs(module: nn.Module, names: tuple[str, ...]) -> None:
+    missing = [name for name in names if not hasattr(module, name)]
+    if missing:
+        raise ValueError(
+            f"{type(module).__name__} is missing required attributes for mimetic init: {missing}"
+        )
 
 
 def apply_mimetic_fla_init(
     model: nn.Module,
     *,
     layer_indices: Iterable[int] | None = None,
-    qk_perturb_std: float = _MIMETIC_QK_PERTURB_STD,
-    allow_short_conv: bool = False,
+    qk_perturb_std: float = 0.0,
+    allow_short_conv: bool = True,
 ) -> None:
     """
     Apply mimetic init to selected supported FLA layers.
 
-    layer_indices:
-        None      -> all supported layers
-        [i, j, k] -> only those supported layers in traversal order
+    Args:
+        model: Model containing supported FLA attention modules.
+        layer_indices: Supported-layer indices to initialize. None initializes all.
+        qk_perturb_std: Optional Gaussian stddev added to q/k weights after identity init.
+        allow_short_conv: Whether to apply causal-identity init to short-conv paths.
     """
+    if qk_perturb_std < 0.0:
+        raise ValueError(f"qk_perturb_std must be >= 0, got {qk_perturb_std}.")
+
     supported_layers = [
         module
         for module in model.modules()
@@ -260,19 +141,34 @@ def apply_mimetic_fla_init(
             continue
 
         if isinstance(module, GatedLinearAttention):
-            if getattr(module, "use_short_conv", False) and not allow_short_conv:
-                raise ValueError(
-                    "Mimetic GLA init assumes use_short_conv=False. "
-                    "Set allow_short_conv=True only if you explicitly want to apply it anyway."
-                )
-            _set_mimetic_query_key_(module, perturb_std=qk_perturb_std)
-            _set_mimetic_value_output_(module)
-            _set_final_constant_gate_(module.gk_proj, final_bias_value=_MIMETIC_OPEN_GATE_BIAS)
-        else:
-            _apply_mimetic_gated_deltanet_init(
-                module,
-                qk_perturb_std=qk_perturb_std,
+            _require_attrs(module, ("q_proj", "k_proj", "v_proj", "o_proj", "gk_proj"))
+            _set_block_identity_(module.q_proj)
+            _set_block_identity_(module.k_proj)
+            _maybe_perturb_query_key_(
+                module.q_proj,
+                module.k_proj,
+                perturb_std=qk_perturb_std,
             )
+            _set_encoder_decoder_identity_(module.v_proj, module.o_proj)
+            _zero_gate_(module.gk_proj, final_bias_value=_MIMETIC_OPEN_GATE_BIAS)
+        else:
+            _require_attrs(module, ("q_proj", "k_proj", "v_proj", "o_proj", "a_proj", "A_log", "dt_bias"))
+            if allow_short_conv and getattr(module, "use_short_conv", False):
+                _require_attrs(module, ("q_conv1d", "k_conv1d", "v_conv1d"))
+                for conv in (module.q_conv1d, module.k_conv1d, module.v_conv1d):
+                    _set_causal_identity_short_conv_(conv)
+            _set_block_identity_(module.q_proj)
+            _set_block_identity_(module.k_proj)
+            _maybe_perturb_query_key_(
+                module.q_proj,
+                module.k_proj,
+                perturb_std=qk_perturb_std,
+            )
+            _set_encoder_decoder_identity_(module.v_proj, module.o_proj)
+            _zero_gate_(module.a_proj)
+            with torch.no_grad():
+                module.A_log.fill_(_MIMETIC_A_LOG)
+                module.dt_bias.fill_(_MIMETIC_DT_BIAS)
         applied_any = True
 
     if not applied_any:
