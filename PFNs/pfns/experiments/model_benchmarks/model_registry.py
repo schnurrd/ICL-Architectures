@@ -186,7 +186,7 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
 }
 
 ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
-    "Oracle_Hidden_State_DeltaNet_Comb_ST": {
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_low_patience": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
         "display_name": "Oracle Hidden State (DeltaNet)",
         "oracle_hidden_state_baseline": True,
@@ -194,6 +194,21 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_lr": 5e-2,
         "oracle_weight_decay": 0.0,
         "oracle_patience": 3,
+        "oracle_tolerance": 1e-5,
+        "oracle_query_batch_size": 256,
+        "oracle_selection_fraction": 0.1,
+        "oracle_verbose": False,
+        "oracle_log_every_steps": 50,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_high_patience": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet)",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 100,
+        "oracle_lr": 5e-2,
+        "oracle_weight_decay": 0.0,
+        "oracle_patience": 10,
         "oracle_tolerance": 1e-5,
         "oracle_query_batch_size": 256,
         "oracle_selection_fraction": 0.1,
