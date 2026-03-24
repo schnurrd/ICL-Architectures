@@ -188,7 +188,7 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
 ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     "Oracle_Hidden_State_DeltaNet_Comb_ST_low_patience": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet)",
+        "display_name": "Oracle Hidden State (DeltaNet) Low Patience",
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 20,
         "oracle_lr": 5e-2,
@@ -202,8 +202,8 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "eval_autocast_dtype": "bf16",
     },
     "Oracle_Hidden_State_GLA_Comb_ST_low_patience": {
-        **DELTANET_MODELS["GLA_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet)",
+        **GLA_MODELS["GLA_Comb_ST"],
+        "display_name": "Oracle Hidden State (GLA)",
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 20,
         "oracle_lr": 5e-2,
@@ -218,7 +218,7 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     },
     "Oracle_Hidden_State_DeltaNet_Comb_ST_high_patience": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet)",
+        "display_name": "Oracle Hidden State (DeltaNet) High Patience",
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 100,
         "oracle_lr": 5e-2,
