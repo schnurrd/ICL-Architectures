@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -21,17 +20,9 @@ from pfns.training_utils import (
 from pfns.utils import get_default_device, torch_nanmean
 
 from .constants import MEMORY_NAMES, METRIC_NAMES, SCHEMA_VERSION, TIMING_NAMES
-from .benchmark_batch_generators import create_seq_len_batch_generator
+from .benchmark_batch_generators import _set_data_generation_seed, create_seq_len_batch_generator
 
 EVAL_MODES = ["fit_predict", "forward"]
-
-
-def _set_data_generation_seed(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
 
 
 @dataclass
