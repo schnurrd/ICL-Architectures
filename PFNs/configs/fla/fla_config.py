@@ -192,7 +192,7 @@ def get_config(
     # Model options
     cache_chunk_size: int | None = None,
     mimetic_init: bool = False,
-    mimetic_init_layer_indices: str | tuple[int, ...] | list[int] | None = "middle",
+    mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None,
     use_short_conv: bool | None = None,
     feature_positional_embedding: str | None = None,
     config_kwargs_override: dict[str, object] | None = None,
