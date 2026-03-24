@@ -185,6 +185,24 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
+    "Oracle_Hidden_State_DeltaNet_Comb_ST": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet)",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 20,
+        "oracle_lr": 5e-2,
+        "oracle_weight_decay": 0.0,
+        "oracle_patience": 3,
+        "oracle_tolerance": 1e-5,
+        "oracle_query_batch_size": 256,
+        "oracle_selection_fraction": 0.1,
+        "oracle_verbose": False,
+        "oracle_log_every_steps": 50,
+        "eval_autocast_dtype": "bf16",
+    },
+}
+
 GATED_DELTANET_MODELS_SEQ_LEN_CHANGES: dict[str, dict[str, Any]] = {
     "seq_len_changes:Gated_DeltaNet_Comb_ST": {
         "display_name": "Gated DeltaNet (Default)",
@@ -512,6 +530,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "kda": KDA_MODELS,
     "gla": GLA_MODELS,
     "deltanet": DELTANET_MODELS,
+    "oracle_hidden_state": ORACLE_HIDDEN_STATE_MODELS,
     "deltanet_size_changes": DELTANET_MODELS_SIZE_CHANGES,
     "gated_deltanet": GATED_DELTANET_MODELS,
     "gated_deltanet_seq_len_changes": GATED_DELTANET_MODELS_SEQ_LEN_CHANGES,

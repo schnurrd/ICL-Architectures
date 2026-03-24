@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -347,7 +348,12 @@ def evaluate_models_over_seqlens(
         for model_name, model in models.items():
             config = configs[model_name]
             model_eval_mode = "forward" if model_name in forward_models_set else "fit_predict"
-            with torch.inference_mode():
+            grad_context = (
+                nullcontext()
+                if getattr(model, "requires_grad_during_eval", False)
+                else torch.inference_mode()
+            )
+            with grad_context:
                 with torch.autocast(
                     device_type=device_type,
                     enabled=is_cuda and model_name in autocast_models,
