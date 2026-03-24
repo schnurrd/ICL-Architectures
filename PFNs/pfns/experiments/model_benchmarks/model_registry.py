@@ -44,10 +44,10 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
         "eval_autocast_dtype": "fp32",
     },
-    # "Softmax_Transformer_Cat_10_Training": {
-    #     "wandb_run_id": "tabpfn_transformer/runs/m5zgo8r3",  # not finished ep
-    #     "eval_autocast_dtype": "fp16",
-    # },
+    "Softmax_Transformer_Cat_10_Training": {
+        "wandb_run_id": "tabpfn_transformer/runs/m5zgo8r3", 
+        "eval_autocast_dtype": "fp16",
+    },
     "Softmax_Transformer_No_Cat_Norm": {
         "wandb_run_id": "tabpfn_transformer/runs/ajttwh65",  
         "eval_autocast_dtype": "fp16",
@@ -314,6 +314,10 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
     #     "display_name": "Based $\\phi$ with 16-dim features",
     #     "wandb_run_id": "fla_models/runs/kxe10m62"
     # },
+    "Rebased_feat_dim_32": {
+        "display_name": "Rebased $\\phi$ with 32-dim features", # todo retrain and delete rerun
+        "wandb_run_id": "fla_models/runs/7z1vh7vl"
+    },
 }
 
 DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
