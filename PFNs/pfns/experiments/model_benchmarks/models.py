@@ -7,6 +7,8 @@ from pfns.run_logger import download_model_from_wandb
 from pfns.scripts.tabpfn_interface import load_model_workflow
 from pfns.utils import get_default_device
 
+from .oracle_hidden_state_baseline import build_oracle_hidden_state_baseline
+
 
 def load_models_for_benchmark(
     models_to_compare: dict[str, dict[str, Any]],
@@ -37,6 +39,12 @@ def load_models_for_benchmark(
                 "high_cardinality_categorical_threshold"
             ),
         )
+        if model_config.get("oracle_hidden_state_baseline"):
+            model = build_oracle_hidden_state_baseline(
+                base_model=model,
+                base_config=config,
+                model_config=model_config,
+            )
         model.eval()
         models[model_name] = model
         configs[model_name] = config
