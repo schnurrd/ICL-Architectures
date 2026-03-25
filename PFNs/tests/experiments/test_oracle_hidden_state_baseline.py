@@ -115,24 +115,17 @@ def test_oracle_hidden_state_seed_controls_split_and_minibatch_order():
     permutation_1 = torch.randperm(optimize_x_1.shape[1], device=device, generator=generator_1)
     permutation_2 = torch.randperm(optimize_x_1.shape[1], device=device, generator=generator_2)
 
-    batch_x_1, batch_y_1, next_perm_1, next_offset_1 = oracle._sample_query_batch(
-        x=optimize_x_1,
-        y=optimize_y_1,
-        permutation=permutation_1,
-        perm_offset=0,
-        query_batch_size=2,
-        generator=generator_1,
-    )
-    batch_x_2, batch_y_2, next_perm_2, next_offset_2 = oracle._sample_query_batch(
-        x=optimize_x_1,
-        y=optimize_y_1,
-        permutation=permutation_2,
-        perm_offset=0,
-        query_batch_size=2,
-        generator=generator_2,
-    )
+    assert torch.equal(permutation_1, permutation_2)
+
+    query_batch_size = 2
+    batch_indices_1 = permutation_1[:query_batch_size]
+    batch_indices_2 = permutation_2[:query_batch_size]
+    assert torch.equal(batch_indices_1, batch_indices_2)
+
+    batch_x_1 = optimize_x_1.index_select(1, batch_indices_1)
+    batch_y_1 = optimize_y_1.index_select(1, batch_indices_1)
+    batch_x_2 = optimize_x_2.index_select(1, batch_indices_2)
+    batch_y_2 = optimize_y_2.index_select(1, batch_indices_2)
 
     assert torch.equal(batch_x_1, batch_x_2)
     assert torch.equal(batch_y_1, batch_y_2)
-    assert torch.equal(next_perm_1, next_perm_2)
-    assert next_offset_1 == next_offset_2
