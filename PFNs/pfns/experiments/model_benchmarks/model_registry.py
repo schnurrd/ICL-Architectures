@@ -263,7 +263,7 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     },
     "Oracle_Hidden_State_DeltaNet_Comb_ST_higher_patience": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) Base", # reference model for oracle hidden state experiments
+        "display_name": "Oracle Hidden State (DeltaNet) Higher Patience", # reference model for oracle hidden state experiments
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 400,
         "oracle_lr": 5e-3,
