@@ -348,6 +348,11 @@ def evaluate_models_over_seqlens(
         for model_name, model in models.items():
             config = configs[model_name]
             model_eval_mode = "forward" if model_name in forward_models_set else "fit_predict"
+            optimization_config = getattr(model, "optimization_config", None)
+            evaluate_only_max_seqlen = bool(
+                getattr(optimization_config, "evaluate_only_max_seqlen", False)
+            )
+            model_seqlens = [largest_seqlen] if evaluate_only_max_seqlen else seqlen_list
             grad_context = (
                 nullcontext()
                 if getattr(model, "requires_grad_during_eval", False)
@@ -359,7 +364,7 @@ def evaluate_models_over_seqlens(
                     enabled=is_cuda and model_name in autocast_models,
                     dtype=autocast_models.get(model_name, torch.float32),
                 ):
-                    for seqlen in seqlen_list:
+                    for seqlen in model_seqlens:
                         if tables.should_skip_seqlen(model_name, seqlen):
                             continue
 
@@ -394,8 +399,21 @@ def evaluate_models_over_seqlens(
                             if memory_value is not None:
                                 tables.append_memory(model_name, memory_name, seqlen, memory_value)
 
+                        metric_seqlens = [seqlen]
+                        if (
+                            evaluate_only_max_seqlen
+                            and seqlen == largest_seqlen
+                        ):
+                            metric_seqlens = seqlen_list
+
                         for metric_name in METRIC_NAMES:
-                            tables.append_metric(model_name, metric_name, seqlen, result[metric_name])
+                            for metric_seqlen in metric_seqlens:
+                                tables.append_metric(
+                                    model_name,
+                                    metric_name,
+                                    metric_seqlen,
+                                    result[metric_name],
+                                )
 
     return {
         "schema_version": SCHEMA_VERSION,

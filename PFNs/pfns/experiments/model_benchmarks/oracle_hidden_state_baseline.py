@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import time
 from typing import Any, Mapping
 
 import torch
@@ -25,10 +26,10 @@ class OracleHiddenStateConfig:
     selection_seed: int = 42
     
     query_batch_size: int = 256
+    evaluate_only_max_seqlen: bool = False
     
     # Logging
     verbose: bool = False
-    log_every_steps: int = 50
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "OracleHiddenStateConfig":
@@ -42,7 +43,7 @@ class OracleHiddenStateConfig:
             selection_fraction=float(config.get("oracle_selection_fraction", 0.0)),
             selection_seed=int(config.get("oracle_selection_seed", 42)),
             verbose=bool(config.get("oracle_verbose", False)),
-            log_every_steps=int(config.get("oracle_log_every_steps", 50)),
+            evaluate_only_max_seqlen=bool(config.get("oracle_evaluate_only_max_seqlen", False)),
         )
 
     def __post_init__(self) -> None:
@@ -60,8 +61,6 @@ class OracleHiddenStateConfig:
             raise ValueError("oracle_query_batch_size must be >= 1")
         if not 0.0 <= self.selection_fraction < 1.0:
             raise ValueError("oracle_selection_fraction must be in [0, 1)")
-        if self.log_every_steps < 1:
-            raise ValueError("oracle_log_every_steps must be >= 1")
 
 
 class OracleHiddenStateBaseline(nn.Module):
@@ -104,21 +103,52 @@ class OracleHiddenStateBaseline(nn.Module):
             raise ValueError("No recurrent_state tensors were found in the cached FLA state.")
         return recurrent_states
 
+    @staticmethod
+    def _detach_state_value(value: Any) -> Any:
+        if torch.is_tensor(value):
+            return value.detach()
+        if isinstance(value, tuple):
+            return tuple(OracleHiddenStateBaseline._detach_state_value(v) for v in value)
+        return value
+
+    def _detach_non_recurrent_state_tensors(self, state: dict[str, Any]) -> dict[str, Any]:
+        detached = dict(state)
+        for key, value in detached.items():
+            if key == "recurrent_state":
+                continue
+            detached[key] = self._detach_state_value(value)
+        return detached
+
+    def _extract_static_layer_states(self, cache_params: Any) -> list[dict[str, Any]]:
+        static_layer_states: list[dict[str, Any]] = []
+        for layer in cache_params.layers:
+            state = getattr(layer, "state", None)
+            if not isinstance(state, dict):
+                raise TypeError("Oracle hidden-state baseline requires dict-like per-layer cache states.")
+            static_state = self._detach_non_recurrent_state_tensors(dict(state))
+            static_state.pop("recurrent_state", None)
+            static_layer_states.append(static_state)
+        return static_layer_states
+
     def _candidate_state(
         self,
         *,
         backbone_state: dict[str, Any],
         cache_params: Any,
         recurrent_states: list[torch.Tensor],
+        static_layer_states: list[dict[str, Any]],
     ) -> dict[str, Any]:
         cache_copy = FLABackbone._shallow_copy(cache_params)
         cache_copy.layers = []
-        for layer, recurrent_state in zip(cache_params.layers, recurrent_states, strict=True):
+
+        for layer, recurrent_state, static_state in zip(
+            cache_params.layers,
+            recurrent_states,
+            static_layer_states,
+            strict=True,
+        ):
             layer_copy = FLABackbone._shallow_copy(layer)
-            state = getattr(layer, "state", None)
-            if not isinstance(state, dict):
-                raise TypeError("Oracle hidden-state baseline requires dict-like per-layer cache states.")
-            layer_copy.state = FLABackbone._copy_state(state)
+            layer_copy.state = dict(static_state)
             layer_copy.state["recurrent_state"] = recurrent_state.clone()
             cache_copy.layers.append(layer_copy)
 
@@ -161,72 +191,11 @@ class OracleHiddenStateBaseline(nn.Module):
         )["standard"]
         losses = compute_losses(
             logits,
-            query_y.to(logits.device).clone(),
+            query_y.to(logits.device),
             self.criterion,
             1,
         )
         return losses.mean()
-
-    def _full_training_loss(
-        self,
-        *,
-        backbone_state: dict[str, Any],
-        x: torch.Tensor,
-        y: torch.Tensor,
-        style: torch.Tensor | None,
-        y_style: torch.Tensor | None,
-        categorical_inds: list[int] | None,
-    ) -> float:
-        total_loss = 0.0
-        total_weight = 0
-        query_batch_size = min(self.optimization_config.query_batch_size, int(x.shape[1]))
-        with torch.no_grad():
-            for start in range(0, int(x.shape[1]), query_batch_size):
-                stop = min(start + query_batch_size, int(x.shape[1]))
-                query_x = x[:, start:stop]
-                query_y = y[:, start:stop]
-                chunk_loss = self._training_loss(
-                    backbone_state=backbone_state,
-                    query_x=query_x,
-                    query_y=query_y,
-                    style=style,
-                    y_style=y_style,
-                    categorical_inds=categorical_inds,
-                )
-                weight = stop - start
-                total_loss += float(chunk_loss.item()) * weight
-                total_weight += weight
-        if total_weight == 0:
-            raise ValueError("Training sequence length must be >= 1.")
-        return total_loss / total_weight
-
-    def _sample_query_batch(
-        self,
-        *,
-        x: torch.Tensor,
-        y: torch.Tensor,
-        permutation: torch.Tensor,
-        perm_offset: int,
-        query_batch_size: int,
-        generator: torch.Generator,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
-        train_len = int(x.shape[1])
-        remaining = train_len - perm_offset
-        if remaining >= query_batch_size:
-            query_indices = permutation[perm_offset : perm_offset + query_batch_size]
-            next_permutation = permutation
-            next_offset = perm_offset + query_batch_size
-        else:
-            tail = permutation[perm_offset:]
-            next_permutation = torch.randperm(train_len, device=x.device, generator=generator)
-            needed = query_batch_size - remaining
-            head = next_permutation[:needed]
-            query_indices = torch.cat((tail, head), dim=0)
-            next_offset = needed
-
-        query_x = x.index_select(1, query_indices)
-        query_y = y.index_select(1, query_indices)
-        return query_x, query_y, next_permutation, next_offset
 
     def _train_and_val_split(
         self,
@@ -282,11 +251,25 @@ class OracleHiddenStateBaseline(nn.Module):
             train_len = int(train_x.shape[1])
             if train_len < 1:
                 raise ValueError("Training sequence length must be >= 1 after train/validation split.")
+
+            fit_start_time = time.perf_counter()
+            timing_ms: dict[str, float] = {
+                "prep": 0.0,
+                "batch": 0.0,
+                "state_build": 0.0,
+                "forward_loss": 0.0,
+                "backward": 0.0,
+                "optim_step": 0.0,
+                "eval": 0.0,
+            }
+            prep_start = time.perf_counter()
+
+            static_layer_states = self._extract_static_layer_states(cache_params)
+
             query_batch_size = min(self.optimization_config.query_batch_size, train_len)
+
             steps_per_epoch = math.ceil(train_len / query_batch_size)
-            total_steps = steps_per_epoch * self.optimization_config.num_epochs
-            optimize_generator = torch.Generator(device=x.device)
-            optimize_generator.manual_seed(self.optimization_config.selection_seed + 1)
+            timing_ms["prep"] += (time.perf_counter() - prep_start) * 1000.0
             common_kwargs = {
                 "style": style,
                 "y_style": y_style,
@@ -298,67 +281,87 @@ class OracleHiddenStateBaseline(nn.Module):
                     backbone_state=backbone_state,
                     cache_params=cache_params,
                     recurrent_states=recurrent_states,
+                    static_layer_states=static_layer_states,
                 )
 
             def val_loss() -> float:
-                return self._full_training_loss(
-                    backbone_state=candidate_state(),
-                    x=val_x,
-                    y=val_y,
-                    **common_kwargs,
-                )
-
-            def minibatch_loss(query_x: torch.Tensor, query_y: torch.Tensor) -> torch.Tensor:
-                with torch.enable_grad():
-                    loss = self._training_loss(
-                        backbone_state=candidate_state(),
-                        query_x=query_x,
-                        query_y=query_y,
-                        **common_kwargs,
-                    )
-                if not loss.requires_grad:
-                    raise RuntimeError("Oracle hidden-state optimization produced a detached loss")
-                return loss
+                total_loss = 0.0
+                total_weight = 0
+                val_query_batch_size = min(self.optimization_config.query_batch_size, int(val_x.shape[1]))
+                with torch.no_grad():
+                    step_state = candidate_state()
+                    for start in range(0, int(val_x.shape[1]), val_query_batch_size):
+                        stop = min(start + val_query_batch_size, int(val_x.shape[1]))
+                        chunk_loss = self._training_loss(
+                            backbone_state=step_state,
+                            query_x=val_x[:, start:stop],
+                            query_y=val_y[:, start:stop],
+                            **common_kwargs,
+                        )
+                        weight = stop - start
+                        total_loss += float(chunk_loss.item()) * weight
+                        total_weight += weight
+                if total_weight == 0:
+                    raise ValueError("Training sequence length must be >= 1.")
+                return total_loss / total_weight
 
             best_loss = val_loss()
             best_states = [state.detach().clone() for state in recurrent_states]
             evals_without_improvement = 0
-            permutation = torch.randperm(train_len, device=x.device, generator=optimize_generator)
-            perm_offset = 0
+            completed_steps = 0
+            processed_tokens = 0
             self._log(
                 f"initial_{selection_name}_loss={best_loss:.6f} "
                 f"train_len={train_len} val_len={int(val_x.shape[1])} "
-                f"query_batch_size={query_batch_size} total_steps={total_steps}"
+                f"query_batch_size={query_batch_size}"
             )
 
-            for step_idx in range(total_steps):
-                query_x, query_y, permutation, perm_offset = self._sample_query_batch(
-                    x=train_x,
-                    y=train_y,
-                    permutation=permutation,
-                    perm_offset=perm_offset,
-                    query_batch_size=query_batch_size,
-                    generator=optimize_generator,
-                )
-                loss = minibatch_loss(query_x, query_y)
-                loss_value = float(loss.detach().item())
+            optimize_generator = torch.Generator(device=x.device)
+            optimize_generator.manual_seed(self.optimization_config.selection_seed + 1)
 
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                optimizer.step()
+            for epoch_idx in range(1, self.optimization_config.num_epochs + 1):
+                permutation = torch.randperm(train_len, device=x.device, generator=optimize_generator)
+                for batch_idx in range(steps_per_epoch):
+                    step_idx = (epoch_idx - 1) * steps_per_epoch + batch_idx
+                    batch_start = time.perf_counter()
+                    start = batch_idx * query_batch_size
+                    stop = min(start + query_batch_size, train_len)
+                    query_indices = permutation[start:stop]
+                    query_x = train_x.index_select(1, query_indices)
+                    query_y = train_y.index_select(1, query_indices)
+                    timing_ms["batch"] += (time.perf_counter() - batch_start) * 1000.0
 
-                should_log_step = step_idx == 0 or (step_idx + 1) % self.optimization_config.log_every_steps == 0
-                if should_log_step:
-                    self._log(
-                        f"step={step_idx + 1}/{total_steps} minibatch_train_loss={loss_value:.6f}"
-                    )
+                    state_build_start = time.perf_counter()
+                    step_state = candidate_state()
+                    timing_ms["state_build"] += (time.perf_counter() - state_build_start) * 1000.0
 
-                completed_epoch = (step_idx + 1) % steps_per_epoch == 0 or (step_idx + 1) == total_steps
-                if not completed_epoch:
-                    continue
+                    forward_start = time.perf_counter()
+                    with torch.enable_grad():
+                        loss = self._training_loss(
+                            backbone_state=step_state,
+                            query_x=query_x,
+                            query_y=query_y,
+                            **common_kwargs,
+                        )
+                    if not loss.requires_grad:
+                        raise RuntimeError("Oracle hidden-state optimization produced a detached loss")
+                    timing_ms["forward_loss"] += (time.perf_counter() - forward_start) * 1000.0
 
+                    optimizer.zero_grad(set_to_none=True)
+
+                    backward_start = time.perf_counter()
+                    loss.backward()
+                    timing_ms["backward"] += (time.perf_counter() - backward_start) * 1000.0
+
+                    step_start = time.perf_counter()
+                    optimizer.step()
+                    timing_ms["optim_step"] += (time.perf_counter() - step_start) * 1000.0
+                    completed_steps = step_idx + 1
+                    processed_tokens += int(query_y.shape[1])
+
+                eval_start = time.perf_counter()
                 full_loss = val_loss()
-                epoch_idx = math.ceil((step_idx + 1) / steps_per_epoch)
+                timing_ms["eval"] += (time.perf_counter() - eval_start) * 1000.0
                 self._log(
                     f"epoch={epoch_idx} {selection_name}_loss={full_loss:.6f} "
                     f"best_{selection_name}_loss={best_loss:.6f}"
@@ -372,14 +375,36 @@ class OracleHiddenStateBaseline(nn.Module):
                 evals_without_improvement += 1
                 if evals_without_improvement >= self.optimization_config.patience:
                     self._log(
-                        f"early_stop_after={step_idx + 1} steps best_{selection_name}_loss={best_loss:.6f}"
+                        f"early_stop_after={completed_steps} steps best_{selection_name}_loss={best_loss:.6f}"
                     )
                     break
+
+            total_fit_ms = (time.perf_counter() - fit_start_time) * 1000.0
+            processed_tokens = max(1, processed_tokens)
+            tokens_per_sec = processed_tokens / max(1e-9, total_fit_ms / 1000.0)
+            tracked_total_ms = sum(timing_ms.values())
+            def _pct(name: str) -> float:
+                return 100.0 * timing_ms[name] / tracked_total_ms if tracked_total_ms > 0 else 0.0
+            self._log(
+                "timing_ms "
+                f"total={total_fit_ms:.1f} prep={timing_ms['prep']:.1f} "
+                f"batch={timing_ms['batch']:.1f} state_build={timing_ms['state_build']:.1f} "
+                f"forward_loss={timing_ms['forward_loss']:.1f} backward={timing_ms['backward']:.1f} "
+                f"optim_step={timing_ms['optim_step']:.1f} "
+                f"eval={timing_ms['eval']:.1f} tokens_per_sec={tokens_per_sec:.1f}"
+            )
+            self._log(
+                "timing_pct "
+                f"batch={_pct('batch'):.1f}% state_build={_pct('state_build'):.1f}% "
+                f"forward_loss={_pct('forward_loss'):.1f}% backward={_pct('backward'):.1f}% "
+                f"optim_step={_pct('optim_step'):.1f}% eval={_pct('eval'):.1f}%"
+            )
 
             optimized_state = self._candidate_state(
                 backbone_state=backbone_state,
                 cache_params=cache_params,
                 recurrent_states=best_states,
+                static_layer_states=static_layer_states,
             )
             return InContextState(backbone_state=optimized_state)
 
