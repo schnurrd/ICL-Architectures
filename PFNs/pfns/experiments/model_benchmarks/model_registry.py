@@ -186,21 +186,21 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
 }
 
 ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
-    # "Oracle_Hidden_State_GLA_Comb_ST_low_patience": {
-    #     **GLA_MODELS["GLA_Comb_ST"],
-    #     "display_name": "Oracle Hidden State (GLA)",
-    #     "oracle_hidden_state_baseline": True,
-    #     "oracle_num_epochs": 400,
-    #     "oracle_lr": 5e-2,
-    #     "oracle_weight_decay": 0.0,
-    #     "oracle_patience": 3,
-    #     "oracle_query_batch_size": 8000,
-    #     "oracle_selection_fraction": 0.1,
-    #     "oracle_evaluate_only_max_seqlen": True,
-    #     "oracle_verbose": False,
-    #     "oracle_log_every_steps": 50,
-    #     "eval_autocast_dtype": "bf16",
-    # },
+    "Oracle_Hidden_State_GLA_Comb_ST_base": {
+        **GLA_MODELS["GLA_Comb_ST"],
+        "display_name": "Oracle Hidden State (GLA)",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 5e-3,
+        "oracle_weight_decay": 0.0,
+        "oracle_patience": 10,
+        "oracle_query_batch_size": 8000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "oracle_log_every_steps": 200,
+        "eval_autocast_dtype": "bf16",
+    },
     "Oracle_Hidden_State_DeltaNet_Comb_ST_base": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
         "display_name": "Oracle Hidden State (DeltaNet) Base", # reference model for oracle hidden state experiments
