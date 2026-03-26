@@ -308,13 +308,7 @@ class OracleHiddenStateBaseline(nn.Module):
             best_loss = val_loss()
             best_states = [state.detach().clone() for state in recurrent_states]
             evals_without_improvement = 0
-            completed_steps = 0
             processed_tokens = 0
-            self._log(
-                f"initial_{selection_name}_loss={best_loss:.6f} "
-                f"train_len={train_len} val_len={int(val_x.shape[1])} "
-                f"query_batch_size={query_batch_size}"
-            )
 
             optimize_generator = torch.Generator(device=x.device)
             optimize_generator.manual_seed(self.optimization_config.selection_seed + 1)
@@ -322,7 +316,6 @@ class OracleHiddenStateBaseline(nn.Module):
             for epoch_idx in range(1, self.optimization_config.num_epochs + 1):
                 permutation = torch.randperm(train_len, device=x.device, generator=optimize_generator)
                 for batch_idx in range(steps_per_epoch):
-                    step_idx = (epoch_idx - 1) * steps_per_epoch + batch_idx
                     batch_start = time.perf_counter()
                     start = batch_idx * query_batch_size
                     stop = min(start + query_batch_size, train_len)
@@ -356,7 +349,6 @@ class OracleHiddenStateBaseline(nn.Module):
                     step_start = time.perf_counter()
                     optimizer.step()
                     timing_ms["optim_step"] += (time.perf_counter() - step_start) * 1000.0
-                    completed_steps = step_idx + 1
                     processed_tokens += int(query_y.shape[1])
 
                 eval_start = time.perf_counter()
@@ -374,9 +366,6 @@ class OracleHiddenStateBaseline(nn.Module):
 
                 evals_without_improvement += 1
                 if evals_without_improvement >= self.optimization_config.patience:
-                    self._log(
-                        f"early_stop_after={completed_steps} steps best_{selection_name}_loss={best_loss:.6f}"
-                    )
                     break
 
             total_fit_ms = (time.perf_counter() - fit_start_time) * 1000.0
@@ -385,21 +374,6 @@ class OracleHiddenStateBaseline(nn.Module):
             tracked_total_ms = sum(timing_ms.values())
             def _pct(name: str) -> float:
                 return 100.0 * timing_ms[name] / tracked_total_ms if tracked_total_ms > 0 else 0.0
-            self._log(
-                "timing_ms "
-                f"total={total_fit_ms:.1f} prep={timing_ms['prep']:.1f} "
-                f"batch={timing_ms['batch']:.1f} state_build={timing_ms['state_build']:.1f} "
-                f"forward_loss={timing_ms['forward_loss']:.1f} backward={timing_ms['backward']:.1f} "
-                f"optim_step={timing_ms['optim_step']:.1f} "
-                f"eval={timing_ms['eval']:.1f} tokens_per_sec={tokens_per_sec:.1f}"
-            )
-            self._log(
-                "timing_pct "
-                f"batch={_pct('batch'):.1f}% state_build={_pct('state_build'):.1f}% "
-                f"forward_loss={_pct('forward_loss'):.1f}% backward={_pct('backward'):.1f}% "
-                f"optim_step={_pct('optim_step'):.1f}% eval={_pct('eval'):.1f}%"
-            )
-
             optimized_state = self._candidate_state(
                 backbone_state=backbone_state,
                 cache_params=cache_params,
