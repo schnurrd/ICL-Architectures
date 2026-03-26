@@ -47,6 +47,11 @@ def _set_encoder_decoder_identity_(encoder: nn.Linear, decoder: nn.Linear) -> No
         dec_out, dec_in = decoder.weight.shape
         if enc_out != dec_in or enc_in != dec_out:
             raise ValueError("Encoder/decoder shapes must compose back to the input size.")
+        if enc_out < enc_in:
+            raise ValueError(
+                "Cannot build identity composition when encoder out_features < in_features "
+                f"(got {enc_out} < {enc_in})."
+            )
 
         counts = torch.zeros(enc_in, device=encoder.weight.device, dtype=torch.int64)
         for row in range(enc_out):
