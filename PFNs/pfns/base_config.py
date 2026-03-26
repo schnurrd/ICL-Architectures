@@ -123,10 +123,25 @@ class BaseConfig:
         module_name, class_name = config_type.split(":")
         mod = importlib.import_module(module_name)
         cls = getattr(mod, class_name)
+        allowed_fields = None
+        if is_dataclass(cls):
+            allowed_fields = {f.name for f in fields(cls)}
+        ignored_fields: list[str] = []
 
         # Recursively build nested configs
         processed_data = {}
         for k, v in data.items():
+            if allowed_fields is not None and k not in allowed_fields:
+                ignored_fields.append(k)
+                continue
             processed_data[k] = BaseConfig.from_dict(v)
+
+        if ignored_fields:
+            print("------")
+            print(
+                f"Ignoring unexpected config fields for {config_type}: "
+                f"{sorted(ignored_fields)}"
+            )
+            print("------")
 
         return cls(**processed_data)

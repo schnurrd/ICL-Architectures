@@ -637,6 +637,22 @@ MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Mimetic GLA Comb ST (Improved, All Layers)",
         "wandb_run_id": "fla_models/runs/7mkque2f",
     },
+    "mimetic:GLA_Comb_ST_New_Simple": {
+        "display_name": "Mimetic GLA Comb ST (New Simple)",
+        "wandb_run_id": "fla_models/runs/cubna8dc",
+    },
+    "mimetic:Gated_DeltaNet_Comb_ST_Ref": {
+        "display_name": "Gated DeltaNet Comb ST (Reference)",
+        "wandb_run_id": "fla_models/runs/nv19z5jw",
+    },
+    "mimetic:Gated_DeltaNet_Comb_ST_Improved": {
+        "display_name": "Mimetic Gated DeltaNet Comb ST (Improved)",
+        "wandb_run_id": "fla_models/runs/h83z2jq5",
+    },
+    "mimetic:Gated_DeltaNet_Comb_ST_New_Simple": {
+        "display_name": "Mimetic Gated DeltaNet Comb ST (New Simple)",
+        "wandb_run_id": "fla_models/runs/h83z2jq5",
+    },
 }
 
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
