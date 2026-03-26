@@ -203,7 +203,7 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     },
     "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) Base", # reference model for oracle hidden state experiments
+        "display_name": "Oracle Hidden State (DeltaNet) New Base",
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 400,
         "oracle_lr": 3e-3,
@@ -217,7 +217,7 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     },
     "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base_lower_batch_size": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) Base", # reference model for oracle hidden state experiments
+        "display_name": "Oracle Hidden State (DeltaNet) New Base + Lower Batch Size",
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 400,
         "oracle_lr": 3e-3,
