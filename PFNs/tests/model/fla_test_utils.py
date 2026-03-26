@@ -17,7 +17,7 @@ def _filter_model_types(model_types: tuple[str, ...]) -> tuple[str, ...]:
 
 
 FLA_MODEL_TYPES = _filter_model_types(
-    ("gla", "kda", "deltanet", "gated_deltanet", "mamba2")
+    ("gla", "kda", "deltanet", "gated_deltanet", "mamba2", "linear_attn")
 )
 
 
@@ -102,6 +102,21 @@ def fla_model_config_kwargs(
             "use_cache": True,
             "use_short_conv": True,
         }
+    if model_type == "linear_attn":
+        return {
+            "attn_mode": "fused_recurrent",
+            "hidden_size": hidden_size,
+            "num_hidden_layers": num_layers,
+            "num_heads": num_heads,
+            "intermediate_size": intermediate_size,
+            "feature_map": "identity",
+            "norm_q": False,
+            "norm_k": False,
+            "norm_feature_map": False,
+            "hidden_act": "swish",
+            "norm_eps": 1e-5,
+            "use_cache": True,
+        }
     raise ValueError(f"Unsupported model_type: {model_type}")
 
 
@@ -130,7 +145,7 @@ def build_fla_backbone(
     sequence_mode: str = "Comb_ST",
     cache_chunk_size: int | None = None,
     mimetic_init: bool = False,
-    mimetic_init_layer_indices: tp.Literal["middle"] | tuple[int, ...] | list[int] | None = "middle",
+    mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None,
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig

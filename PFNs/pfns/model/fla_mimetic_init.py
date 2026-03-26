@@ -133,11 +133,20 @@ def apply_mimetic_fla_init(
             f"{type(model).__name__}, but found none."
         )
 
-    selected = None if layer_indices is None else set(layer_indices)
+    selected: set[int]
+    if layer_indices is None:
+        selected = set(range(len(supported_layers)))
+    elif isinstance(layer_indices, str):
+        raise ValueError(
+            "layer_indices must be an iterable of ints or None; "
+            f"got {layer_indices!r}."
+        )
+    else:
+        selected = {int(idx) for idx in layer_indices}
     applied_any = False
 
     for layer_idx, module in enumerate(supported_layers):
-        if selected is not None and layer_idx not in selected:
+        if layer_idx not in selected:
             continue
 
         if isinstance(module, GatedLinearAttention):

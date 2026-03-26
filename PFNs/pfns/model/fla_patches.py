@@ -702,18 +702,41 @@ def _maybe_patch_mamba2_with_stateless_recurrent(
         cache_params=None,
         cache_position=None,
         attention_mask=None,
+        past_key_values=None,
+        use_cache: bool | None = None,
+        output_attentions: bool | None = None,
         **kwargs
     ):
-        assert cache_params is not None, "Stateless mamba2 requires cache_params."
+        # Accepted for API compatibility with upstream Mamba2.forward, but unused here.
+        del cache_position
+        if cache_params is None:
+            cache_params = past_key_values
+        assert cache_params is not None, "Stateless mamba2 requires cached state."
         assert attention_mask is None, "stateless mamba2 patch does not support attention_mask."
+        assert output_attentions in (None, False), (
+            "stateless mamba2 patch does not support output_attentions=True."
+        )
+        assert use_cache is not False, "stateless mamba2 patch expects use_cache=True."
         assert not kwargs, f"Unsupported extra args for stateless mamba2 patch: {sorted(kwargs)}"
-        assert cache_position is not None, "stateless mamba2 patch requires cache_position."
-        assert cache_position.numel() > 0, "cache_position must be non-empty."
         
         dtype = hidden_states.dtype
         orig_batch, seq_len, _ = hidden_states.shape
         assert seq_len == 1, "stateless mamba2 patch only supports decode-like seq_len=1."
-        cache_batch = cache_params.conv_states[self.layer_idx].shape[0]
+        if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):
+            conv_state_layer = cache_params.conv_states[self.layer_idx]
+            recurrent_state_layer = cache_params.ssm_states[self.layer_idx]
+        elif hasattr(cache_params, "layers"):
+            layer_cache = cache_params.layers[self.layer_idx]
+            layer_state = getattr(layer_cache, "state", None)
+            assert isinstance(layer_state, dict), "Mamba2 cache layer state must be a dict."
+            conv_state_layer = layer_state.get("conv_state", None)
+            recurrent_state_layer = layer_state.get("recurrent_state", None)
+            assert conv_state_layer is not None, "Missing conv_state in Mamba2 cache layer state."
+            assert recurrent_state_layer is not None, "Missing recurrent_state in Mamba2 cache layer state."
+        else:
+            raise AssertionError("Unsupported Mamba2 cache_params structure.")
+
+        cache_batch = conv_state_layer.shape[0]
         assert orig_batch % cache_batch == 0
         flat_len = orig_batch // cache_batch  # number of test samples per cache entry
         
@@ -727,7 +750,7 @@ def _maybe_patch_mamba2_with_stateless_recurrent(
         
         # Short convolution: prepend cached history and apply depthwise conv
         hidden_states_B_C = hidden_states_B_C.view(cache_batch, flat_len, seq_len, -1)
-        conv_state = cache_params.conv_states[self.layer_idx].float()  # (cache_batch, conv_dim, kernel_size)
+        conv_state = conv_state_layer.float()  # (cache_batch, conv_dim, kernel_size)
         x_transposed = hidden_states_B_C.transpose(2, 3)  # (cache_batch, flat_len, conv_dim, seq_len=1)
         hist_len = self.conv_kernel_size - 1
         if hist_len > 0:
@@ -759,7 +782,7 @@ def _maybe_patch_mamba2_with_stateless_recurrent(
         dt = F.softplus(dt + self.dt_bias.float())  # (cache_batch, flat_len, seq_len, num_heads)
         dt = torch.clamp(dt, self.time_step_limit[0], self.time_step_limit[1])
         A_bar = torch.exp(A.view(1, 1, 1, -1) * dt).unsqueeze(-1)  # (cache_batch, flat_len, seq_len, num_heads, 1)
-        h0 = cache_params.ssm_states[self.layer_idx].float()  # (cache_batch, num_heads, head_dim, ssm_state_size)
+        h0 = recurrent_state_layer.float()  # (cache_batch, num_heads, head_dim, ssm_state_size)
         
         # Expand B, C from n_groups to num_heads
         assert self.num_heads % self.n_groups == 0, "num_heads must be divisible by n_groups."
@@ -783,10 +806,91 @@ def _maybe_patch_mamba2_with_stateless_recurrent(
         # Reshape and apply output projection with gating
         y = y.reshape(cache_batch * flat_len, seq_len, self.intermediate_size)
         gate = gate.reshape(cache_batch * flat_len, seq_len, self.intermediate_size)
-        return self.out_proj(self.norm(y, gate)).to(dtype)
+        hidden_states = self.out_proj(self.norm(y, gate)).to(dtype)
+        return hidden_states, None, past_key_values
 
     mamba_module.Mamba2.forward = _stateless_forward
     try:
         yield
     finally:
         mamba_module.Mamba2.forward = original_forward
+
+
+@contextmanager
+def _maybe_patch_linear_attn_with_stateless_recurrent(
+    enabled: bool,
+):
+    """Patch linear-attention kernels for stateless decode (GLA-style)."""
+    if not enabled:
+        yield
+        return
+    import fla.layers.linear_attn as linear_attn_layer
+
+    @torch.compiler.disable
+    def _stateless_linear_attn_kernel(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        normalize: bool = False,
+        scale: float | None = None,
+        initial_state: torch.Tensor | None = None,
+        output_final_state: bool = False,
+        reverse: bool = False,
+        head_first: bool = False,
+        cu_seqlens: torch.LongTensor | None = None,
+        offsets: torch.LongTensor | None = None,
+        indices: torch.LongTensor | None = None,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        assert not kwargs, f"Unsupported extra args for stateless linear_attn patch: {sorted(kwargs)}"
+        assert not reverse, "stateless linear_attn patch does not support reverse=True."
+        assert not head_first, "stateless linear_attn patch expects head_first=False."
+        assert cu_seqlens is None, "stateless linear_attn patch does not support cu_seqlens."
+        assert offsets is None, "stateless linear_attn patch does not support offsets."
+        assert indices is None, "stateless linear_attn patch does not support indices."
+        assert initial_state is not None, "stateless linear_attn patch requires initial_state."
+        assert q.shape[1] == 1, "stateless linear_attn patch only supports decode-like T=1."
+
+        del normalize
+        dtype = q.dtype
+        if scale is None:
+            scale = q.shape[-1] ** -0.5
+
+        qf = (q * scale).float()
+        kf = k.float()
+        vf = v.float()
+        h0 = initial_state.float()
+
+        orig_batch = qf.shape[0]
+        cache_batch = h0.shape[0]
+        if orig_batch != cache_batch:
+            assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
+            flat_len = orig_batch // cache_batch
+            qf = qf.reshape(cache_batch, flat_len, *qf.shape[1:])
+            kf = kf.reshape(cache_batch, flat_len, *kf.shape[1:])
+            vf = vf.reshape(cache_batch, flat_len, *vf.shape[1:])
+
+        if qf.ndim == 5:
+            o = torch.einsum("blthk,bhkv->blthv", qf, h0)
+        else:
+            o = torch.einsum("bthk,bhkv->bthv", qf, h0)
+        o = o + (qf * kf).sum(-1, keepdim=True) * vf
+
+        if orig_batch != cache_batch:
+            o = o.reshape(orig_batch, *o.shape[2:])
+
+        final_state = initial_state if output_final_state else None
+        return o.to(dtype), final_state
+
+    original_fused_recurrent = linear_attn_layer.fused_recurrent_linear_attn
+    original_chunk = linear_attn_layer.chunk_linear_attn
+    original_fused_chunk = linear_attn_layer.fused_chunk_linear_attn
+    linear_attn_layer.fused_recurrent_linear_attn = _stateless_linear_attn_kernel
+    linear_attn_layer.chunk_linear_attn = _stateless_linear_attn_kernel
+    linear_attn_layer.fused_chunk_linear_attn = _stateless_linear_attn_kernel
+    try:
+        yield
+    finally:
+        linear_attn_layer.fused_recurrent_linear_attn = original_fused_recurrent
+        linear_attn_layer.chunk_linear_attn = original_chunk
+        linear_attn_layer.fused_chunk_linear_attn = original_fused_chunk

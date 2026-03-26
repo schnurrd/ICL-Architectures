@@ -20,6 +20,7 @@ from fla.models import Mamba2Config, Mamba2Model
 from fla.models import KDAConfig, KDAModel
 from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
+from fla.models import LinearAttentionConfig, LinearAttentionModel
 
 from pfns import base_config
 from pfns.model.fla_mimetic_init import apply_mimetic_fla_init
@@ -29,6 +30,7 @@ from pfns.model.fla_patches import (
     _maybe_patch_deltanet_with_stateless_recurrent,
     _maybe_patch_gated_deltanet_with_stateless_recurrent,
     _maybe_patch_mamba2_with_stateless_recurrent,
+    _maybe_patch_linear_attn_with_stateless_recurrent,
     _maybe_patch_shortconv_forward_pytorch,
 )
 from pfns.model.layer import PerFeatureLayer
@@ -46,13 +48,9 @@ FLA_MODEL_REGISTRY = {
     "kda": (KDAConfig, KDAModel),
     "deltanet": (DeltaNetConfig, DeltaNetModel),
     "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
+    "linear_attn": (LinearAttentionConfig, LinearAttentionModel),
 }
-_FLA_PAST_KEY_VALUES_MODELS: tuple[type[nn.Module], ...] = (
-    GLAModel,
-    KDAModel,
-    DeltaNetModel,
-    GatedDeltaNetModel,
-)
+
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 
 
@@ -330,13 +328,13 @@ class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
     model_type: tp.Literal[
-        "gla", "mamba2", "kda", "deltanet", "gated_deltanet"
-    ] = "gla"
+        "gla", "mamba2", "kda", "deltanet", "gated_deltanet", "linear_attn"
+    ] = "linear_attn"
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
     mimetic_init: bool = False
-    mimetic_init_layer_indices: tp.Literal["middle"] | tuple[int, ...] | list[int] | None = "middle"
+    mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     # Backward-compatibility only: older checkpoints may serialize this field.
     # It is ignored by FLABackbone and has no effect on training/inference.
     deltanet_state_reg_weight: float | None = None
@@ -381,6 +379,15 @@ class FLABackboneConfig(BackboneConfig):
 
 class FLABackbone(Backbone):
     """Wrapper for FLA models to conform to Backbone interface."""
+
+    _CUSTOM_RECURRENT_MODELS: tuple[type[nn.Module], ...] = (
+        GLAModel,
+        KDAModel,
+        DeltaNetModel,
+        GatedDeltaNetModel,
+        Mamba2Model,
+        LinearAttentionModel,
+    )
 
     def __init__(
         self,
@@ -443,7 +450,7 @@ class FLABackbone(Backbone):
         def _repeat_value(value: tp.Any) -> tp.Any:
             if torch.is_tensor(value):
                 if repeat == 1:
-                    return value
+                    return value.clone()
                 return value.repeat_interleave(repeat, dim=dim)
             if isinstance(value, tuple):
                 return tuple(_repeat_value(item) for item in value)
@@ -468,13 +475,13 @@ class FLABackbone(Backbone):
             return None
         if torch.is_tensor(cache_params):
             if repeat == 1:
-                return cache_params
+                return cache_params.clone()
             return cache_params.repeat_interleave(repeat, dim=0)
         if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):  # Mamba2 style
             cache_params_copy = FLABackbone._shallow_copy(cache_params)
             if repeat == 1:
-                cache_params_copy.conv_states = cache_params.conv_states
-                cache_params_copy.ssm_states = cache_params.ssm_states
+                cache_params_copy.conv_states = cache_params.conv_states.clone()
+                cache_params_copy.ssm_states = cache_params.ssm_states.clone()
             else:
                 cache_params_copy.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
                 cache_params_copy.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
@@ -609,18 +616,7 @@ class FLABackbone(Backbone):
         )
         kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": use_cache}
         if cache_params is not None:
-            if isinstance(self.fla, Mamba2Model):
-                kwargs["cache_params"] = cache_params
-                if cache_position_start is None:
-                    raise ValueError(
-                        "cache_position_start is required for Mamba2 when cache_params is provided."
-                    )
-                kwargs["cache_position"] = torch.arange(
-                    cache_position_start,
-                    cache_position_start + x.size(1),
-                    device=x.device,
-                ).unsqueeze(0).expand(x.size(0), -1)
-            elif isinstance(self.fla, _FLA_PAST_KEY_VALUES_MODELS):
+            if isinstance(self.fla, self._CUSTOM_RECURRENT_MODELS):
                 kwargs["past_key_values"] = cache_params
             else:
                 raise ValueError("Unsupported FLA model type for cache_params.")
@@ -667,28 +663,28 @@ class FLABackbone(Backbone):
         model = self.fla
         contexts: list[tp.ContextManager[tp.Any]] = []
         contexts.append(_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv or use_custom_recurrent))
-        if not use_custom_recurrent:
-            return contexts
 
         patch_registry: tuple[
             tuple[
-                type[nn.Module] | tuple[type[nn.Module], ...],
+                type[nn.Module],
                 tp.Callable[..., tp.ContextManager[tp.Any]],
             ],
             ...,
         ] = (
-            ((GLAModel,), _maybe_patch_gla_with_stateless_recurrent),
-            ((KDAModel,), _maybe_patch_kda_with_stateless_recurrent),
-            ((DeltaNetModel,), _maybe_patch_deltanet_with_stateless_recurrent),
-            ((GatedDeltaNetModel,), _maybe_patch_gated_deltanet_with_stateless_recurrent),
-            ((Mamba2Model,), _maybe_patch_mamba2_with_stateless_recurrent),
+            (GLAModel, _maybe_patch_gla_with_stateless_recurrent),
+            (KDAModel, _maybe_patch_kda_with_stateless_recurrent),
+            (DeltaNetModel, _maybe_patch_deltanet_with_stateless_recurrent),
+            (GatedDeltaNetModel, _maybe_patch_gated_deltanet_with_stateless_recurrent),
+            (Mamba2Model, _maybe_patch_mamba2_with_stateless_recurrent),
+            (LinearAttentionModel, _maybe_patch_linear_attn_with_stateless_recurrent),
         )
-        for model_types, ctx_factory in patch_registry:
-            if isinstance(model, model_types):
-                contexts.append(
-                    ctx_factory(True)
-                )
+        for model_type, ctx_factory in patch_registry:
+            if isinstance(model, model_type):
+                contexts.append(ctx_factory(use_custom_recurrent))
         return contexts
+
+    def _supports_custom_recurrent(self) -> bool:
+        return isinstance(self.fla, self._CUSTOM_RECURRENT_MODELS)
 
     def _run_test_with_cache(
         self,
@@ -709,13 +705,11 @@ class FLABackbone(Backbone):
             cache_position_start = getattr(cache_params, "_cache_position_start", None)
 
         batch_size, seq_len, embed_dim = test_x.shape
-        
+        supports_custom_recurrent = self._supports_custom_recurrent()
+
         def _run_parallel_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
             chunk_len = chunk_x.size(1)
-            
-            if not use_custom_recurrent or not isinstance(
-                self.fla, (GLAModel, KDAModel, DeltaNetModel, GatedDeltaNetModel, Mamba2Model)
-            ):
+            if not use_custom_recurrent or not supports_custom_recurrent:
                 expanded_cache = self._repeat_cache(cache_params, chunk_len)
             else:
                 expanded_cache = cache_params
