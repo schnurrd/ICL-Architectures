@@ -2,6 +2,8 @@ import pytest
 import torch
 
 pytest.importorskip("fla")
+from fla.layers.gla import fused_recurrent_gla
+from fla.layers.linear_attn import fused_recurrent_linear_attn
 
 from pfns.model.fla_patches import (
     _maybe_patch_shortconv_forward_pytorch,
@@ -13,6 +15,47 @@ from tests.model.fla_test_utils import (
     fla_hidden_size,
     fla_tolerances,
 )
+
+
+def test_fla_linear_attn_matches_gla_without_gating():
+    if not torch.cuda.is_available():
+        pytest.skip("FLA backend requires CUDA/Triton for this test.")
+
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+
+    batch_size = 2
+    seq_len = 7
+    num_heads = 3
+    key_dim = 8
+    value_dim = 6
+
+    q = torch.randn(batch_size, seq_len, num_heads, key_dim, device=device)
+    k = torch.randn(batch_size, seq_len, num_heads, key_dim, device=device)
+    v = torch.randn(batch_size, seq_len, num_heads, value_dim, device=device)
+    initial_state = torch.randn(batch_size, num_heads, key_dim, value_dim, device=device)
+
+    out_linear, final_state_linear = fused_recurrent_linear_attn(
+        q,
+        k,
+        v,
+        initial_state=initial_state,
+        output_final_state=True,
+        normalize=False,
+    )
+
+    neutral_gate = torch.zeros(batch_size, seq_len, num_heads, key_dim, device=device)
+    out_gla, final_state_gla = fused_recurrent_gla(
+        q,
+        k,
+        v,
+        gk=neutral_gate,
+        initial_state=initial_state,
+        output_final_state=True,
+    )
+
+    torch.testing.assert_close(out_linear, out_gla, rtol=0.0, atol=0.0)
+    torch.testing.assert_close(final_state_linear, final_state_gla, rtol=0.0, atol=0.0)
 
 
 @pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
@@ -223,25 +266,15 @@ def test_stateless_matches_repeated_cache_outputs_and_grads(model_type: str):
 
     repeated_cache = backbone_reference._repeat_cache(past_ref, test_len)
     test_x_flat = test_x_ref.contiguous().view(batch_size * num_tokens * test_len, 1, embed_dim)
-    
-    if model_type == "mamba2":
-        # Mamba2 uses cache_params (not past_key_values) and requires use_cache=True
-        cache_position = torch.arange(train_len, train_len + 1, device=device).unsqueeze(0).expand(test_x_flat.size(0), -1)
-        out_ref = backbone_reference.fla(
-            inputs_embeds=test_x_flat,
-            cache_params=repeated_cache,
-            cache_position=cache_position,
-            use_cache=True,
-            return_dict=True,
-        ).last_hidden_state
-    else:
-        with _maybe_patch_shortconv_forward_pytorch(True):
-            out_ref = backbone_reference.fla(
-                inputs_embeds=test_x_flat,
-                past_key_values=repeated_cache,
-                use_cache=False,
-                return_dict=True,
-            ).last_hidden_state
+
+    out_ref, _ = backbone_reference._run_fla(
+        test_x_flat,
+        cache_params=repeated_cache,
+        cache_position_start=train_len,
+        return_cache=False,
+        use_custom_recurrent=False,
+        use_custom_shortconv=True,
+    )
     out_ref = out_ref.view(batch_size * num_tokens, test_len, embed_dim)
     
     out_ref.sum().backward()
