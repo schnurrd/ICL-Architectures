@@ -164,7 +164,7 @@ MODEL_SETTINGS = {
         "emsize": 320,
         "config_kwargs": {
             # Closest linear-attention analogue of GLA with gates fixed to 1.
-            "attn_mode": "fused_recurrent",
+            "attn_mode": "chunk",
             "hidden_size": 320,
             "num_hidden_layers": 12,
             "num_heads": 4,
