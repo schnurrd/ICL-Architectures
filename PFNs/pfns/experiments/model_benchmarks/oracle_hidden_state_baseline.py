@@ -264,8 +264,9 @@ class OracleHiddenStateBaseline(nn.Module):
                     # For random init, we only need cache structure/shapes, not a full-data fitted state.
                     if x.shape[1] < 1 or y.shape[1] < 1:
                         raise ValueError("Random-init oracle requires sequence length >= 1 to bootstrap cache shapes.")
-                    fit_x = torch.zeros_like(x[:, :1])
-                    fit_y = torch.zeros_like(y[:, :1])
+                    bootstrap_len = min(2, x.shape[1], y.shape[1])
+                    fit_x = torch.nan_to_num(x[:, :bootstrap_len], nan=0.0, posinf=0.0, neginf=0.0)
+                    fit_y = torch.nan_to_num(y[:, :bootstrap_len], nan=0.0, posinf=0.0, neginf=0.0)
                 initial_state = self.base_model.incontext_fit(
                     x=fit_x,
                     y=fit_y,
