@@ -103,9 +103,6 @@ class OracleHiddenStateBaseline(nn.Module):
             raise TypeError("Oracle hidden-state baseline requires an FLA cache with per-layer states.")
 
         generator = None
-        if self.optimization_config.random_init_hidden_state:
-            generator = torch.Generator(device=self.base_model.device)
-            generator.manual_seed(self.optimization_config.random_init_seed)
 
         recurrent_states: list[nn.Parameter] = []
         for layer in cache_params.layers:
@@ -117,6 +114,9 @@ class OracleHiddenStateBaseline(nn.Module):
                     "state['recurrent_state']."
                 )
             if self.optimization_config.random_init_hidden_state:
+                if generator is None:
+                    generator = torch.Generator(device=recurrent_state.device)
+                    generator.manual_seed(self.optimization_config.random_init_seed)
                 initialized = torch.randn(
                     recurrent_state.shape,
                     dtype=recurrent_state.dtype,
