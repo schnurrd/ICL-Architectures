@@ -27,6 +27,11 @@ class OracleHiddenStateConfig:
     
     query_batch_size: int = 256
     evaluate_only_max_seqlen: bool = False
+
+    # Hidden-state initialization for optimization variables
+    random_init_hidden_state: bool = False
+    random_init_std: float = 1.0
+    random_init_seed: int = 42
     
     # Logging
     verbose: bool = False
@@ -42,6 +47,9 @@ class OracleHiddenStateConfig:
             query_batch_size=int(config.get("oracle_query_batch_size", 256)),
             selection_fraction=float(config.get("oracle_selection_fraction", 0.0)),
             selection_seed=int(config.get("oracle_selection_seed", 42)),
+            random_init_hidden_state=bool(config.get("oracle_random_init_hidden_state", False)),
+            random_init_std=float(config.get("oracle_random_init_std", 1.0)),
+            random_init_seed=int(config.get("oracle_random_init_seed", 42)),
             verbose=bool(config.get("oracle_verbose", False)),
             evaluate_only_max_seqlen=bool(config.get("oracle_evaluate_only_max_seqlen", False)),
         )
@@ -61,6 +69,8 @@ class OracleHiddenStateConfig:
             raise ValueError("oracle_query_batch_size must be >= 1")
         if not 0.0 <= self.selection_fraction < 1.0:
             raise ValueError("oracle_selection_fraction must be in [0, 1)")
+        if self.random_init_std <= 0:
+            raise ValueError("oracle_random_init_std must be > 0")
 
 
 class OracleHiddenStateBaseline(nn.Module):
@@ -85,9 +95,17 @@ class OracleHiddenStateBaseline(nn.Module):
         if self.optimization_config.verbose:
             print(f"OracleHiddenStateBaseline: {message}")
 
-    def _extract_recurrent_states(self, cache_params: Any) -> list[nn.Parameter]:
+    def _extract_recurrent_states(
+        self,
+        cache_params: Any,
+    ) -> list[nn.Parameter]:
         if not hasattr(cache_params, "layers"):
             raise TypeError("Oracle hidden-state baseline requires an FLA cache with per-layer states.")
+
+        generator = None
+        if self.optimization_config.random_init_hidden_state:
+            generator = torch.Generator(device=self.base_model.device)
+            generator.manual_seed(self.optimization_config.random_init_seed)
 
         recurrent_states: list[nn.Parameter] = []
         for layer in cache_params.layers:
@@ -98,7 +116,16 @@ class OracleHiddenStateBaseline(nn.Module):
                     "Oracle hidden-state baseline requires each layer cache to expose "
                     "state['recurrent_state']."
                 )
-            recurrent_states.append(nn.Parameter(recurrent_state.detach().clone()))
+            if self.optimization_config.random_init_hidden_state:
+                initialized = torch.randn(
+                    recurrent_state.shape,
+                    dtype=recurrent_state.dtype,
+                    device=recurrent_state.device,
+                    generator=generator,
+                ) * self.optimization_config.random_init_std
+                recurrent_states.append(nn.Parameter(initialized))
+            else:
+                recurrent_states.append(nn.Parameter(recurrent_state.detach().clone()))
         if not recurrent_states:
             raise ValueError("No recurrent_state tensors were found in the cached FLA state.")
         return recurrent_states
@@ -232,15 +259,23 @@ class OracleHiddenStateBaseline(nn.Module):
     ) -> InContextState:
         with torch.inference_mode(False):
             with torch.no_grad():
+                fit_x, fit_y = x, y
+                if self.optimization_config.random_init_hidden_state:
+                    # For random init, we only need cache structure/shapes, not a full-data fitted state.
+                    if x.shape[1] < 1 or y.shape[1] < 1:
+                        raise ValueError("Random-init oracle requires sequence length >= 1 to bootstrap cache shapes.")
+                    fit_x, fit_y = x[:, :1], y[:, :1]
                 initial_state = self.base_model.incontext_fit(
-                    x=x,
-                    y=y,
+                    x=fit_x,
+                    y=fit_y,
                     style=style,
                     y_style=y_style,
                     categorical_inds=categorical_inds,
                 )
+
             backbone_state = dict(initial_state.backbone_state)
             cache_params = backbone_state.get("cache_params")
+            static_layer_states = self._extract_static_layer_states(cache_params)
             recurrent_states = self._extract_recurrent_states(cache_params)
             optimizer = torch.optim.AdamW(
                 recurrent_states,
@@ -263,8 +298,6 @@ class OracleHiddenStateBaseline(nn.Module):
                 "eval": 0.0,
             }
             prep_start = time.perf_counter()
-
-            static_layer_states = self._extract_static_layer_states(cache_params)
 
             query_batch_size = min(self.optimization_config.query_batch_size, train_len)
 
