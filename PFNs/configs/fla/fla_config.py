@@ -215,6 +215,7 @@ def get_config(
     # Model options
     cache_chunk_size: int | None = None,
     mimetic_init: bool = False,
+    mimetic_gates_only: bool = True,
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None,
     use_short_conv: bool | None = None,
     feature_positional_embedding: str | None = None,
@@ -339,6 +340,7 @@ def get_config(
         "config_kwargs": resolved_config_kwargs,
         "sequence_mode": sequence_mode,
         "mimetic_init": mimetic_init,
+        "mimetic_gates_only": mimetic_gates_only,
         "mimetic_init_layer_indices": mimetic_init_layer_indices,
     }
     if cache_chunk_size is not None:
