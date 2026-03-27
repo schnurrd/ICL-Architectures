@@ -335,6 +335,7 @@ class FLABackboneConfig(BackboneConfig):
     cache_chunk_size: int | None = None
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
+    mimetic_gates_only: bool = True
     # Backward-compatibility only: older checkpoints may serialize this field.
     # It is ignored by FLABackbone and has no effect on training/inference.
     deltanet_state_reg_weight: float | None = None
@@ -368,7 +369,11 @@ class FLABackboneConfig(BackboneConfig):
         fla_model = ModelClass(config)
         if self.mimetic_init:
             layer_indices = self.mimetic_init_layer_indices
-            apply_mimetic_fla_init(fla_model, layer_indices=layer_indices)
+            apply_mimetic_fla_init(
+                fla_model,
+                layer_indices=layer_indices,
+                gates_only=self.mimetic_gates_only,
+            )
 
         return FLABackbone(
             fla_model=fla_model,

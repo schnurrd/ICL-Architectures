@@ -13,6 +13,8 @@ from fla.layers.gla import GatedLinearAttention
 _MIMETIC_OPEN_GATE_BIAS = 6.0
 _MIMETIC_A_LOG = -8.0
 _MIMETIC_DT_BIAS = float(torch.log(torch.expm1(torch.tensor(1.0, dtype=torch.float32))))
+_MIMETIC_OUTPUT_GATE_SWISH_NEUTRAL_BIAS = 1.27846 # -> swish(1.27846) ~ 1.0
+_SUPPORTED_LAYER_TYPES = (GatedLinearAttention, GatedDeltaNet)
 
 def _zero_linear_(linear: nn.Linear, *, bias_value: float = 0.0) -> None:
     with torch.no_grad():
@@ -78,6 +80,27 @@ def _zero_gate_(module: nn.Module, *, final_bias_value: float = 0.0) -> None:
         )
 
 
+def _neutralize_gla_output_gate_(module: GatedLinearAttention) -> None:
+    """Set output gate projection so swish(g_proj(x)) is near 1 at init.
+
+    Implementation: biasful g_proj with zero weights and constant bias.
+    """
+    if not getattr(module, "use_output_gate", False) or not hasattr(module, "g_proj"):
+        return
+
+    g_proj = module.g_proj
+    if not isinstance(g_proj, nn.Linear):
+        return
+
+    if g_proj.bias is None:
+        replacement = nn.Linear(g_proj.in_features, g_proj.out_features, bias=True)
+        replacement = replacement.to(device=g_proj.weight.device, dtype=g_proj.weight.dtype)
+        module.g_proj = replacement
+        g_proj = module.g_proj
+
+    _zero_linear_(g_proj, bias_value=_MIMETIC_OUTPUT_GATE_SWISH_NEUTRAL_BIAS)
+
+
 def _set_causal_identity_short_conv_(conv: nn.Conv1d) -> None:
     with torch.no_grad():
         conv.weight.zero_()
@@ -113,6 +136,7 @@ def apply_mimetic_fla_init(
     layer_indices: Iterable[int] | None = None,
     qk_perturb_std: float = 0.0,
     allow_short_conv: bool = True,
+    gates_only: bool = True,
 ) -> None:
     """
     Apply mimetic init to selected supported FLA layers.
@@ -122,6 +146,9 @@ def apply_mimetic_fla_init(
         layer_indices: Supported-layer indices to initialize. None initializes all.
         qk_perturb_std: Optional Gaussian stddev added to q/k weights after identity init.
         allow_short_conv: Whether to apply causal-identity init to short-conv paths.
+        gates_only: If True, only neutralize extra gating paths of supported
+            gated variants (GLA and GatedDeltaNet). If False, apply full
+            projection mimetic recipes.
     """
     if qk_perturb_std < 0.0:
         raise ValueError(f"qk_perturb_std must be >= 0, got {qk_perturb_std}.")
@@ -129,7 +156,7 @@ def apply_mimetic_fla_init(
     supported_layers = [
         module
         for module in model.modules()
-        if isinstance(module, (GatedLinearAttention, GatedDeltaNet))
+        if isinstance(module, _SUPPORTED_LAYER_TYPES)
     ]
     if not supported_layers:
         raise ValueError(
@@ -155,30 +182,40 @@ def apply_mimetic_fla_init(
             continue
 
         if isinstance(module, GatedLinearAttention):
+            # Optional full mode additionally enforces q/k and v->o identity.
             _require_attrs(module, ("q_proj", "k_proj", "v_proj", "o_proj", "gk_proj"))
-            _set_block_identity_(module.q_proj)
-            _set_block_identity_(module.k_proj)
-            _maybe_perturb_query_key_(
-                module.q_proj,
-                module.k_proj,
-                perturb_std=qk_perturb_std,
-            )
-            _set_encoder_decoder_identity_(module.v_proj, module.o_proj)
+            if not gates_only:
+                _set_block_identity_(module.q_proj)
+                _set_block_identity_(module.k_proj)
+                _maybe_perturb_query_key_(
+                    module.q_proj,
+                    module.k_proj,
+                    perturb_std=qk_perturb_std,
+                )
+                _set_encoder_decoder_identity_(module.v_proj, module.o_proj)
+            # sets g_proj bias to ~1.278 and zeros weights, so swish(g_proj(x)) ~ 1 at init => open gate
+            _neutralize_gla_output_gate_(module)
+            # Zero the recurrent gate to and add a large positive bias to make it open at init. exp(logsigmoid(6)) ~ 0.9975
             _zero_gate_(module.gk_proj, final_bias_value=_MIMETIC_OPEN_GATE_BIAS)
         else:
-            _require_attrs(module, ("q_proj", "k_proj", "v_proj", "o_proj", "a_proj", "A_log", "dt_bias"))
-            if allow_short_conv and getattr(module, "use_short_conv", False):
-                _require_attrs(module, ("q_conv1d", "k_conv1d", "v_conv1d"))
-                for conv in (module.q_conv1d, module.k_conv1d, module.v_conv1d):
-                    _set_causal_identity_short_conv_(conv)
-            _set_block_identity_(module.q_proj)
-            _set_block_identity_(module.k_proj)
-            _maybe_perturb_query_key_(
-                module.q_proj,
-                module.k_proj,
-                perturb_std=qk_perturb_std,
+            # GatedDeltaNet recipe: shared projection init + stable recurrence defaults.
+            _require_attrs(
+                module,
+                ("q_proj", "k_proj", "v_proj", "o_proj", "a_proj", "A_log", "dt_bias"),
             )
-            _set_encoder_decoder_identity_(module.v_proj, module.o_proj)
+            if not gates_only:
+                if allow_short_conv and getattr(module, "use_short_conv", False):
+                    _require_attrs(module, ("q_conv1d", "k_conv1d", "v_conv1d"))
+                    for conv in (module.q_conv1d, module.k_conv1d, module.v_conv1d):
+                        _set_causal_identity_short_conv_(conv)
+                _set_block_identity_(module.q_proj)
+                _set_block_identity_(module.k_proj)
+                _maybe_perturb_query_key_(
+                    module.q_proj,
+                    module.k_proj,
+                    perturb_std=qk_perturb_std,
+                )
+                _set_encoder_decoder_identity_(module.v_proj, module.o_proj)
             _zero_gate_(module.a_proj)
             with torch.no_grad():
                 module.A_log.fill_(_MIMETIC_A_LOG)
