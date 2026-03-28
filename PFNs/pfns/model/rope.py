@@ -36,11 +36,11 @@ def build_rope_positions(
         and not use_cached_kv
     )
     if not allow_unfrozen_test_positions:
-        freeze_after = (
-            int(eval_pos)
-            if eval_pos is not None
-            else (int(position_offset) if use_cached_kv else None)
-        )
+        freeze_after = None
+        if eval_pos is not None and eval_pos > 0:
+            freeze_after = int(eval_pos)
+        if freeze_after is None and use_cached_kv:
+            freeze_after = int(position_offset) if position_offset > 0 else None
         if freeze_after is not None:
             positions = positions.clamp_max(freeze_after)
     if rope_pairwise_positions:

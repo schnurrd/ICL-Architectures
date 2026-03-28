@@ -214,6 +214,7 @@ def get_config(
     # Model options
     cache_chunk_size: int | None = None,
     use_rope: bool = False,
+    rope_base: float = 128_000.0,
     use_short_conv: bool | None = None,
     feature_positional_embedding: str | None = None,
     config_kwargs_override: dict[str, object] | None = None,
@@ -337,6 +338,7 @@ def get_config(
         "config_kwargs": resolved_config_kwargs,
         "sequence_mode": sequence_mode,
         "use_rope": bool(use_rope),
+        "rope_base": float(rope_base),
     }
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size

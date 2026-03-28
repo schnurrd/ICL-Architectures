@@ -334,6 +334,7 @@ class FLABackboneConfig(BackboneConfig):
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
     use_rope: bool = False
+    rope_base: float = 128_000.0
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
@@ -368,6 +369,7 @@ class FLABackboneConfig(BackboneConfig):
             sequence_mode=self.sequence_mode,
             cache_chunk_size=self.cache_chunk_size,
             use_rope=self.use_rope,
+            rope_base=self.rope_base,
         )
 
 
@@ -389,12 +391,14 @@ class FLABackbone(Backbone):
         sequence_mode: str = "Comb_ST",
         cache_chunk_size: int | None = None,
         use_rope: bool = False,
+        rope_base: float = 128_000.0,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
         self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
         self.use_rope = bool(use_rope)
+        self.rope_base = float(rope_base)
         self._rope_inv_freq_cache: dict[tuple[int, torch.device], torch.Tensor] = {}
 
     def _apply_input_rope(
@@ -419,7 +423,7 @@ class FLABackbone(Backbone):
         if inv_freq is None:
             inv_freq = build_rope_inv_freq(
                 x.shape[-1],
-                rope_base=128_000.0,
+                rope_base=self.rope_base,
                 device=x.device,
             )
             self._rope_inv_freq_cache[key] = inv_freq
@@ -615,7 +619,10 @@ class FLABackbone(Backbone):
         (B, S, N, E). However we currently only support N=1 for unflattened input.
         """
         x_batched, shape_info = self._prepare_fla_input(train_x)
-        rope_pairwise_positions = bool(kwargs.get("rope_pairwise_positions", True))
+        rope_pairwise_positions = (
+            bool(kwargs.get("rope_pairwise_positions", True))
+            and self.use_rope
+        )
         x_batched = self._apply_input_rope(
             x_batched,
             rope_pairwise_positions=rope_pairwise_positions,
@@ -642,7 +649,10 @@ class FLABackbone(Backbone):
         cache_params = cached_state["cache_params"]
 
         x_batched, shape_info = self._prepare_fla_input(test_x)
-        rope_pairwise_positions = bool(kwargs.get("rope_pairwise_positions", True))
+        rope_pairwise_positions = (
+            bool(kwargs.get("rope_pairwise_positions", True))
+            and self.use_rope
+        )
         x_batched = self._apply_input_rope(
             x_batched,
             rope_pairwise_positions=rope_pairwise_positions,
@@ -853,7 +863,10 @@ class FLABackbone(Backbone):
         # Input x is usually [Batch, SeqLen, NumTokens, EmSize]
         # FLA expects [Batch, SeqLen, EmSize] -> so we flatten NumTokens into Batch
         x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
-        rope_pairwise_positions = bool(kwargs.get("rope_pairwise_positions", True))
+        rope_pairwise_positions = (
+            bool(kwargs.get("rope_pairwise_positions", True))
+            and self.use_rope
+        )
 
         train_len = min(single_eval_pos, seq_len)
     
