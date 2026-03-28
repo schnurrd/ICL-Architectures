@@ -850,7 +850,6 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
         assert initial_state is not None, "stateless linear_attn patch requires initial_state."
         assert q.shape[1] == 1, "stateless linear_attn patch only supports decode-like T=1."
 
-        del normalize
         dtype = q.dtype
         if scale is None:
             scale = q.shape[-1] ** -0.5
@@ -874,6 +873,14 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
         else:
             o = torch.einsum("bthk,bhkv->bthv", qf, h0)
         o = o + (qf * kf).sum(-1, keepdim=True) * vf
+
+        if normalize:
+            if kf.ndim == 5:
+                k_cum = kf.cumsum(dim=2)
+            else:
+                k_cum = kf.cumsum(dim=1)
+            z = (qf * k_cum).sum(-1, keepdim=True)
+            o = o / (z + 1e-10)
 
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, *o.shape[2:])

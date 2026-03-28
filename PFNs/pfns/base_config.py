@@ -13,6 +13,8 @@ BaseTypes = tp.Union[str, int, float, bool, None, Sequence, dict]
 LEGACY_CONFIG_KEYS_TO_DROP: dict[str, set[str]] = {
     # Older checkpoints serialized a finetuning-only field that no longer exists.
     "pfns.train:MainConfig": {"checkpoint_load_mode"},
+    # Older FLA checkpoints serialized a deprecated DeltaNet-only regularization field.
+    "pfns.model.backbones:FLABackboneConfig": {"deltanet_state_reg_weight"},
 }
 
 

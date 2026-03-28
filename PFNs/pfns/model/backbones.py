@@ -331,9 +331,6 @@ class FLABackboneConfig(BackboneConfig):
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
-    # Backward-compatibility only: older checkpoints may serialize this field.
-    # It is ignored by FLABackbone and has no effect on training/inference.
-    deltanet_state_reg_weight: float | None = None
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
@@ -599,7 +596,6 @@ class FLABackbone(Backbone):
         x: torch.Tensor,
         *,
         cache_params: tp.Any | None = None,
-        cache_position_start: int | None = None,
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
@@ -710,7 +706,6 @@ class FLABackbone(Backbone):
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
-                cache_position_start=cache_position_start,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
@@ -752,7 +747,6 @@ class FLABackbone(Backbone):
             output, _ = self._run_fla(
                 current_input,
                 cache_params=self._copy_cache(cache_params),
-                cache_position_start=cache_position_start,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
