@@ -8,6 +8,8 @@ import torch
 import torch.nn.functional as F
 
 from fla.modules.l2norm import l2norm
+from pfns.model.rope import apply_rope as apply_rope_tensor
+from pfns.model.rope import build_rope_inv_freq
 
 
 @contextmanager
@@ -900,3 +902,144 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
         linear_attn_layer.fused_recurrent_linear_attn = original_fused_recurrent
         linear_attn_layer.chunk_linear_attn = original_chunk
         linear_attn_layer.fused_chunk_linear_attn = original_fused_chunk
+
+
+@contextmanager
+def _maybe_patch_linear_attn_with_qk_rope(
+    enabled: bool,
+    *,
+    rope_base: float,
+    positions: torch.Tensor | None,
+):
+    """Patch FLA LinearAttention to apply RoPE on q/k like Zoology's Based mixer."""
+    if not enabled:
+        yield
+        return
+    import fla.layers.linear_attn as linear_attn_layer
+
+    original_forward = linear_attn_layer.LinearAttention.forward
+
+    def _forward_with_qk_rope(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        past_key_values=None,
+        use_cache: bool | None = False,
+        output_attentions: bool | None = False,
+        **kwargs,
+    ):
+        del output_attentions, kwargs
+        mode = 'fused_recurrent' if hidden_states.shape[1] <= 64 else self.mode
+        last_state = linear_attn_layer.get_layer_cache(self, past_key_values)
+
+        q = self.q_proj(hidden_states)
+        k = self.k_proj(hidden_states)
+        v = self.v_proj(hidden_states)
+
+        if attention_mask is not None:
+            v = v.mul(attention_mask[:, -v.shape[-2]:, None])
+
+        q = linear_attn_layer.rearrange(q, '... (h d) -> ... h d', d=self.head_k_dim)
+        if self.num_kv_groups > 1:
+            k = linear_attn_layer.repeat(
+                k,
+                '... (h d) -> ... (h g) d',
+                d=self.head_k_dim,
+                g=self.num_kv_groups,
+            )
+            v = linear_attn_layer.repeat(
+                v,
+                '... (h d) -> ... (h g) d',
+                d=self.head_v_dim,
+                g=self.num_kv_groups,
+            )
+        else:
+            k = linear_attn_layer.rearrange(k, '... (h d) -> ... h d', d=self.head_k_dim)
+            v = linear_attn_layer.rearrange(v, '... (h d) -> ... h d', d=self.head_v_dim)
+
+        rope_positions = positions
+        if rope_positions is None:
+            position_offset = (
+                int(past_key_values.get_seq_length(self.layer_idx))
+                if past_key_values is not None
+                else 0
+            )
+            rope_positions = torch.arange(
+                position_offset,
+                position_offset + q.shape[1],
+                device=q.device,
+            )
+        else:
+            rope_positions = rope_positions.to(device=q.device)
+
+        key = (self.head_k_dim, q.device)
+        inv_freq_cache = getattr(self, "_pfns_rope_inv_freq_cache", None)
+        if inv_freq_cache is None:
+            inv_freq_cache = {}
+            self._pfns_rope_inv_freq_cache = inv_freq_cache
+        inv_freq = inv_freq_cache.get(key)
+        if inv_freq is None:
+            inv_freq = build_rope_inv_freq(
+                self.head_k_dim,
+                rope_base=rope_base,
+                device=q.device,
+            )
+            inv_freq_cache[key] = inv_freq
+
+        q = apply_rope_tensor(q, inv_freq=inv_freq, positions=rope_positions)
+        k = apply_rope_tensor(k, inv_freq=inv_freq, positions=rope_positions)
+
+        q = self.feature_map_q(q)
+        k = self.feature_map_k(k)
+
+        if self.norm_q:
+            q = q / (q.sum(-1, True) + 1e-4)
+        if self.norm_k:
+            k = k / (k.sum(-1, True) + 1e-4)
+
+        recurrent_state = last_state['recurrent_state'] if last_state is not None else None
+        if mode == 'chunk':
+            o, final_state = linear_attn_layer.chunk_linear_attn(
+                q=q,
+                k=k,
+                v=v,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                normalize=self.do_feature_map_norm,
+            )
+        elif mode == 'fused_chunk':
+            o, final_state = linear_attn_layer.fused_chunk_linear_attn(
+                q=q,
+                k=k,
+                v=v,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                normalize=self.do_feature_map_norm,
+            )
+        elif mode == 'fused_recurrent':
+            o, final_state = linear_attn_layer.fused_recurrent_linear_attn(
+                q=q,
+                k=k,
+                v=v,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                normalize=self.do_feature_map_norm,
+            )
+        else:
+            raise NotImplementedError
+        linear_attn_layer.update_layer_cache(
+            self,
+            past_key_values,
+            recurrent_state=final_state,
+            offset=q.shape[1],
+        )
+        o = self.norm(o)
+        o = linear_attn_layer.rearrange(o, '... h d -> ... (h d)')
+        o = self.o_proj(o)
+        return o, None, past_key_values
+
+    linear_attn_layer.LinearAttention.forward = _forward_with_qk_rope
+    try:
+        yield
+    finally:
+        linear_attn_layer.LinearAttention.forward = original_forward
