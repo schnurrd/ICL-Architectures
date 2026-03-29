@@ -571,37 +571,10 @@ def _maybe_patch_deltanet_with_projection_sources(
         yield
         return
     import fla.layers.delta_net as deltanet_layer
-    import fla.layers.utils as deltanet_utils
     import fla.models.delta_net.modeling_delta_net as deltanet_modeling
 
     original_layer_forward = deltanet_layer.DeltaNet.forward
     original_block_forward = deltanet_modeling.DeltaNetBlock.forward
-
-    get_layer_cache = getattr(
-        deltanet_layer,
-        "get_layer_cache",
-        deltanet_utils.get_layer_cache,
-    )
-    get_unpad_data = getattr(
-        deltanet_layer,
-        "get_unpad_data",
-        deltanet_utils.get_unpad_data,
-    )
-    index_first_axis = getattr(
-        deltanet_layer,
-        "index_first_axis",
-        deltanet_utils.index_first_axis,
-    )
-    pad_input = getattr(
-        deltanet_layer,
-        "pad_input",
-        deltanet_utils.pad_input,
-    )
-    update_layer_cache = getattr(
-        deltanet_layer,
-        "update_layer_cache",
-        deltanet_utils.update_layer_cache,
-    )
 
     def _pop_projection_sources(
         kwargs: dict[str, tp.Any],
@@ -659,14 +632,14 @@ def _maybe_patch_deltanet_with_projection_sources(
         batch_size, q_len, _ = hidden_states.shape
         mode = "fused_recurrent" if q_len <= 64 else self.mode
 
-        last_state = get_layer_cache(self, past_key_values)
+        last_state = deltanet_layer.get_layer_cache(self, past_key_values)
 
         cu_seqlens = kwargs.get("cu_seqlens")
         if attention_mask is not None:
-            indices, cu_seqlens, _ = get_unpad_data(attention_mask[:, -q_len:])
+            indices, cu_seqlens, _ = deltanet_layer.get_unpad_data(attention_mask[:, -q_len:])
 
             def _unpad(x: torch.Tensor) -> torch.Tensor:
-                return index_first_axis(
+                return deltanet_layer.index_first_axis(
                     deltanet_layer.rearrange(x, "b s ... -> (b s) ..."),
                     indices,
                 ).unsqueeze(0)
@@ -756,7 +729,7 @@ def _maybe_patch_deltanet_with_projection_sources(
         else:
             raise NotImplementedError(f"Not supported mode `{mode}`.")
 
-        update_layer_cache(
+        deltanet_layer.update_layer_cache(
             self,
             past_key_values,
             recurrent_state=recurrent_state,
@@ -776,7 +749,7 @@ def _maybe_patch_deltanet_with_projection_sources(
         o = deltanet_layer.rearrange(o, "b t h d -> b t (h d)")
         o = self.o_proj(o)
         if attention_mask is not None:
-            o = pad_input(o.squeeze(0), indices, batch_size, q_len)
+            o = deltanet_layer.pad_input(o.squeeze(0), indices, batch_size, q_len)
 
         return o, None, past_key_values
 
