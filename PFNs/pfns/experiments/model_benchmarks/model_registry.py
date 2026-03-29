@@ -538,7 +538,15 @@ MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
     },
     "mimetic:Gated_DeltaNet_Comb_ST_New_Simple": {
         "display_name": "Mimetic Gated DeltaNet Comb ST (New Simple)",
-        "wandb_run_id": "fla_models/runs/h83z2jq5",
+        "wandb_run_id": "fla_models/runs/cubna8dc",
+    },
+    "mimetic:Gated_DeltaNet_Comb_ST_New_Gates": {
+        "display_name": "Mimetic Gated DeltaNet Comb ST Newest Gates",
+        "wandb_run_id": "fla_models/runs/i8vmztxo",
+    },
+    "mimetic:Gated_DeltaNet_Comb_ST_New_Full": {
+        "display_name": "Mimetic Gated DeltaNet Comb ST Newest Full",
+        "wandb_run_id": "fla_models/runs/tfmv77e1",
     },
 }
 
