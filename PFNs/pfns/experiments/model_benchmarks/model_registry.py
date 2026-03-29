@@ -40,10 +40,6 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
         "eval_autocast_dtype": "fp16", # bf16 is broken on rtx 2080 ti due to the GPU being to old -> OOM error in scaled dot product attention
     },
-    # "Softmax_Transformer_fp32": {
-    #     "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
-    #     "eval_autocast_dtype": "fp32",
-    # },
     "Softmax_Transformer_Cat_10_Training": {
         "wandb_run_id": "tabpfn_transformer/runs/m5zgo8r3", 
         "eval_autocast_dtype": "fp16",
@@ -57,20 +53,18 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
         "high_cardinality_categorical_threshold": 0,
         "eval_autocast_dtype": "fp16",
     },
-    # "Softmax_Transformer_with_feature_attention": {
-    #     "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
-    #     # new smaller versions 
-    #     # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
-    #     # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
+    # "Softmax_Transformer_fp32": {
+    #     "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
+    #     "eval_autocast_dtype": "fp32",
     # },
-    "Softmax_Transformer_with_feature_attention_group_2": {
-        "wandb_run_id": "tabpfn_transformer/runs/ec8120cw", # features per group 2 (fp16)
-        "eval_autocast_dtype": "fp16",
-    },
-    "Softmax_Transformer_with_feature_attention_group_4": {
-        "wandb_run_id": "tabpfn_transformer/runs/8l966af8", # features per group 4 (fp32)
-        "eval_autocast_dtype": "fp16",
-    },
+    # "Softmax_Transformer_with_feature_attention_group_2": {
+    #     "wandb_run_id": "tabpfn_transformer/runs/ec8120cw", # strong but oom at 128k
+    #     "eval_autocast_dtype": "fp16",
+    # },
+    # "Softmax_Transformer_with_feature_attention_group_4": {
+    #     "wandb_run_id": "tabpfn_transformer/runs/8l966af8", # features per group 4 (fp32)
+    #     "eval_autocast_dtype": "fp16",
+    # },
 }
 
 KDA_MODELS: dict[str, dict[str, Any]] = {
