@@ -40,10 +40,6 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
         "eval_autocast_dtype": "fp16", # bf16 is broken on rtx 2080 ti due to the GPU being to old -> OOM error in scaled dot product attention
     },
-    "Softmax_Transformer_fp32": {
-        "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
-        "eval_autocast_dtype": "fp32",
-    },
     "Softmax_Transformer_Cat_10_Training": {
         "wandb_run_id": "tabpfn_transformer/runs/m5zgo8r3", 
         "eval_autocast_dtype": "fp16",
@@ -57,11 +53,17 @@ TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
         "high_cardinality_categorical_threshold": 0,
         "eval_autocast_dtype": "fp16",
     },
-    # "Softmax_Transformer_with_feature_attention": {
-    #     "wandb_run_id": "tabpfn_transformer/runs/go1re6pr",  # with feature attention (tabpfnv2 default),  currently has 20M params
-    #     # new smaller versions 
-    #     # - icl_arch/tabpfn_transformer/ec8120cw: features per group 2 (fp16)
-    #     # - icl_arch/tabpfn_transformer/8l966af8: features per group 4 (fp32)
+    # "Softmax_Transformer_fp32": {
+    #     "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
+    #     "eval_autocast_dtype": "fp32",
+    # },
+    # "Softmax_Transformer_with_feature_attention_group_2": {
+    #     "wandb_run_id": "tabpfn_transformer/runs/ec8120cw", # strong but oom at 128k
+    #     "eval_autocast_dtype": "fp16",
+    # },
+    # "Softmax_Transformer_with_feature_attention_group_4": {
+    #     "wandb_run_id": "tabpfn_transformer/runs/8l966af8", # features per group 4 (fp32)
+    #     "eval_autocast_dtype": "fp16",
     # },
 }
 
@@ -271,9 +273,9 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
 
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
-    "Linear_Attention_Non_Causal_Cat_10_Training": { 
-        "wandb_run_id": "linear_attention/runs/hwsxnsho",
-    },
+    # "Linear_Attention_Non_Causal_Cat_10_Training": { 
+    #     "wandb_run_id": "linear_attention/runs/hwsxnsho",
+    # },
     "Linear_Attention_Non_Causal": { # Trained without cat normalization
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
     },
@@ -283,17 +285,23 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Causal_Comb_MT": { # Trained without cat normalization
         "wandb_run_id": "linear_attention/runs/3lyr8wze",
     },
-    "Linear_Attention_Causal_Comb_ST_Cat_Norm": {
-        "wandb_run_id": "linear_attention/runs/v14em9ik",
-        "high_cardinality_categorical_threshold": 0,
+    # "Linear_Attention_Causal_Comb_ST_Cat_Norm": {
+    #     "wandb_run_id": "linear_attention/runs/v14em9ik",
+    #     "high_cardinality_categorical_threshold": 0,
+    # },
+    # "Linear_Attention_Non_Causal_Cat_Norm": {
+    #     "wandb_run_id": "linear_attention/runs/qqts8fpp",
+    #     "high_cardinality_categorical_threshold": 0,
+    # },
+    # "Linear_Attention_Causal_Comb_MT_Cat_Norm": { # never finished ep 172
+    #     "wandb_run_id": "linear_attention/runs/3yp9x3kf",
+    #     "high_cardinality_categorical_threshold": 0,
+    # },
+    "Linear_Attention_FLA_Comb_ST": { 
+        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
     },
-    "Linear_Attention_Non_Causal_Cat_Norm": {
-        "wandb_run_id": "linear_attention/runs/qqts8fpp",
-        "high_cardinality_categorical_threshold": 0,
-    },
-    "Linear_Attention_Causal_Comb_MT_Cat_Norm": { # never finished ep 172
-        "wandb_run_id": "linear_attention/runs/3yp9x3kf",
-        "high_cardinality_categorical_threshold": 0,
+    "Linear_Attention_FLA_Comb_MT": { 
+        "wandb_run_id": "icl_arch/fla_models/8wf9f1qz",
     },
 }
 
@@ -314,6 +322,14 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
     #     "display_name": "Based $\\phi$ with 16-dim features",
     #     "wandb_run_id": "fla_models/runs/kxe10m62"
     # },
+    "Rebased_feat_dim_32": {
+        "display_name": "Rebased $\\phi$ with 32-dim features", # todo retrain and delete rerun
+        "wandb_run_id": "fla_models/runs/7z1vh7vl"
+    },
+    "Based_feat_dim_32": {
+        "display_name": "Based $\\phi$ with 32-dim features",
+        "wandb_run_id": "fla_models/runs/syqbsc40"
+    },
 }
 
 DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
@@ -368,10 +384,10 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "eval_autocast_dtype": "fp16",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
     },
-    # "equal_params:Rebased_Comb_ST": {
-    #     "display_name": "Linear Attention (Rebased $\\phi$)",
-    #     "wandb_run_id": "fla_models/runs/ntkpkzf3", 
-    # },
+    "equal_params:Rebased_Comb_ST": {
+        "display_name": "Linear Attention (Rebased $\\phi$)",
+        "wandb_run_id": "fla_models/runs/7z1vh7vl", 
+    },
     "equal_params:Linear_Attention_Comb_ST": {
         "display_name": "Linear Attention",
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
@@ -388,22 +404,22 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Gated DeltaNet",
         "wandb_run_id": "fla_models/runs/g7rh5nv9",  
     },
-    "equal_params:DeltaNet_Int_MT": {
-        "display_name": "DeltaNet (Int MT)",
-        "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
-    },
-    "equal_params:Gated_DeltaNet_Int_MT": {
-        "display_name": "Gated DeltaNet (Int MT)",
-        "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
-    },
+    # "equal_params:DeltaNet_Int_MT": {
+    #     "display_name": "DeltaNet (Int MT)",
+    #     "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
+    # },
+    # "equal_params:Gated_DeltaNet_Int_MT": {
+    #     "display_name": "Gated DeltaNet (Int MT)",
+    #     "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
+    # },
     "equal_params:KDA_Comb_ST": {
         "display_name": "Kimi Delta Attention",
         "wandb_run_id": "fla_models/runs/5jfgan9d", # old run qaskm2mq
     },
-    "equal_params:Mamba2_Comb_ST": {
-        "display_name": "Mamba2",
-        "wandb_run_id": "fla_models/runs/o9e00w17",
-    },
+    # "equal_params:Mamba2_Comb_ST": {
+    #     "display_name": "Mamba2",
+    #     "wandb_run_id": "fla_models/runs/o9e00w17",
+    # },
 }
 
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
@@ -413,46 +429,46 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
         "eval_mode": "forward",
         "eval_autocast_dtype": "fp16",
     },
-    "Transformer_Non_Causal_with_RoPE_pairwise": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xsbe5y6d", # old runs: xsbe5y6d, second run with fp32 as comparison: 0xi6dcvc
-        "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16",
-    },
-    "Transformer_Non_Causal_interleaved_with_RoPE_pairwise": {
-        "display_name": "Non-Causal Interleaved",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   # new one uses pairwise rope while old one does not jzs97xfg
-        "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16",
-    },
+    # "Transformer_Non_Causal_with_RoPE_pairwise": {
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xsbe5y6d", # old runs: xsbe5y6d, second run with fp32 as comparison: 0xi6dcvc
+    #     "eval_mode": "forward",
+    #     "eval_autocast_dtype": "fp16",
+    # },
+    # "Transformer_Non_Causal_interleaved_with_RoPE_pairwise": {
+    #     "display_name": "Non-Causal Interleaved",
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   # new one uses pairwise rope while old one does not jzs97xfg
+    #     "eval_mode": "forward",
+    #     "eval_autocast_dtype": "fp16",
+    # },
     "masked:Transformer_Comb_ST": {
         "display_name": "Causal Single Target",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/gex7h68b", # fp 16 version 2wrxsh60, old 15.2M params version b56ohkmz
         "eval_mode": "forward",
         "eval_autocast_dtype": "fp16",
     },
-    "Transformer_Test_To_Train_Only": {
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
-        "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16",
-    },
+    # "Transformer_Test_To_Train_Only": {
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/1agq90eo",
+    #     "eval_mode": "forward",
+    #     "eval_autocast_dtype": "fp16",
+    # },
     "Transformer_Comb_MT": {
         "display_name": "Causal Multi Target",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
         "eval_mode": "forward",
         "eval_autocast_dtype": "fp16",
     },
-    "Transformer_Int_ST_with_RoPE_pairwise": { 
-        "display_name": "Causal Interleaved Single Target",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
-        "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16",
-    },
-    "Transformer_Int_MT_with_RoPE_pairwise": { 
-        "display_name": "Causal Interleaved Multi Target",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
-        "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16",
-    },
+    # "Transformer_Int_ST_with_RoPE_pairwise": { 
+    #     "display_name": "Causal Interleaved Single Target",
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
+    #     "eval_mode": "forward",
+    #     "eval_autocast_dtype": "fp16",
+    # },
+    # "Transformer_Int_MT_with_RoPE_pairwise": { 
+    #     "display_name": "Causal Interleaved Multi Target",
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
+    #     "eval_mode": "forward",
+    #     "eval_autocast_dtype": "fp16",
+    # },
 }
 
 SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
@@ -491,6 +507,198 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+
+ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
+    "Oracle_Hidden_State_GLA_Comb_ST_base": {
+        **GLA_MODELS["GLA_Comb_ST"],
+        "display_name": "Oracle Hidden State (GLA)",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 5e-3, # lr was to low here
+        "oracle_weight_decay": 0.0,
+        "oracle_patience": 10,
+        "oracle_query_batch_size": 8000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "oracle_log_every_steps": 200,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_GLA_Comb_ST_new_base": {
+        **GLA_MODELS["GLA_Comb_ST"],
+        "display_name": "Oracle Hidden State (GLA) New Base",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 4e-1, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_query_batch_size": 4000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base_state_init": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 3e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_query_batch_size": 4000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_random_init_hidden_state": True,
+        "oracle_verbose": False,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base_state_init_v2": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 5e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 40,
+        "oracle_query_batch_size": 4000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_random_init_hidden_state": True,
+        "oracle_verbose": False,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) New Base",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 3e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_query_batch_size": 4000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base_lower_batch_size": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) New Base + Lower Batch Size",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 3e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_query_batch_size": 2000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_base": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) Base", # reference model for oracle hidden state experiments
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 5e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 10,
+        "oracle_query_batch_size": 8000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "oracle_log_every_steps": 200,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_higher_lr": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) Higher LR",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 1e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 10,
+        "oracle_query_batch_size": 8000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "oracle_log_every_steps": 200,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_lower_lr": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) Lower LR",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 1e-4,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 10,
+        "oracle_query_batch_size": 8000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "oracle_log_every_steps": 200,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_lower_batch_size": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) Lower Batch Size",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 5e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 10,
+        "oracle_query_batch_size": 4000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "oracle_log_every_steps": 200,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_higher_patience": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) Higher Patience", # reference model for oracle hidden state experiments
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 5e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_query_batch_size": 8000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "oracle_log_every_steps": 200,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_Linear_Attention_Non_Causal_base": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Oracle Hidden State (Linear Attention)",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 3e1, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_query_batch_size": 4000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+    },
+    # "Oracle_Hidden_State_Rebased_feat_dim_32_base": {
+    #     **BASED_MODELS["Rebased_feat_dim_32"],
+    #     "display_name": "Oracle Hidden State (Rebased)",
+    #     "oracle_hidden_state_baseline": True,
+    #     "oracle_num_epochs": 400,
+    #     "oracle_lr": 5e1, 
+    #     "oracle_weight_decay": 1e-5,
+    #     "oracle_patience": 20,
+    #     "oracle_query_batch_size": 4000,
+    #     "oracle_selection_fraction": 0.1,
+    #     "oracle_evaluate_only_max_seqlen": True,
+    #     "oracle_verbose": True,
+    # },
+}
+
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
 
 BASELINE_MODEL_NAMES: tuple[str, ...] = (
@@ -508,6 +716,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "kda": KDA_MODELS,
     "gla": GLA_MODELS,
     "deltanet": DELTANET_MODELS,
+    "oracle_hidden_state": ORACLE_HIDDEN_STATE_MODELS,
     "deltanet_size_changes": DELTANET_MODELS_SIZE_CHANGES,
     "gated_deltanet": GATED_DELTANET_MODELS,
     "gated_deltanet_seq_len_changes": GATED_DELTANET_MODELS_SEQ_LEN_CHANGES,

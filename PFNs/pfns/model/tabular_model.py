@@ -280,7 +280,7 @@ class TabularModel(nn.Module):
         # Now x_bf, y_bf, test_x_bf are batch-first (or None)
         return x_bf, y_bf, test_x_bf
 
-    def _is_transformer(self) -> bool:
+    def _is_per_feature_transformer(self) -> bool:
         """Returns whether the backbone is the PerFeature transformer stack."""
         layers = None
         if isinstance(self.transformer_layers, LayerStack):
@@ -714,7 +714,7 @@ class TabularModel(nn.Module):
             ), f"Only 1 feature per group supported for attention_between_features=False, got {embedded_x.shape=}."
 
             if should_interleave:
-                if self._is_transformer() or (Int_MT_mode and self.transformer_layers.training):
+                if self._is_per_feature_transformer() or (Int_MT_mode and self.transformer_layers.training):
                     embedded_y_tokens = embedded_y.unsqueeze(2)
                     embedded_input = torch.stack(
                         (embedded_x, embedded_y_tokens), dim=2
@@ -802,7 +802,7 @@ class TabularModel(nn.Module):
         Int_MT_mode: bool,
     ) -> dict[str, torch.Tensor]:
         if should_interleave:
-            if self._is_transformer() or (
+            if self._is_per_feature_transformer() or (
                 Int_MT_mode and self.transformer_layers.training
             ):
                 encoder_out = encoder_out[:, ::2]  # remove interleaved y tokens
