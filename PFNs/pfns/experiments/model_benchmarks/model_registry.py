@@ -471,9 +471,9 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     # },
 }
 
-STATE_PARSING_MODELS: dict[str, dict[str, Any]] = {
-    "State_Parsing_GLA_Comb_ST": {
-        "display_name": "State Parsing (GLA)",
+STATE_PASSING_MODELS: dict[str, dict[str, Any]] = {
+    "State_Passing_GLA_Comb_ST": {
+        "display_name": "State Passing (GLA)",
         "wandb_run_id": "fla_models/runs/66hynh1d"
     },
     "GLA_Comb_ST": {
@@ -740,7 +740,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "deltanet_added_regularization": DELTANET_ADDED_REGULARIZATION,
     "deltanet_finetuned": DELTANET_FINETUNED_MODELS,
     "subsampled": SUBSAMPLED_MODELS,
-    "state_parsing": STATE_PARSING_MODELS,
+    "state_passing": STATE_PASSING_MODELS,
     "fla_models": {
         **KDA_MODELS,
         **GLA_MODELS,
