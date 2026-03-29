@@ -24,7 +24,7 @@ from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 from fla.models import LinearAttentionConfig, LinearAttentionModel
 
 from pfns import base_config
-from pfns.model.fla_mimetic_init import apply_mimetic_fla_init
+from pfns.model.fla_mimetic_init import MimeticInitMode, apply_mimetic_fla_init
 from pfns.model.fla_patches import (
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
@@ -336,7 +336,7 @@ class FLABackboneConfig(BackboneConfig):
     cache_chunk_size: int | None = None
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
-    mimetic_gates_only: bool = True
+    mimetic_init_mode: MimeticInitMode = "gates"
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
@@ -370,7 +370,7 @@ class FLABackboneConfig(BackboneConfig):
             apply_mimetic_fla_init(
                 fla_model,
                 layer_indices=layer_indices,
-                gates_only=self.mimetic_gates_only,
+                mode=self.mimetic_init_mode,
             )
 
         return FLABackbone(

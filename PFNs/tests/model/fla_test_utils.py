@@ -145,7 +145,7 @@ def build_fla_backbone(
     cache_chunk_size: int | None = None,
     mimetic_init: bool = False,
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None,
-    mimetic_gates_only: bool = True,
+    mimetic_init_mode: str = "gates",
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -158,7 +158,7 @@ def build_fla_backbone(
         cache_chunk_size=cache_chunk_size,
         mimetic_init=mimetic_init,
         mimetic_init_layer_indices=mimetic_init_layer_indices,
-        mimetic_gates_only=mimetic_gates_only,
+        mimetic_init_mode=mimetic_init_mode,
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)

@@ -3,6 +3,8 @@ import torch
 
 pytest.importorskip("fla")
 
+from pfns.base_config import BaseConfig
+from pfns.model.backbones import FLABackboneConfig
 from pfns.model.fla_mimetic_init import (
     _MIMETIC_A_LOG,
     _MIMETIC_DT_BIAS,
@@ -14,13 +16,13 @@ from tests.model.fla_test_utils import build_fla_backbone
 
 
 def test_mimetic_init_modes_smoke() -> None:
-    gla_gates = build_fla_backbone("gla", size="small", mimetic_init=True, mimetic_gates_only=True, train=False)
-    gla_full = build_fla_backbone("gla", size="small", mimetic_init=True, mimetic_gates_only=False, train=False)
+    gla_gates = build_fla_backbone("gla", size="small", mimetic_init=True, mimetic_init_mode="gates", train=False)
+    gla_full = build_fla_backbone("gla", size="small", mimetic_init=True, mimetic_init_mode="full", train=False)
     gdn_gates = build_fla_backbone(
-        "gated_deltanet", size="small", mimetic_init=True, mimetic_gates_only=True, train=False
+        "gated_deltanet", size="small", mimetic_init=True, mimetic_init_mode="gates", train=False
     )
     gdn_full = build_fla_backbone(
-        "gated_deltanet", size="small", mimetic_init=True, mimetic_gates_only=False, train=False
+        "gated_deltanet", size="small", mimetic_init=True, mimetic_init_mode="full", train=False
     )
 
     gla_gates_attn = gla_gates.fla.layers[0].attn
