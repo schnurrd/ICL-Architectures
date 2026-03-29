@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 import torch
@@ -75,6 +76,17 @@ def build_sinusoidal_position_embeddings(
     return embeddings.to(dtype=dtype)
 
 
+def standardize_embedding_signal(
+    embeddings: torch.Tensor,
+    *,
+    feature_dim: int,
+    scale: float | torch.Tensor = 1.0,
+) -> torch.Tensor:
+    embeddings = embeddings - embeddings.mean(dim=-1, keepdim=True)
+    embeddings = embeddings / math.sqrt(feature_dim)
+    return embeddings * scale
+
+
 def apply_interleaved_pair_and_role_embeddings(
     embedded_x: torch.Tensor,
     embedded_y: torch.Tensor,
@@ -86,6 +98,7 @@ def apply_interleaved_pair_and_role_embeddings(
     mask_name: str,
     is_training: bool,
     position_base: float = 128_000.0,
+    pair_position_scale: float | torch.Tensor = 1.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if role_embeddings.shape != (2, embedded_x.shape[-1]):
         raise ValueError(
@@ -109,8 +122,17 @@ def apply_interleaved_pair_and_role_embeddings(
         dtype=embedded_x.dtype,
         base=position_base,
     )
+    pair_position_embeddings = standardize_embedding_signal(
+        pair_position_embeddings,
+        feature_dim=embedded_x.shape[-1],
+        scale=pair_position_scale,
+    )
     pair_position_embeddings_x = pair_position_embeddings.view(1, -1, 1, embedded_x.shape[-1])
     pair_position_embeddings_y = pair_position_embeddings.view(1, -1, embedded_y.shape[-1])
+    role_embeddings = standardize_embedding_signal(
+        role_embeddings,
+        feature_dim=embedded_x.shape[-1],
+    )
     x_role_embedding = role_embeddings[0].view(1, 1, 1, -1)
     y_role_embedding = role_embeddings[1].view(1, 1, -1)
     return (

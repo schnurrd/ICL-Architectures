@@ -223,6 +223,7 @@ class TabularModel(nn.Module):
         if self.interleaved_pair_positional_embedding == "sinusoidal":
             self.interleaved_token_type_embedding = nn.Embedding(2, ninp)
             nn.init.zeros_(self.interleaved_token_type_embedding.weight)
+            self.interleaved_pair_position_scale = nn.Parameter(torch.tensor(0.1))
 
         self.cached_feature_positional_embeddings: torch.Tensor | None = None
 
@@ -795,6 +796,7 @@ class TabularModel(nn.Module):
                         mask_name=sequence_mode if sequence_mode in {"Int_MT", "Int_ST"} else "Int_ST",
                         is_training=self.training,
                         position_base=self.interleaved_pair_position_base,
+                        pair_position_scale=self.interleaved_pair_position_scale,
                     )
                 if self._is_per_feature_transformer() or (Int_MT_mode and self.transformer_layers.training):
                     embedded_y_tokens = embedded_y.unsqueeze(2)

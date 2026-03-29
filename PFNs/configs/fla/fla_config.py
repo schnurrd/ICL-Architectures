@@ -214,7 +214,7 @@ def get_config(
     # Model options
     cache_chunk_size: int | None = None,
     use_short_conv: bool | None = None,
-    interleaved_pair_positional_embedding: str = "sinusoidal",
+    interleaved_pair_positional_embedding: str = "none",
     interleaved_pair_position_base: float = 128_000.0,
     feature_positional_embedding: str | None = None,
     config_kwargs_override: dict[str, object] | None = None,
@@ -399,7 +399,7 @@ def get_config(
         f"fpe_{feature_positional_embedding}",
         (
             None
-            if interleaved_pair_positional_embedding == "sinusoidal"
+            if interleaved_pair_positional_embedding == "none"
             else f"pairpos_{interleaved_pair_positional_embedding}"
         ),
         (
