@@ -28,6 +28,7 @@ from pfns.model.fla_patches import (
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
+    _maybe_patch_deltanet_with_projection_sources,
     _maybe_patch_gated_deltanet_with_stateless_recurrent,
     _maybe_patch_mamba2_with_stateless_recurrent,
     _maybe_patch_linear_attn_with_stateless_recurrent,
@@ -332,11 +333,16 @@ class FLABackboneConfig(BackboneConfig):
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
+    deltanet_input_projections: bool = False
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
             raise ValueError(
                 f"Unknown model_type: {self.model_type}. Available: {list(FLA_MODEL_REGISTRY)}"
+            )
+        if self.deltanet_input_projections and self.model_type != "deltanet":
+            raise ValueError(
+                "deltanet_input_projections is only supported for model_type='deltanet'."
             )
         object.__setattr__(
             self,
@@ -365,12 +371,18 @@ class FLABackboneConfig(BackboneConfig):
             fla_model=fla_model,
             sequence_mode=self.sequence_mode,
             cache_chunk_size=self.cache_chunk_size,
+            deltanet_input_projections=self.deltanet_input_projections,
         )
 
 
 class FLABackbone(Backbone):
     """Wrapper for FLA models to conform to Backbone interface."""
 
+    _DELTANET_PROJECTION_KWARGS = (
+        "deltanet_qk_input",
+        "deltanet_v_input",
+        "deltanet_beta_input",
+    )
     _CUSTOM_RECURRENT_MODELS: tuple[type[nn.Module], ...] = (
         GLAModel,
         KDAModel,
@@ -385,11 +397,20 @@ class FLABackbone(Backbone):
         fla_model: nn.Module,
         sequence_mode: str = "Comb_ST",
         cache_chunk_size: int | None = None,
+        deltanet_input_projections: bool = False,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
         self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
+        self.deltanet_input_projections = bool(deltanet_input_projections)
+        self.supports_deltanet_input_projections = (
+            self.deltanet_input_projections and isinstance(self.fla, DeltaNetModel)
+        )
+        if self.deltanet_input_projections and not self.supports_deltanet_input_projections:
+            raise ValueError(
+                "deltanet_input_projections requires a DeltaNetModel backbone."
+            )
 
     @staticmethod
     def _summarize_cache(cache_params: tp.Any) -> str:
@@ -555,6 +576,83 @@ class FLABackbone(Backbone):
             .transpose(1, 2)
         )
 
+    @classmethod
+    def _extract_deltanet_projection_kwargs(
+        cls,
+        kwargs: dict[str, tp.Any],
+    ) -> dict[str, torch.Tensor]:
+        return {
+            name: value
+            for name, value in kwargs.items()
+            if name in cls._DELTANET_PROJECTION_KWARGS and value is not None
+        }
+
+    @classmethod
+    def _prepare_deltanet_projection_kwargs(
+        cls,
+        projection_kwargs: dict[str, torch.Tensor],
+    ) -> tuple[dict[str, torch.Tensor], tuple[int, int, int, int] | None]:
+        prepared: dict[str, torch.Tensor] = {}
+        shape_info: tuple[int, int, int, int] | None = None
+        for name, value in projection_kwargs.items():
+            prepared_value, current_shape_info = cls._prepare_fla_input(value)
+            if shape_info is None:
+                shape_info = current_shape_info
+            elif current_shape_info is not None and shape_info != current_shape_info:
+                raise ValueError(
+                    f"Mismatched shape info for {name}: expected {shape_info}, got {current_shape_info}."
+                )
+            prepared[name] = prepared_value
+        return prepared, shape_info
+
+    @classmethod
+    def _resolve_deltanet_projection_kwargs(
+        cls,
+        x: torch.Tensor,
+        kwargs: dict[str, tp.Any],
+    ) -> dict[str, torch.Tensor]:
+        projection_kwargs, _ = cls._prepare_deltanet_projection_kwargs(
+            cls._extract_deltanet_projection_kwargs(kwargs)
+        )
+        cls._validate_projection_shapes(x, projection_kwargs)
+        return projection_kwargs
+
+    @staticmethod
+    def _slice_projection_kwargs(
+        projection_kwargs: dict[str, torch.Tensor],
+        start: int,
+        end: int,
+    ) -> dict[str, torch.Tensor]:
+        return {
+            name: value[:, start:end]
+            for name, value in projection_kwargs.items()
+        }
+
+    @staticmethod
+    def _flatten_decode_projection_kwargs(
+        projection_kwargs: dict[str, torch.Tensor],
+        *,
+        batch_size: int,
+        seq_len: int,
+    ) -> dict[str, torch.Tensor]:
+        if not projection_kwargs:
+            return {}
+        return {
+            name: value.contiguous().view(batch_size * seq_len, 1, value.shape[-1])
+            for name, value in projection_kwargs.items()
+        }
+
+    @staticmethod
+    def _validate_projection_shapes(
+        x: torch.Tensor,
+        projection_kwargs: dict[str, torch.Tensor],
+    ) -> None:
+        for name, value in projection_kwargs.items():
+            if value.shape != x.shape:
+                raise ValueError(
+                    f"{name} must match FLA input shape {tuple(x.shape)}, got {tuple(value.shape)}."
+                )
+
     def incontext_fit(
         self,
         train_x: torch.Tensor,
@@ -566,7 +664,12 @@ class FLABackbone(Backbone):
         (B, S, N, E). However we currently only support N=1 for unflattened input.
         """
         x_batched, shape_info = self._prepare_fla_input(train_x)
-        train_out, cache_params = self._run_fla(x_batched, return_cache=True)
+        projection_kwargs = self._resolve_deltanet_projection_kwargs(x_batched, kwargs)
+        train_out, cache_params = self._run_fla(
+            x_batched,
+            return_cache=True,
+            projection_kwargs=projection_kwargs,
+        )
         cached_state = {
             "cache_params": cache_params,
             "cache_position_start": x_batched.size(1),
@@ -585,10 +688,12 @@ class FLABackbone(Backbone):
         cache_params = cached_state["cache_params"]
 
         x_batched, shape_info = self._prepare_fla_input(test_x)
+        projection_kwargs = self._resolve_deltanet_projection_kwargs(x_batched, kwargs)
         output = self._run_test_with_cache(
             x_batched,
             cache_params,
             cache_position_start=cache_position_start,
+            projection_kwargs=projection_kwargs,
         )
         return self._unprepare_fla_output(output, shape_info)
 
@@ -600,11 +705,20 @@ class FLABackbone(Backbone):
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
+        projection_kwargs: dict[str, torch.Tensor] | None = None,
     ) -> tuple[torch.Tensor, tp.Any | None]:
         use_cache = return_cache or (
             cache_params is not None and isinstance(self.fla, Mamba2Model)
         )
         kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": use_cache}
+        projection_kwargs = projection_kwargs or {}
+        if projection_kwargs:
+            if not self.supports_deltanet_input_projections:
+                raise ValueError(
+                    "DeltaNet projection sources were provided, but this backbone does not support them."
+                )
+            self._validate_projection_shapes(x, projection_kwargs)
+            kwargs.update(projection_kwargs)
         if cache_params is not None:
             if isinstance(self.fla, self._CUSTOM_RECURRENT_MODELS):
                 kwargs["past_key_values"] = cache_params
@@ -615,6 +729,7 @@ class FLABackbone(Backbone):
                 for ctx in self._patch_contexts(
                     use_custom_recurrent=use_custom_recurrent,
                     use_custom_shortconv=use_custom_shortconv,
+                    use_deltanet_projection_sources=bool(projection_kwargs),
                 ):
                     stack.enter_context(ctx)
                 out = self.fla(**kwargs)
@@ -645,6 +760,7 @@ class FLABackbone(Backbone):
         self, 
         use_custom_recurrent: bool,
         use_custom_shortconv : bool = False,
+        use_deltanet_projection_sources: bool = False,
     ) -> tp.Iterable[tp.ContextManager[tp.Any]]:
         """
         Get context managers for patching FLA model behavior. 
@@ -653,6 +769,11 @@ class FLABackbone(Backbone):
         model = self.fla
         contexts: list[tp.ContextManager[tp.Any]] = []
         contexts.append(_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv or use_custom_recurrent))
+        contexts.append(
+            _maybe_patch_deltanet_with_projection_sources(
+                use_deltanet_projection_sources and self.supports_deltanet_input_projections
+            )
+        )
 
         patch_registry: tuple[
             tuple[
@@ -683,6 +804,7 @@ class FLABackbone(Backbone):
         cache_position_start: int | None = None,
         use_custom_recurrent: bool = True,
         use_custom_shortconv: bool = True,
+        projection_kwargs: dict[str, torch.Tensor] | None = None,
     ) -> torch.Tensor:
         """
         Run the FLA model on test inputs using cached past key values in parallel.
@@ -696,32 +818,48 @@ class FLABackbone(Backbone):
 
         batch_size, seq_len, embed_dim = test_x.shape
         supports_custom_recurrent = self._supports_custom_recurrent()
+        projection_kwargs = projection_kwargs or {}
+        self._validate_projection_shapes(test_x, projection_kwargs)
 
-        def _run_parallel_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
+        def _run_parallel_chunk(
+            chunk_x: torch.Tensor,
+            chunk_projection_kwargs: dict[str, torch.Tensor],
+        ) -> torch.Tensor:
             chunk_len = chunk_x.size(1)
             if not use_custom_recurrent or not supports_custom_recurrent:
                 expanded_cache = self._repeat_cache(cache_params, chunk_len)
             else:
                 expanded_cache = cache_params
             chunk_flat = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
+            chunk_projection_flat = self._flatten_decode_projection_kwargs(
+                chunk_projection_kwargs,
+                batch_size=batch_size,
+                seq_len=chunk_len,
+            )
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
+                projection_kwargs=chunk_projection_flat,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
 
         if self.cache_chunk_size is None or seq_len <= self.cache_chunk_size:
-            return _run_parallel_chunk(test_x)
+            return _run_parallel_chunk(test_x, projection_kwargs)
 
         outputs = []
         for chunk_start in range(0, seq_len, self.cache_chunk_size):
             chunk_end = min(chunk_start + self.cache_chunk_size, seq_len)
             chunk_x = test_x[:, chunk_start:chunk_end]
-            outputs.append(_run_parallel_chunk(chunk_x))
+            chunk_projection_kwargs = self._slice_projection_kwargs(
+                projection_kwargs,
+                chunk_start,
+                chunk_end,
+            )
+            outputs.append(_run_parallel_chunk(chunk_x, chunk_projection_kwargs))
         return torch.cat(outputs, dim=1)
     
     def _run_test_with_cache_naive(
@@ -731,6 +869,7 @@ class FLABackbone(Backbone):
         cache_position_start: int | None = None,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
+        projection_kwargs: dict[str, torch.Tensor] | None = None,
     ) -> torch.Tensor:
         """
         Sequentially processes the test sequence one token at a time.
@@ -742,15 +881,23 @@ class FLABackbone(Backbone):
 
         output_tokens = []
         seq_len = test_x.size(1)
+        projection_kwargs = projection_kwargs or {}
+        self._validate_projection_shapes(test_x, projection_kwargs)
     
         for t in range(seq_len):
             current_input = test_x[:, t : t + 1, :]  # shape (batch, 1, dim)
+            current_projection_kwargs = self._slice_projection_kwargs(
+                projection_kwargs,
+                t,
+                t + 1,
+            )
             output, _ = self._run_fla(
                 current_input,
                 cache_params=self._copy_cache(cache_params),
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
+                projection_kwargs=current_projection_kwargs,
             )
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)
@@ -788,18 +935,37 @@ class FLABackbone(Backbone):
         # Input x is usually [Batch, SeqLen, NumTokens, EmSize]
         # FLA expects [Batch, SeqLen, EmSize] -> so we flatten NumTokens into Batch
         x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
+        projection_kwargs = self._resolve_deltanet_projection_kwargs(x_batched, kwargs)
 
         train_len = min(single_eval_pos, seq_len)
     
         if self.sequence_mode in {"Comb_ST", "Int_ST"} or not self.training:
             train_x = x_batched[:, :train_len]
             test_x = x_batched[:, train_len:]
+            train_projection_kwargs = self._slice_projection_kwargs(
+                projection_kwargs,
+                0,
+                train_len,
+            )
+            test_projection_kwargs = self._slice_projection_kwargs(
+                projection_kwargs,
+                train_len,
+                seq_len,
+            )
 
-            train_out, state = self.incontext_fit(train_x)
-            test_out = self.incontext_predict(test_x, state)
+            train_out, state = self.incontext_fit(train_x, **train_projection_kwargs)
+            test_out = self.incontext_predict(
+                test_x,
+                state,
+                **test_projection_kwargs,
+            )
             attn_out = torch.cat([train_out, test_out], dim=1)
         else:
-            attn_out, _ = self._run_fla(x_batched, return_cache=False)
+            attn_out, _ = self._run_fla(
+                x_batched,
+                return_cache=False,
+                projection_kwargs=projection_kwargs,
+            )
         
         out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
         return out

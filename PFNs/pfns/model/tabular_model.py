@@ -313,7 +313,7 @@ class TabularModel(nn.Module):
         assert x_bf is not None and y_bf is not None
         single_eval_pos = y_bf.shape[1]
 
-        embedded_input, _, should_interleave, _ = self._build_embedded_input(
+        embedded_input, _, should_interleave, _, backbone_kwargs = self._build_embedded_input(
             x_bf,
             y_bf,
             single_eval_pos=single_eval_pos,
@@ -328,6 +328,7 @@ class TabularModel(nn.Module):
         _, backbone_state = self.transformer_layers.incontext_fit(
             embedded_input,
             rope_pairwise_positions=should_interleave,
+            **backbone_kwargs,
         )
         return InContextState(backbone_state=backbone_state)
 
@@ -350,7 +351,7 @@ class TabularModel(nn.Module):
         x_bf, _, _ = self._prepare_batch_first_inputs(test_x, None, None)
         assert x_bf is not None
 
-        embedded_input, current_context_len, should_interleave, Int_MT_mode = self._build_embedded_input(
+        embedded_input, current_context_len, should_interleave, Int_MT_mode, backbone_kwargs = self._build_embedded_input(
             x_bf,
             None,
             # single_eval_pos=None signals pure test-time transform while
@@ -366,6 +367,7 @@ class TabularModel(nn.Module):
             embedded_input,
             state.backbone_state,
             rope_pairwise_positions=should_interleave,
+            **backbone_kwargs,
         )
 
         output_decoded = self._decode_from_encoder_out(
@@ -479,7 +481,7 @@ class TabularModel(nn.Module):
         y_style: torch.Tensor | None,
         categorical_inds: list[int] | None,
         cache_trainset_representation: bool,
-    ) -> tuple[torch.Tensor, int, bool, bool]:
+    ) -> tuple[torch.Tensor, int, bool, bool, dict[str, torch.Tensor]]:
         current_context_len = single_eval_pos or 0
 
         if isinstance(x, dict):
@@ -734,6 +736,14 @@ class TabularModel(nn.Module):
                 # b s 1 e + b s 1 e -> b s 1 e
                 embedded_input = embedded_x + embedded_y.unsqueeze(2)
 
+        backbone_kwargs = self._build_backbone_projection_kwargs(
+            embedded_x,
+            embedded_y,
+            should_interleave=should_interleave,
+            style=style,
+            y_style=y_style,
+        )
+
         if style is not None:
             embedded_style = self.style_encoder(
                 batched_style
@@ -792,7 +802,38 @@ class TabularModel(nn.Module):
             )
         del embedded_y, embedded_x
 
-        return embedded_input, current_context_len, should_interleave, Int_MT_mode
+        return (
+            embedded_input,
+            current_context_len,
+            should_interleave,
+            Int_MT_mode,
+            backbone_kwargs,
+        )
+
+    def _build_backbone_projection_kwargs(
+        self,
+        embedded_x: torch.Tensor,
+        embedded_y: torch.Tensor,
+        *,
+        should_interleave: bool,
+        style: torch.Tensor | None,
+        y_style: torch.Tensor | None,
+    ) -> dict[str, torch.Tensor]:
+        if (
+            not getattr(self.transformer_layers, "supports_deltanet_input_projections", False)
+            or should_interleave
+            or self.attention_between_features
+            or style is not None
+            or y_style is not None
+        ):
+            return {}
+
+        embedded_y_tokens = embedded_y.unsqueeze(2)
+        return {
+            "deltanet_qk_input": embedded_x,
+            "deltanet_v_input": embedded_y_tokens,
+            "deltanet_beta_input": embedded_x + embedded_y_tokens,
+        }
 
     def _decode_from_encoder_out(
         self,
@@ -868,7 +909,7 @@ class TabularModel(nn.Module):
                 single_eval_pos is not None
             ), "_forward expects single_eval_pos if not caching for pure inference or during training"
 
-        embedded_input, current_context_len, should_interleave, Int_MT_mode = self._build_embedded_input(
+        embedded_input, current_context_len, should_interleave, Int_MT_mode, backbone_kwargs = self._build_embedded_input(
             x,
             y,
             single_eval_pos=single_eval_pos,
@@ -884,6 +925,7 @@ class TabularModel(nn.Module):
             half_layers=half_layers,
             cache_trainset_representation=self.cache_trainset_representation,
             rope_pairwise_positions=should_interleave,
+            **backbone_kwargs,
         )  # b s (num_groups+1_for_y) e -> b s (num_groups+1_for_y) e
 
         del embedded_input

@@ -228,3 +228,45 @@ def test_incontext_fit_predict_matches_forward_fla(model_type: str) -> None:
         rtol=rtol,
         atol=atol,
     )
+
+
+def test_incontext_fit_predict_matches_forward_deltanet_input_projections() -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("FLA equivalence test requires CUDA.")
+
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+    num_features = 4
+    train_len = 7
+    ninp = fla_hidden_size("deltanet", size="equivalence")
+    backbone = build_fla_backbone(
+        "deltanet",
+        size="equivalence",
+        sequence_mode="Comb_ST",
+        deltanet_input_projections=True,
+        train=False,
+    )
+    model = _build_model(
+        backbone=backbone,
+        ninp=ninp,
+        num_features=num_features,
+        attention_between_features=False,
+        device=device,
+    )
+
+    train_x, train_y, test_x = _sample_batch(
+        device=device,
+        train_len=train_len,
+        num_features=num_features,
+    )
+
+    rtol, atol = fla_tolerances("deltanet", default=(1e-5, 1e-5))
+    _assert_incontext_fit_predict_matches_forward(
+        model,
+        train_x=train_x,
+        train_y=train_y,
+        test_x=test_x,
+        train_len=train_len,
+        rtol=rtol,
+        atol=atol,
+    )

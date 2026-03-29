@@ -215,6 +215,7 @@ def get_config(
     cache_chunk_size: int | None = None,
     use_short_conv: bool | None = None,
     feature_positional_embedding: str | None = None,
+    deltanet_input_projections: bool = False,
     config_kwargs_override: dict[str, object] | None = None,
 ) -> MainConfig:
     """Build a MainConfig for FLA backbone training."""
@@ -335,6 +336,7 @@ def get_config(
         "model_type": model_type,
         "config_kwargs": resolved_config_kwargs,
         "sequence_mode": sequence_mode,
+        "deltanet_input_projections": bool(deltanet_input_projections),
     }
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
@@ -388,6 +390,7 @@ def get_config(
         "evalsplit" if eval_pos_split_pct is not None else None,
         f"stages{len(resolved_seq_len_stages)}" if resolved_seq_len_stages else None,
         f"cache{cache_chunk_size}" if cache_chunk_size else None,
+        "xyproj" if deltanet_input_projections else None,
         f"lr{resolved_lr:g}" if lr else None,
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,

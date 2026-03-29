@@ -564,6 +564,263 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
         deltanet_layer.chunk_delta_rule = original_chunk_delta_rule
 
 @contextmanager
+def _maybe_patch_deltanet_with_projection_sources(
+    enabled: bool,
+):
+    if not enabled:
+        yield
+        return
+    import fla.layers.delta_net as deltanet_layer
+    import fla.models.delta_net.modeling_delta_net as deltanet_modeling
+
+    original_layer_forward = deltanet_layer.DeltaNet.forward
+    original_block_forward = deltanet_modeling.DeltaNetBlock.forward
+
+    def _pop_projection_sources(
+        kwargs: dict[str, tp.Any],
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+        return (
+            kwargs.pop("deltanet_qk_input", None),
+            kwargs.pop("deltanet_v_input", None),
+            kwargs.pop("deltanet_beta_input", None),
+        )
+
+    def _forward_with_projection_sources(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        past_key_values=None,
+        use_cache: bool | None = False,
+        output_attentions: bool | None = False,
+        **kwargs,
+    ):
+        qk_input, v_input, beta_input = _pop_projection_sources(kwargs)
+        if qk_input is None and v_input is None and beta_input is None:
+            return original_layer_forward(
+                self,
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                **kwargs,
+            )
+
+        if attention_mask is not None:
+            assert len(attention_mask.shape) == 2, (
+                "Expected attention_mask as a 0-1 matrix with shape [batch_size, seq_len] "
+                "for padding purposes (0 indicating padding). "
+                "Arbitrary attention masks of shape [batch_size, seq_len, seq_len] are not allowed."
+            )
+
+        def _resolve_projection_input(
+            source: torch.Tensor | None,
+            name: str,
+        ) -> torch.Tensor:
+            resolved = hidden_states if source is None else source
+            if resolved.shape != hidden_states.shape:
+                raise ValueError(
+                    f"{name} must match hidden_states shape {tuple(hidden_states.shape)}, "
+                    f"got {tuple(resolved.shape)}."
+                )
+            return resolved
+
+        qk_input = _resolve_projection_input(qk_input, "deltanet_qk_input")
+        v_input = _resolve_projection_input(v_input, "deltanet_v_input")
+        beta_input = _resolve_projection_input(beta_input, "deltanet_beta_input")
+
+        batch_size, q_len, _ = hidden_states.shape
+        mode = "fused_recurrent" if q_len <= 64 else self.mode
+
+        last_state = deltanet_layer.get_layer_cache(self, past_key_values)
+
+        cu_seqlens = kwargs.get("cu_seqlens")
+        if attention_mask is not None:
+            indices, cu_seqlens, _ = deltanet_layer.get_unpad_data(attention_mask[:, -q_len:])
+
+            def _unpad(x: torch.Tensor) -> torch.Tensor:
+                return deltanet_layer.index_first_axis(
+                    deltanet_layer.rearrange(x, "b s ... -> (b s) ..."),
+                    indices,
+                ).unsqueeze(0)
+
+            hidden_states = _unpad(hidden_states)
+            qk_input = _unpad(qk_input)
+            v_input = _unpad(v_input)
+            beta_input = _unpad(beta_input)
+
+        if self.use_short_conv:
+            conv_state_q, conv_state_k, conv_state_v = None, None, None
+            if last_state is not None:
+                conv_state_q, conv_state_k, conv_state_v = last_state["conv_state"]
+            q, conv_state_q = self.q_conv1d(
+                x=self.q_proj(qk_input),
+                cache=conv_state_q,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+            )
+            k, conv_state_k = self.k_conv1d(
+                x=self.k_proj(qk_input),
+                cache=conv_state_k,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+            )
+            v, conv_state_v = self.v_conv1d(
+                x=self.v_proj(v_input),
+                cache=conv_state_v,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+            )
+        else:
+            q = self.q_proj(qk_input)
+            k = self.k_proj(qk_input)
+            if self.qk_activation == "silu":
+                q, k = F.silu(q), F.silu(k)
+            v = F.silu(self.v_proj(v_input))
+
+        q, k = map(
+            lambda x: deltanet_layer.rearrange(x, "... (h d) -> ... h d", d=self.head_k_dim),
+            (q, k),
+        )
+        v = deltanet_layer.rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
+        if self.qk_activation != "silu":
+            if self.qk_activation == "relu":
+                q, k = q.relu(), k.relu()
+            elif self.qk_activation == "elu":
+                q, k = deltanet_layer.elu_p1(q), deltanet_layer.elu_p1(k)
+            elif self.qk_activation != "identity":
+                raise NotImplementedError
+
+        if self.qk_norm == "sum":
+            q = deltanet_layer.sum_norm(q).to(q)
+            k = deltanet_layer.sum_norm(k).to(k)
+
+        if self.use_beta:
+            beta = self.b_proj(beta_input).sigmoid()
+        else:
+            beta = torch.ones_like(q[..., 0])
+
+        if self.allow_neg_eigval:
+            beta = beta * 2.0
+
+        recurrent_state = last_state["recurrent_state"] if last_state is not None else None
+        if mode == "fused_recurrent":
+            o, recurrent_state = deltanet_layer.fused_recurrent_delta_rule(
+                q=q,
+                k=k,
+                v=v,
+                beta=beta,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+                use_qk_l2norm_in_kernel=(self.qk_norm == "l2"),
+            )
+        elif mode == "chunk":
+            o, recurrent_state = deltanet_layer.chunk_delta_rule(
+                q=q,
+                k=k,
+                v=v,
+                beta=beta,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                cu_seqlens=cu_seqlens,
+                use_qk_l2norm_in_kernel=(self.qk_norm == "l2"),
+            )
+        else:
+            raise NotImplementedError(f"Not supported mode `{mode}`.")
+
+        deltanet_layer.update_layer_cache(
+            self,
+            past_key_values,
+            recurrent_state=recurrent_state,
+            conv_state=(conv_state_q, conv_state_k, conv_state_v) if self.use_short_conv else None,
+            offset=q_len,
+        )
+
+        if self.use_gate:
+            g = deltanet_layer.rearrange(
+                self.g_proj(hidden_states),
+                "... (h d) -> ... h d",
+                d=self.head_v_dim,
+            )
+            o = self.o_norm(o, g)
+        else:
+            o = self.o_norm(o)
+        o = deltanet_layer.rearrange(o, "b t h d -> b t (h d)")
+        o = self.o_proj(o)
+        if attention_mask is not None:
+            o = deltanet_layer.pad_input(o.squeeze(0), indices, batch_size, q_len)
+
+        return o, None, past_key_values
+
+    def _block_forward_with_projection_sources(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        past_key_values=None,
+        use_cache: bool | None = False,
+        output_attentions: bool | None = False,
+        **kwargs,
+    ):
+        qk_input, v_input, beta_input = _pop_projection_sources(kwargs)
+        if qk_input is None and v_input is None and beta_input is None:
+            return original_block_forward(
+                self,
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                **kwargs,
+            )
+
+        residual = hidden_states
+        hidden_states = self.attn_norm(hidden_states)
+
+        def _norm_if_present(x: torch.Tensor | None) -> torch.Tensor | None:
+            return self.attn_norm(x) if x is not None else None
+
+        attn_kwargs = dict(kwargs)
+        normalized_qk = _norm_if_present(qk_input)
+        normalized_v = _norm_if_present(v_input)
+        normalized_beta = _norm_if_present(beta_input)
+        if normalized_qk is not None:
+            attn_kwargs["deltanet_qk_input"] = normalized_qk
+        if normalized_v is not None:
+            attn_kwargs["deltanet_v_input"] = normalized_v
+        if normalized_beta is not None:
+            attn_kwargs["deltanet_beta_input"] = normalized_beta
+
+        hidden_states, attentions, past_key_values = self.attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            **attn_kwargs,
+        )
+        if self.config.fuse_norm:
+            hidden_states, residual = self.mlp_norm(hidden_states, residual, True)
+        else:
+            hidden_states = residual + hidden_states
+            residual = hidden_states
+            hidden_states = self.mlp_norm(hidden_states)
+        hidden_states = self.mlp(hidden_states, **kwargs)
+        hidden_states = residual + hidden_states
+
+        outputs = (hidden_states, attentions, past_key_values)
+
+        return outputs
+
+    deltanet_layer.DeltaNet.forward = _forward_with_projection_sources
+    deltanet_modeling.DeltaNetBlock.forward = _block_forward_with_projection_sources
+    try:
+        yield
+    finally:
+        deltanet_layer.DeltaNet.forward = original_layer_forward
+        deltanet_modeling.DeltaNetBlock.forward = original_block_forward
+
+@contextmanager
 def _maybe_patch_gated_deltanet_with_stateless_recurrent(
     enabled: bool,
 ):

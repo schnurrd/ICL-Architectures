@@ -143,6 +143,7 @@ def build_fla_backbone(
     size: str = "small",
     sequence_mode: str = "Comb_ST",
     cache_chunk_size: int | None = None,
+    deltanet_input_projections: bool = False,
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -153,6 +154,7 @@ def build_fla_backbone(
         config_kwargs=kwargs,
         sequence_mode=sequence_mode,
         cache_chunk_size=cache_chunk_size,
+        deltanet_input_projections=deltanet_input_projections,
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)

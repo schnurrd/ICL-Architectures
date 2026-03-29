@@ -58,6 +58,48 @@ def test_fla_linear_attn_matches_gla_without_gating():
     torch.testing.assert_close(final_state_linear, final_state_gla, rtol=0.0, atol=0.0)
 
 
+def test_deltanet_projection_sources_match_baseline_and_change_output():
+    if not torch.cuda.is_available():
+        pytest.skip("FLA backend requires CUDA/Triton for this test.")
+
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+
+    backbone_reference = build_fla_backbone("deltanet", train=True).to(device)
+    backbone_custom = build_fla_backbone(
+        "deltanet",
+        train=True,
+        deltanet_input_projections=True,
+    ).to(device)
+    backbone_custom.load_state_dict(backbone_reference.state_dict())
+
+    batch_size = 2
+    seq_len = 14
+    train_len = 8
+    embed_dim = fla_hidden_size("deltanet")
+    x = torch.randn(batch_size, seq_len, 1, embed_dim, device=device)
+
+    with torch.no_grad():
+        baseline = backbone_reference(x, single_eval_pos=train_len)
+        shared_input = backbone_custom(
+            x,
+            single_eval_pos=train_len,
+            deltanet_qk_input=x,
+            deltanet_v_input=x,
+            deltanet_beta_input=x,
+        )
+        changed_v = backbone_custom(
+            x,
+            single_eval_pos=train_len,
+            deltanet_qk_input=x,
+            deltanet_v_input=(x * -0.5),
+            deltanet_beta_input=x,
+        )
+
+    torch.testing.assert_close(shared_input, baseline, rtol=1e-4, atol=1e-4)
+    assert not torch.allclose(changed_v, baseline, rtol=1e-6, atol=1e-6)
+
+
 @pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
 def test_fla_test_cache_matches_naive(model_type: str):
     if not torch.cuda.is_available():
