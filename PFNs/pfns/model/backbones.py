@@ -10,6 +10,7 @@ import typing as tp
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import torch
 from torch import nn
@@ -336,9 +337,6 @@ class FLABackboneConfig(BackboneConfig):
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_gates_only: bool = True
-    # Backward-compatibility only: older checkpoints may serialize this field.
-    # It is ignored by FLABackbone and has no effect on training/inference.
-    deltanet_state_reg_weight: float | None = None
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
@@ -611,7 +609,6 @@ class FLABackbone(Backbone):
         x: torch.Tensor,
         *,
         cache_params: tp.Any | None = None,
-        cache_position_start: int | None = None,
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
@@ -722,7 +719,6 @@ class FLABackbone(Backbone):
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
-                cache_position_start=cache_position_start,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
@@ -764,7 +760,6 @@ class FLABackbone(Backbone):
             output, _ = self._run_fla(
                 current_input,
                 cache_params=self._copy_cache(cache_params),
-                cache_position_start=cache_position_start,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
@@ -877,6 +872,23 @@ class LinearAttentionBackbone(Backbone):
         if self.recompute_every_n_layers is not None and self.recompute_every_n_layers <= 0:
             raise ValueError("recompute_every_n_layers must be >= 1")
 
+    @staticmethod
+    def _pack_recurrent_state(state: dict[str, torch.Tensor]) -> torch.Tensor:
+        return torch.cat([state["kv_state"], state["k_sum"].unsqueeze(-1)], dim=-1)
+
+    @staticmethod
+    def _unpack_recurrent_state(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        recurrent_state = state["recurrent_state"]
+        if "k_sum" in state:
+            return {
+                "kv_state": recurrent_state,
+                "k_sum": state["k_sum"],
+            }
+        return {
+            "kv_state": recurrent_state[..., :-1],
+            "k_sum": recurrent_state[..., -1],
+        }
+
     def forward(
         self,
         x: torch.Tensor,
@@ -921,7 +933,19 @@ class LinearAttentionBackbone(Backbone):
         for layer in self.layers:
             out, state = layer.incontext_fit(out)
             layer_states.append(state)
-        cached_state = {"layer_states": layer_states}
+        cached_state = {
+            "cache_params": SimpleNamespace(
+                layers=[
+                    SimpleNamespace(
+                        state={
+                            "recurrent_state": state["kv_state"],
+                            "k_sum": state["k_sum"],
+                        }
+                    )
+                    for state in layer_states
+                ]
+            )
+        }
         return out, cached_state
 
     def incontext_predict(
@@ -931,7 +955,14 @@ class LinearAttentionBackbone(Backbone):
         **kwargs: tp.Any,
     ) -> torch.Tensor:
         out = x
-        layer_states = cached_state.get("layer_states", [])
+        cache_params = cached_state.get("cache_params")
+        if cache_params is not None:
+            layer_states = [
+                self._unpack_recurrent_state(layer.state)
+                for layer in cache_params.layers
+            ]
+        else:
+            layer_states = cached_state.get("layer_states", [])
         for layer, state in zip(self.layers, layer_states):
             out = layer.incontext_predict(out, state)
         return out

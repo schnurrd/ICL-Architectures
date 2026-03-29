@@ -91,13 +91,13 @@ def test_fla_test_cache_matches_naive(model_type: str):
 
         _, past_2 = backbone._run_fla(train_x)
         assert past_2 is not None
-        out_fast = backbone._run_test_with_cache(test_x, past_2, cache_position_start=train_len)
+        out_fast = backbone._run_test_with_cache(test_x, past_2)
 
         _, past_3 = backbone._run_fla(train_x)
         assert past_3 is not None
         perm = torch.randperm(test_len, device=device)
         test_x_swapped = test_x[:, perm, :]
-        out_swapped = backbone._run_test_with_cache(test_x_swapped, past_3, cache_position_start=train_len)
+        out_swapped = backbone._run_test_with_cache(test_x_swapped, past_3)
         inv_perm = torch.argsort(perm)
         out_swapped = out_swapped[:, inv_perm, :]
 
@@ -106,11 +106,11 @@ def test_fla_test_cache_matches_naive(model_type: str):
         assert past_4 is not None
         test_x_pert = test_x.clone()
         test_x_pert[:, 0:1, :] += 10.0
-        out_pert = backbone._run_test_with_cache(test_x_pert, past_4, cache_position_start=train_len)
+        out_pert = backbone._run_test_with_cache(test_x_pert, past_4)
         
         _, past_5 = backbone._run_fla(train_x)
         assert past_5 is not None
-        out_cached_repeat = backbone._run_test_with_cache(test_x, past_5, cache_position_start=train_len, use_custom_recurrent=False)
+        out_cached_repeat = backbone._run_test_with_cache(test_x, past_5, use_custom_recurrent=False)
     
     rtol, atol = fla_cache_equivalence_tolerances(model_type)
     
@@ -161,7 +161,7 @@ def test_fla_cache_allows_train_gradients(model_type: str):
     train_x_fast = train_x_base.clone().requires_grad_(True)
     _, past_fast = backbone_fast._run_fla(train_x_fast)
     assert past_fast is not None
-    out_fast = backbone_fast._run_test_with_cache(test_x, past_fast, cache_position_start=train_len)
+    out_fast = backbone_fast._run_test_with_cache(test_x, past_fast)
     out_fast.sum().backward()
 
     assert train_x_naive.grad is not None, f"train_x_naive.grad is None for {model_type}"
@@ -200,14 +200,14 @@ def test_fla_cache_chunking_matches_gradients(model_type: str):
     test_x_full = test_x_base.clone().requires_grad_(True)
     _, past_full = backbone_full._run_fla(train_x_full)
     assert past_full is not None
-    out_full = backbone_full._run_test_with_cache(test_x_full, past_full, use_custom_recurrent=False, cache_position_start=train_len)
+    out_full = backbone_full._run_test_with_cache(test_x_full, past_full, use_custom_recurrent=False)
     out_full.sum().backward()
 
     train_x_chunked = train_x_base.clone().requires_grad_(True)
     test_x_chunked = test_x_base.clone().requires_grad_(True)
     _, past_chunked = backbone_chunked._run_fla(train_x_chunked)
     assert past_chunked is not None
-    out_chunked = backbone_chunked._run_test_with_cache(test_x_chunked, past_chunked, use_custom_recurrent=False, cache_position_start=train_len)
+    out_chunked = backbone_chunked._run_test_with_cache(test_x_chunked, past_chunked, use_custom_recurrent=False)
     out_chunked.sum().backward()
 
     torch.testing.assert_close(train_x_chunked.grad, train_x_full.grad, rtol=1e-4, atol=1e-4)
@@ -267,7 +267,6 @@ def test_stateless_matches_repeated_cache_outputs_and_grads(model_type: str):
     out_ref, _ = backbone_reference._run_fla(
         test_x_flat,
         cache_params=repeated_cache,
-        cache_position_start=train_len,
         return_cache=False,
         use_custom_recurrent=False,
         use_custom_shortconv=True,
@@ -305,7 +304,7 @@ def test_edge_cases(model_type: str, batch_size: int, test_len: int, size: str):
 
     with torch.no_grad():
         _, past = backbone._run_fla(train_x)
-        out_fast = backbone._run_test_with_cache(test_x, past, cache_position_start=train_len)
+        out_fast = backbone._run_test_with_cache(test_x, past)
         out_naive = backbone._run_test_with_cache_naive(test_x, backbone._copy_cache(past), use_custom_recurrent=False)
 
     rtol, atol = fla_tolerances(model_type)
@@ -345,7 +344,7 @@ def test_model_parameter_gradients(model_type: str):
 
     train_x_fast = train_x.detach().clone().requires_grad_(True)
     _, past_fast = backbone_fast._run_fla(train_x_fast)
-    out_fast = backbone_fast._run_test_with_cache(test_x, past_fast, cache_position_start=train_len)
+    out_fast = backbone_fast._run_test_with_cache(test_x, past_fast)
     out_fast.sum().backward()
 
     rtol, atol = fla_tolerances(model_type)
@@ -392,7 +391,7 @@ def test_outputs_different_from_autoregressive(model_type: str):
         out_full_test = out_full[:, train_len:]
 
         _, past = backbone._run_fla(train_x)
-        out_cached = backbone._run_test_with_cache(test_x, past, cache_position_start=train_len)
+        out_cached = backbone._run_test_with_cache(test_x, past)
 
     assert not torch.allclose(out_full_test, out_cached, rtol=1e-4, atol=1e-4), (
         "Stateless cached output should differ from full autoregressive output"
@@ -430,7 +429,7 @@ def test_long_training_context(model_type: str, train_len: int):
     with torch.no_grad():
         _, past = backbone._run_fla(train_x)
         assert past is not None
-        out_fast = backbone._run_test_with_cache(test_x, past, cache_position_start=train_len)
+        out_fast = backbone._run_test_with_cache(test_x, past)
         out_naive = backbone._run_test_with_cache_naive(test_x, backbone._copy_cache(past), use_custom_recurrent=False)
 
     rtol, atol = fla_tolerances(model_type)
