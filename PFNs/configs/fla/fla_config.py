@@ -399,7 +399,6 @@ def get_config(
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
-        "mimetic" if mimetic_init else None,
         f"mimetic_{mimetic_init_mode}" if mimetic_init else None,
         f"fpe_{feature_positional_embedding}",
     ]
