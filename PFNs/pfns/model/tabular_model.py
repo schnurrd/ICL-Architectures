@@ -16,6 +16,11 @@ from pfns.model.encoders import (
     SequentialEncoder,
 )
 from pfns.model.layer import PerFeatureLayer
+from pfns.model.mode_normalization import CANONICAL_SEQUENCE_MODES
+from pfns.model.positional_embeddings import (
+    InterleavedPairPositionalEmbedding,
+    apply_interleaved_pair_and_role_embeddings,
+)
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
@@ -50,6 +55,7 @@ def estimate_state_size_bytes(state: Any) -> int:
 @dataclass
 class InContextState:
     backbone_state: Any
+    train_context_len: int = 0
 
     def size_bytes(self) -> int:
         return estimate_state_size_bytes(self.backbone_state)
@@ -96,6 +102,8 @@ class TabularModel(nn.Module):
         attention_between_features: bool = True,
         batch_first: bool = True,
         interleave_x_y_pairs: bool = False,
+        interleaved_pair_positional_embedding: InterleavedPairPositionalEmbedding = "none",
+        interleaved_pair_position_base: float = 128_000.0,
     ):
         """Initializes the TabularModel (formerly PerFeatureTransformer).
 
@@ -141,6 +149,14 @@ class TabularModel(nn.Module):
             interleave_x_y_pairs: If True, then the training set part of the sequence is interleaved
                 token-wise as (x1, y1, x2, y2, ...). The test set part is also
                 interleaved; missing test targets are encoded from NaN placeholders.
+            interleaved_pair_positional_embedding:
+                Input-level positional encoding to apply on interleaved `(x_i, y_i)`
+                token pairs. `"sinusoidal"` adds a shared pair-position signal plus
+                learned x/y role embeddings; `"none"` leaves the interleaved tokens
+                unchanged.
+            interleaved_pair_position_base:
+                Base used for sinusoidal pair-position embeddings on interleaved
+                `(x_i, y_i)` sequences.
         """
         if decoder_dict is None:
             decoder_dict = {"standard": (None, 1)}
@@ -165,6 +181,13 @@ class TabularModel(nn.Module):
         self.attention_between_features = attention_between_features
         self.batch_first = batch_first
         self.interleave_x_y_pairs = interleave_x_y_pairs
+        if interleaved_pair_positional_embedding not in {"none", "sinusoidal"}:
+            raise ValueError(
+                "interleaved_pair_positional_embedding must be one of "
+                f"{{'none', 'sinusoidal'}}, got {interleaved_pair_positional_embedding!r}."
+            )
+        self.interleaved_pair_positional_embedding = interleaved_pair_positional_embedding
+        self.interleaved_pair_position_base = float(interleaved_pair_position_base)
 
         assert transformer_layers is not None, "Must provide pre-built transformer_layers for TabularModel."
         self.transformer_layers = transformer_layers
@@ -196,6 +219,10 @@ class TabularModel(nn.Module):
             self.feature_positional_embedding_embeddings = nn.Embedding(1_000, ninp)
         elif feature_positional_embedding == "subspace":
             self.feature_positional_embedding_embeddings = nn.Linear(ninp // 4, ninp)
+
+        if self.interleaved_pair_positional_embedding == "sinusoidal":
+            self.interleaved_token_type_embedding = nn.Embedding(2, ninp)
+            nn.init.zeros_(self.interleaved_token_type_embedding.weight)
 
         self.cached_feature_positional_embeddings: torch.Tensor | None = None
 
@@ -295,6 +322,35 @@ class TabularModel(nn.Module):
             return all(isinstance(layer, PerFeatureLayer) for layer in layers)
         return False
 
+    def _get_sequence_mode(self) -> str | None:
+        sequence_mode = getattr(self.transformer_layers, "sequence_mode", None)
+        if sequence_mode in CANONICAL_SEQUENCE_MODES:
+            return sequence_mode
+
+        layers = None
+        if isinstance(self.transformer_layers, LayerStack):
+            layers = self.transformer_layers.layers
+        else:
+            layer_stack = getattr(self.transformer_layers, "layer_stack", None)
+            if layer_stack is not None:
+                layers = getattr(layer_stack, "layers", None)
+            if layers is None:
+                layers = getattr(self.transformer_layers, "layers", None)
+
+        if not isinstance(layers, (nn.ModuleList, list, tuple)) or len(layers) == 0:
+            return None
+
+        layer_modes = {
+            getattr(layer, "item_attention_mask_mode", None)
+            for layer in layers
+        }
+        layer_modes.discard(None)
+        if len(layer_modes) == 1:
+            layer_mode = next(iter(layer_modes))
+            if layer_mode in CANONICAL_SEQUENCE_MODES:
+                return layer_mode
+        return None
+
     def incontext_fit(
         self,
         x: torch.Tensor,
@@ -320,6 +376,9 @@ class TabularModel(nn.Module):
             style=style,
             y_style=y_style,
             categorical_inds=categorical_inds,
+            pair_position_offset=0,
+            pair_eval_pos=single_eval_pos,
+            use_cached_pair_positions=False,
             # Keep encoder preprocessing state (e.g. NaN replacement stats)
             # for the matching incontext_predict call.
             cache_trainset_representation=True,
@@ -329,7 +388,10 @@ class TabularModel(nn.Module):
             embedded_input,
             rope_pairwise_positions=should_interleave,
         )
-        return InContextState(backbone_state=backbone_state)
+        return InContextState(
+            backbone_state=backbone_state,
+            train_context_len=single_eval_pos,
+        )
 
     def incontext_predict(
         self,
@@ -349,6 +411,7 @@ class TabularModel(nn.Module):
 
         x_bf, _, _ = self._prepare_batch_first_inputs(test_x, None, None)
         assert x_bf is not None
+        train_context_len = int(getattr(state, "train_context_len", 0))
 
         embedded_input, current_context_len, should_interleave, Int_MT_mode = self._build_embedded_input(
             x_bf,
@@ -359,6 +422,9 @@ class TabularModel(nn.Module):
             style=style,
             y_style=y_style,
             categorical_inds=categorical_inds,
+            pair_position_offset=train_context_len,
+            pair_eval_pos=train_context_len,
+            use_cached_pair_positions=True,
             cache_trainset_representation=True,
         )
 
@@ -478,6 +544,9 @@ class TabularModel(nn.Module):
         style: torch.Tensor | None,
         y_style: torch.Tensor | None,
         categorical_inds: list[int] | None,
+        pair_position_offset: int,
+        pair_eval_pos: int | None,
+        use_cached_pair_positions: bool,
         cache_trainset_representation: bool,
     ) -> tuple[torch.Tensor, int, bool, bool]:
         current_context_len = single_eval_pos or 0
@@ -621,10 +690,10 @@ class TabularModel(nn.Module):
 
         # Making sure no label leakage ever happens for y["main"] (batch-first indexing)
         # current_context_len is the length of the training data part
+        sequence_mode = self._get_sequence_mode()
         if "main" in y and y["main"].shape[1] > current_context_len:
             if not (
-                (getattr(self.transformer_layers, "sequence_mode", None) == "Int_MT"
-                and self.transformer_layers.training)
+                (sequence_mode == "Int_MT" and self.transformer_layers.training)
             ):
                 y["main"][:, current_context_len:] = torch.nan
 
@@ -691,10 +760,11 @@ class TabularModel(nn.Module):
                 f"{torch.isnan(embedded_x).any()=} | {torch.isnan(embedded_y).any()=}",
             )
 
-        Int_MT_mode = (
-            getattr(self.transformer_layers, "sequence_mode", None) == "Int_MT"
+        Int_MT_mode = sequence_mode == "Int_MT"
+        should_interleave = (
+            sequence_mode in {"Int_MT", "Int_ST"}
+            or self.interleave_x_y_pairs
         )
-        should_interleave = Int_MT_mode or self.interleave_x_y_pairs
 
         if should_interleave and self.attention_between_features:
             raise ValueError(
@@ -714,6 +784,18 @@ class TabularModel(nn.Module):
             ), f"Only 1 feature per group supported for attention_between_features=False, got {embedded_x.shape=}."
 
             if should_interleave:
+                if self.interleaved_pair_positional_embedding == "sinusoidal":
+                    embedded_x, embedded_y = apply_interleaved_pair_and_role_embeddings(
+                        embedded_x,
+                        embedded_y,
+                        role_embeddings=self.interleaved_token_type_embedding.weight,
+                        position_offset=pair_position_offset,
+                        eval_pos=pair_eval_pos,
+                        use_cached_positions=use_cached_pair_positions,
+                        mask_name=sequence_mode if sequence_mode in {"Int_MT", "Int_ST"} else "Int_ST",
+                        is_training=self.training,
+                        position_base=self.interleaved_pair_position_base,
+                    )
                 if self._is_per_feature_transformer() or (Int_MT_mode and self.transformer_layers.training):
                     embedded_y_tokens = embedded_y.unsqueeze(2)
                     embedded_input = torch.stack(
@@ -875,6 +957,9 @@ class TabularModel(nn.Module):
             style=style,
             y_style=y_style,
             categorical_inds=categorical_inds,
+            pair_position_offset=0,
+            pair_eval_pos=single_eval_pos,
+            use_cached_pair_positions=False,
             cache_trainset_representation=self.cache_trainset_representation,
         )
 

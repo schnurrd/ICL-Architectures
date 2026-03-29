@@ -213,9 +213,9 @@ def get_config(
     aggregate_k_gradients: int | None = None,
     # Model options
     cache_chunk_size: int | None = None,
-    use_rope: bool = False,
-    rope_base: float = 128_000.0,
     use_short_conv: bool | None = None,
+    interleaved_pair_positional_embedding: str = "sinusoidal",
+    interleaved_pair_position_base: float = 128_000.0,
     feature_positional_embedding: str | None = None,
     config_kwargs_override: dict[str, object] | None = None,
 ) -> MainConfig:
@@ -337,8 +337,6 @@ def get_config(
         "model_type": model_type,
         "config_kwargs": resolved_config_kwargs,
         "sequence_mode": sequence_mode,
-        "use_rope": bool(use_rope),
-        "rope_base": float(rope_base),
     }
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
@@ -362,6 +360,8 @@ def get_config(
         attention_between_features=False,
         feature_positional_embedding=feature_positional_embedding,
         interleave_x_y_pairs=sequence_mode.startswith("Int"),
+        interleaved_pair_positional_embedding=interleaved_pair_positional_embedding,
+        interleaved_pair_position_base=float(interleaved_pair_position_base),
     )
 
     # Build optimizer and logging config.
@@ -396,8 +396,18 @@ def get_config(
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
-        "rope" if use_rope else "no_rope",
         f"fpe_{feature_positional_embedding}",
+        (
+            None
+            if interleaved_pair_positional_embedding == "sinusoidal"
+            else f"pairpos_{interleaved_pair_positional_embedding}"
+        ),
+        (
+            f"pairbase{interleaved_pair_position_base:g}"
+            if interleaved_pair_positional_embedding == "sinusoidal"
+            and interleaved_pair_position_base != 128_000.0
+            else None
+        ),
     ]
     extras_str = "_".join(e for e in extras if e)
     wandb_name = (

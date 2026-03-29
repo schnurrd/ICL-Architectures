@@ -28,7 +28,6 @@ from pfns.model.fla_patches import (
     _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
     _maybe_patch_gated_deltanet_with_stateless_recurrent,
-    _maybe_patch_linear_attn_with_qk_rope,
     _maybe_patch_mamba2_with_stateless_recurrent,
     _maybe_patch_linear_attn_with_stateless_recurrent,
     _maybe_patch_shortconv_forward_pytorch,
@@ -39,7 +38,6 @@ from pfns.model.mode_normalization import (
     CANONICAL_SEQUENCE_MODES,
     resolve_sequence_mode,
 )
-from pfns.model.rope import build_rope_positions
 from pfns.model.rebased_linear_attention import RebasedLinearAttention
 from pfns.model.tabular_model import LayerStack
 # Registry mapping model types to their config and model classes
@@ -333,8 +331,6 @@ class FLABackboneConfig(BackboneConfig):
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
-    use_rope: bool = False
-    rope_base: float = 128_000.0
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
@@ -368,8 +364,6 @@ class FLABackboneConfig(BackboneConfig):
             fla_model=fla_model,
             sequence_mode=self.sequence_mode,
             cache_chunk_size=self.cache_chunk_size,
-            use_rope=self.use_rope,
-            rope_base=self.rope_base,
         )
 
 
@@ -390,41 +384,11 @@ class FLABackbone(Backbone):
         fla_model: nn.Module,
         sequence_mode: str = "Comb_ST",
         cache_chunk_size: int | None = None,
-        use_rope: bool = False,
-        rope_base: float = 128_000.0,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
         self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
-        self.use_rope = bool(use_rope)
-        self.rope_base = float(rope_base)
-        if self.use_rope and not isinstance(self.fla, LinearAttentionModel):
-            raise NotImplementedError(
-                "FLA RoPE is currently only implemented for "
-                "FLA linear_attn backbones."
-            )
-
-    def _build_rope_positions(
-        self,
-        seq_len: int,
-        *,
-        device: torch.device,
-        rope_pairwise_positions: bool,
-        position_offset: int = 0,
-        eval_pos: int | None = None,
-        use_cached_kv: bool = False,
-    ) -> torch.Tensor:
-        return build_rope_positions(
-            seq_len,
-            device=device,
-            position_offset=position_offset,
-            rope_pairwise_positions=rope_pairwise_positions,
-            mask_name=self.sequence_mode,
-            eval_pos=eval_pos,
-            use_cached_kv=use_cached_kv,
-            is_training=self.training,
-        )
 
     @staticmethod
     def _summarize_cache(cache_params: tp.Any) -> str:
@@ -601,21 +565,8 @@ class FLABackbone(Backbone):
         (B, S, N, E). However we currently only support N=1 for unflattened input.
         """
         x_batched, shape_info = self._prepare_fla_input(train_x)
-        rope_pairwise_positions = (
-            bool(kwargs.get("rope_pairwise_positions", True))
-            and self.use_rope
-        )
-        rope_positions = None
-        if self.use_rope:
-            rope_positions = self._build_rope_positions(
-                x_batched.size(1),
-                device=x_batched.device,
-                rope_pairwise_positions=rope_pairwise_positions,
-                position_offset=0,
-                eval_pos=x_batched.size(1),
-                use_cached_kv=False,
-            )
-        train_out, cache_params = self._run_fla(x_batched, return_cache=True, rope_positions=rope_positions)
+        del kwargs
+        train_out, cache_params = self._run_fla(x_batched, return_cache=True)
         cached_state = {
             "cache_params": cache_params,
             "cache_position_start": x_batched.size(1),
@@ -634,15 +585,11 @@ class FLABackbone(Backbone):
         cache_params = cached_state["cache_params"]
 
         x_batched, shape_info = self._prepare_fla_input(test_x)
-        rope_pairwise_positions = (
-            bool(kwargs.get("rope_pairwise_positions", True))
-            and self.use_rope
-        )
+        del kwargs
         output = self._run_test_with_cache(
             x_batched,
             cache_params,
             cache_position_start=cache_position_start,
-            rope_pairwise_positions=rope_pairwise_positions,
         )
         return self._unprepare_fla_output(output, shape_info)
 
@@ -654,7 +601,6 @@ class FLABackbone(Backbone):
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
-        rope_positions: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tp.Any | None]:
         use_cache = return_cache or (
             cache_params is not None and isinstance(self.fla, Mamba2Model)
@@ -670,7 +616,6 @@ class FLABackbone(Backbone):
                 for ctx in self._patch_contexts(
                     use_custom_recurrent=use_custom_recurrent,
                     use_custom_shortconv=use_custom_shortconv,
-                    rope_positions=rope_positions,
                 ):
                     stack.enter_context(ctx)
                 out = self.fla(**kwargs)
@@ -701,7 +646,6 @@ class FLABackbone(Backbone):
         self, 
         use_custom_recurrent: bool,
         use_custom_shortconv : bool = False,
-        rope_positions: torch.Tensor | None = None,
     ) -> tp.Iterable[tp.ContextManager[tp.Any]]:
         """
         Get context managers for patching FLA model behavior. 
@@ -710,13 +654,6 @@ class FLABackbone(Backbone):
         model = self.fla
         contexts: list[tp.ContextManager[tp.Any]] = []
         contexts.append(_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv or use_custom_recurrent))
-        contexts.append(
-            _maybe_patch_linear_attn_with_qk_rope(
-                self.use_rope and isinstance(model, LinearAttentionModel),
-                rope_base=self.rope_base,
-                positions=rope_positions,
-            )
-        )
 
         patch_registry: tuple[
             tuple[
@@ -747,7 +684,6 @@ class FLABackbone(Backbone):
         cache_position_start: int | None = None,
         use_custom_recurrent: bool = True,
         use_custom_shortconv: bool = True,
-        rope_pairwise_positions: bool = False,
     ) -> torch.Tensor:
         """
         Run the FLA model on test inputs using cached past key values in parallel.
@@ -769,28 +705,12 @@ class FLABackbone(Backbone):
             else:
                 expanded_cache = cache_params
             chunk_flat = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
-            rope_positions = None
-            if self.use_rope:
-                chunk_positions = self._build_rope_positions(
-                    chunk_len,
-                    device=chunk_x.device,
-                    rope_pairwise_positions=rope_pairwise_positions,
-                    position_offset=int(cache_position_start or 0) + chunk_start,
-                    eval_pos=int(cache_position_start or 0),
-                    use_cached_kv=expanded_cache is not None,
-                )
-                rope_positions = (
-                    chunk_positions.unsqueeze(0)
-                    .expand(batch_size, -1)
-                    .reshape(batch_size * chunk_len, 1)
-                )
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
-                rope_positions=rope_positions,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
@@ -813,7 +733,6 @@ class FLABackbone(Backbone):
         cache_position_start: int | None = None,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
-        rope_pairwise_positions: bool = False,
     ) -> torch.Tensor:
         """
         Sequentially processes the test sequence one token at a time.
@@ -828,24 +747,12 @@ class FLABackbone(Backbone):
     
         for t in range(seq_len):
             current_input = test_x[:, t : t + 1, :]  # shape (batch, 1, dim)
-            rope_positions = None
-            if self.use_rope:
-                token_positions = self._build_rope_positions(
-                    1,
-                    device=current_input.device,
-                    rope_pairwise_positions=rope_pairwise_positions,
-                    position_offset=int(cache_position_start or 0) + t,
-                    eval_pos=int(cache_position_start or 0),
-                    use_cached_kv=cache_params is not None,
-                )
-                rope_positions = token_positions.unsqueeze(0).expand(current_input.size(0), -1)
             output, _ = self._run_fla(
                 current_input,
                 cache_params=self._copy_cache(cache_params),
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
-                rope_positions=rope_positions,
             )
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)
@@ -883,10 +790,7 @@ class FLABackbone(Backbone):
         # Input x is usually [Batch, SeqLen, NumTokens, EmSize]
         # FLA expects [Batch, SeqLen, EmSize] -> so we flatten NumTokens into Batch
         x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
-        rope_pairwise_positions = (
-            bool(kwargs.get("rope_pairwise_positions", True))
-            and self.use_rope
-        )
+        del kwargs
 
         train_len = min(single_eval_pos, seq_len)
     
@@ -894,28 +798,11 @@ class FLABackbone(Backbone):
             train_x = x_batched[:, :train_len]
             test_x = x_batched[:, train_len:]
 
-            train_out, state = self.incontext_fit(
-                train_x,
-                rope_pairwise_positions=rope_pairwise_positions,
-            )
-            test_out = self.incontext_predict(
-                test_x,
-                state,
-                rope_pairwise_positions=rope_pairwise_positions,
-            )
+            train_out, state = self.incontext_fit(train_x)
+            test_out = self.incontext_predict(test_x, state)
             attn_out = torch.cat([train_out, test_out], dim=1)
         else:
-            rope_positions = None
-            if self.use_rope:
-                rope_positions = self._build_rope_positions(
-                    x_batched.size(1),
-                    device=x_batched.device,
-                    rope_pairwise_positions=rope_pairwise_positions,
-                    position_offset=0,
-                    eval_pos=single_eval_pos,
-                    use_cached_kv=False,
-                )
-            attn_out, _ = self._run_fla(x_batched, return_cache=False, rope_positions=rope_positions)
+            attn_out, _ = self._run_fla(x_batched, return_cache=False)
         
         out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
         return out

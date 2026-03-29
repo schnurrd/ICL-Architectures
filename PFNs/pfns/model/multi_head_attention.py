@@ -5,9 +5,9 @@ from functools import partial
 
 import torch
 
-from pfns.model.rope import apply_rope as apply_rope_tensor
-from pfns.model.rope import build_rope_inv_freq
-from pfns.model.rope import build_rope_positions
+from pfns.model.positional_embeddings import apply_rope as apply_rope_tensor
+from pfns.model.positional_embeddings import build_rope_inv_freq
+from pfns.model.positional_embeddings import build_rope_positions
 from pfns.model.save_peak_memory import support_save_peak_mem_factor
 from torch.utils.checkpoint import checkpoint
 from typing_extensions import override
