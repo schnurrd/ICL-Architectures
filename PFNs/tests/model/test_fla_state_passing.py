@@ -179,7 +179,6 @@ def test_state_passing_remembers_full_sequence_final_cache(model_type: str) -> N
         _, expected_cache = backbone._run_fla(
             test_x,
             cache_params=backbone._copy_cache(state["cache_params"]),
-            cache_position_start=state["cache_position_start"],
             return_cache=True,
         )
 

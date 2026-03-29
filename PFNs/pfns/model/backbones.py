@@ -574,7 +574,6 @@ class FLABackbone(Backbone):
         train_x: torch.Tensor,
         *,
         initial_cache_params: tp.Any | None = None,
-        initial_cache_position_start: int | None = None,
         **kwargs: tp.Any,
     ) -> tuple[torch.Tensor, tp.Any]:
         """Run the FLA model on the training context and return cached state.
@@ -586,13 +585,9 @@ class FLABackbone(Backbone):
         train_out, cache_params = self._run_fla(
             x_batched,
             cache_params=initial_cache_params,
-            cache_position_start=initial_cache_position_start,
             return_cache=True,
         )
-        cached_state = {
-            "cache_params": cache_params,
-            "cache_position_start": x_batched.size(1) + (initial_cache_position_start or 0),
-        }
+        cached_state = {"cache_params": cache_params}
         out = self._unprepare_fla_output(train_out, shape_info)
         return out, cached_state
 
@@ -603,14 +598,12 @@ class FLABackbone(Backbone):
         **kwargs: tp.Any,
     ) -> torch.Tensor:
         """Run the FLA model on test inputs using cached past key values in parallel."""
-        cache_position_start = cached_state.get("cache_position_start", None)
         cache_params = cached_state["cache_params"]
 
         x_batched, shape_info = self._prepare_fla_input(test_x)
         output = self._run_test_with_cache(
             x_batched,
             cache_params,
-            cache_position_start=cache_position_start,
         )
         return self._unprepare_fla_output(output, shape_info)
 
@@ -631,18 +624,15 @@ class FLABackbone(Backbone):
         ):
             outputs = []
             running_cache = cache_params
-            position = cache_position_start
             for t in range(x.size(1)):
                 out_t, running_cache = self._run_fla(
                     x[:, t : t + 1],
                     cache_params=running_cache,
-                    cache_position_start=position,
                     return_cache=True,
                     use_custom_recurrent=False,
                     use_custom_shortconv=use_custom_shortconv,
                 )
                 outputs.append(out_t)
-                position = 1 if position is None else position + 1
             output = torch.cat(outputs, dim=1)
             return output, running_cache if return_cache else None
 
@@ -681,9 +671,6 @@ class FLABackbone(Backbone):
                 cache_params = out.cache_params
             else:
                 raise RuntimeError("FLA model output does not contain past_key_values or cache_params.")
-            # Store cache_position_start as fallback for direct _run_fla calls (bypassing incontext_fit)
-            if cache_params is not None and not hasattr(cache_params, "_cache_position_start"):
-                cache_params._cache_position_start = x.size(1)
         return last_hidden_state, cache_params
 
     def _patch_contexts(
@@ -725,7 +712,6 @@ class FLABackbone(Backbone):
         self,
         test_x: torch.Tensor,
         cache_params: tp.Any,
-        cache_position_start: int | None = None,
         use_custom_recurrent: bool = True,
         use_custom_shortconv: bool = True,
     ) -> torch.Tensor:
@@ -736,8 +722,6 @@ class FLABackbone(Backbone):
             return test_x
 
         assert cache_params is not None, "Cache parameters must be provided for test-time evaluation."
-        if cache_position_start is None:
-            cache_position_start = getattr(cache_params, "_cache_position_start", None)
 
         batch_size, seq_len, embed_dim = test_x.shape
         supports_custom_recurrent = self._supports_custom_recurrent()
@@ -773,7 +757,6 @@ class FLABackbone(Backbone):
         self,
         test_x: torch.Tensor,
         cache_params: tp.Any | None,
-        cache_position_start: int | None = None,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
     ) -> torch.Tensor:
@@ -782,8 +765,6 @@ class FLABackbone(Backbone):
         """
         if test_x.numel() == 0:
             return test_x
-        if cache_position_start is None and cache_params is not None:
-            cache_position_start = getattr(cache_params, "_cache_position_start", None)
 
         output_tokens = []
         seq_len = test_x.size(1)
@@ -836,13 +817,12 @@ class FLABackbone(Backbone):
 
         train_len = min(single_eval_pos, seq_len)
         state_passing = self.state_passing if self.training else None
-        initial_cache_params, initial_cache_position_start = (
-            (None, None)
+        initial_cache_params = (
+            None
             if state_passing is None
-            else state_passing.initial_cache(
+            else state_passing.sample_initial_cache(
                 x_batched.size(0),
                 device=x_batched.device,
-                is_mamba2=isinstance(self.fla, Mamba2Model),
             )
         )
     
@@ -853,12 +833,11 @@ class FLABackbone(Backbone):
             train_out, state = self.incontext_fit(
                 train_x,
                 initial_cache_params=initial_cache_params,
-                initial_cache_position_start=initial_cache_position_start,
             )
             test_out = self.incontext_predict(test_x, state)
             if state_passing is not None:
                 state_passing.remember_split_cache(
-                    state,
+                    state["cache_params"],
                     test_x,
                     run_fla=self._run_fla,
                     copy_cache=self._copy_cache,
@@ -868,7 +847,6 @@ class FLABackbone(Backbone):
             attn_out, cache_params = self._run_fla(
                 x_batched,
                 cache_params=initial_cache_params,
-                cache_position_start=initial_cache_position_start,
                 return_cache=self.training and self.state_passing is not None,
             )
             if state_passing is not None:

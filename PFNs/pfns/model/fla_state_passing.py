@@ -124,16 +124,6 @@ class FLAStatePassing:
     def remember(self, cache_params: tp.Any | None) -> None:
         self.previous_cache = freeze_cache(cache_params)
 
-    def initial_cache(
-        self,
-        batch_size: int,
-        *,
-        device: torch.device,
-        is_mamba2: bool = False,
-    ) -> tuple[tp.Any | None, int | None]:
-        cache = self.sample_initial_cache(batch_size, device=device)
-        return cache, (1 if cache is not None and is_mamba2 else None)
-
     def sample_initial_cache(
         self,
         batch_size: int,
@@ -154,18 +144,17 @@ class FLAStatePassing:
 
     def remember_split_cache(
         self,
-        train_state: dict[str, tp.Any],
+        train_cache: tp.Any | None,
         test_x: torch.Tensor,
         *,
         run_fla: tp.Callable[..., tuple[torch.Tensor, tp.Any | None]],
         copy_cache: tp.Callable[[tp.Any], tp.Any],
     ) -> None:
-        final_cache = train_state["cache_params"]
+        final_cache = train_cache
         if test_x.numel() > 0:
             _, final_cache = run_fla(
                 test_x,
                 cache_params=copy_cache(final_cache),
-                cache_position_start=train_state["cache_position_start"],
                 return_cache=True,
             )
         self.remember(final_cache)
