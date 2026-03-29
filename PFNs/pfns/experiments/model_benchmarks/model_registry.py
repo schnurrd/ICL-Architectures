@@ -303,6 +303,12 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     #     "wandb_run_id": "linear_attention/runs/3yp9x3kf",
     #     "high_cardinality_categorical_threshold": 0,
     # },
+    "Linear_Attention_FLA_Comb_ST": { 
+        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+    },
+    "Linear_Attention_FLA_Comb_MT": { 
+        "wandb_run_id": "icl_arch/fla_models/8wf9f1qz",
+    },
 }
 
 BASED_MODELS: dict[str, dict[str, Any]] = {
