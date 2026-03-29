@@ -199,7 +199,7 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Oracle Hidden State (GLA)",
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 400,
-        "oracle_lr": 5e-3,
+        "oracle_lr": 5e-3, # lr was to low here
         "oracle_weight_decay": 0.0,
         "oracle_patience": 10,
         "oracle_query_batch_size": 8000,
@@ -214,7 +214,7 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Oracle Hidden State (GLA) New Base",
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 400,
-        "oracle_lr": 3e-3,
+        "oracle_lr": 4e-1, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
         "oracle_weight_decay": 1e-5,
         "oracle_patience": 20,
         "oracle_query_batch_size": 4000,
@@ -341,6 +341,32 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_log_every_steps": 200,
         "eval_autocast_dtype": "bf16",
     },
+    "Oracle_Hidden_State_Linear_Attention_Non_Causal_base": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Oracle Hidden State (Linear Attention)",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 3e1, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_query_batch_size": 4000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+    },
+    # "Oracle_Hidden_State_Rebased_feat_dim_32_base": {
+    #     **BASED_MODELS["Rebased_feat_dim_32"],
+    #     "display_name": "Oracle Hidden State (Rebased)",
+    #     "oracle_hidden_state_baseline": True,
+    #     "oracle_num_epochs": 400,
+    #     "oracle_lr": 5e1, 
+    #     "oracle_weight_decay": 1e-5,
+    #     "oracle_patience": 20,
+    #     "oracle_query_batch_size": 4000,
+    #     "oracle_selection_fraction": 0.1,
+    #     "oracle_evaluate_only_max_seqlen": True,
+    #     "oracle_verbose": True,
+    # },
 }
 
 GATED_DELTANET_MODELS_SEQ_LEN_CHANGES: dict[str, dict[str, Any]] = {

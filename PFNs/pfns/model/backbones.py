@@ -10,6 +10,7 @@ import typing as tp
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import torch
 from torch import nn
@@ -859,6 +860,23 @@ class LinearAttentionBackbone(Backbone):
         if self.recompute_every_n_layers is not None and self.recompute_every_n_layers <= 0:
             raise ValueError("recompute_every_n_layers must be >= 1")
 
+    @staticmethod
+    def _pack_recurrent_state(state: dict[str, torch.Tensor]) -> torch.Tensor:
+        return torch.cat([state["kv_state"], state["k_sum"].unsqueeze(-1)], dim=-1)
+
+    @staticmethod
+    def _unpack_recurrent_state(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        recurrent_state = state["recurrent_state"]
+        if "k_sum" in state:
+            return {
+                "kv_state": recurrent_state,
+                "k_sum": state["k_sum"],
+            }
+        return {
+            "kv_state": recurrent_state[..., :-1],
+            "k_sum": recurrent_state[..., -1],
+        }
+
     def forward(
         self,
         x: torch.Tensor,
@@ -903,7 +921,19 @@ class LinearAttentionBackbone(Backbone):
         for layer in self.layers:
             out, state = layer.incontext_fit(out)
             layer_states.append(state)
-        cached_state = {"layer_states": layer_states}
+        cached_state = {
+            "cache_params": SimpleNamespace(
+                layers=[
+                    SimpleNamespace(
+                        state={
+                            "recurrent_state": state["kv_state"],
+                            "k_sum": state["k_sum"],
+                        }
+                    )
+                    for state in layer_states
+                ]
+            )
+        }
         return out, cached_state
 
     def incontext_predict(
@@ -913,7 +943,14 @@ class LinearAttentionBackbone(Backbone):
         **kwargs: tp.Any,
     ) -> torch.Tensor:
         out = x
-        layer_states = cached_state.get("layer_states", [])
+        cache_params = cached_state.get("cache_params")
+        if cache_params is not None:
+            layer_states = [
+                self._unpack_recurrent_state(layer.state)
+                for layer in cache_params.layers
+            ]
+        else:
+            layer_states = cached_state.get("layer_states", [])
         for layer, state in zip(self.layers, layer_states):
             out = layer.incontext_predict(out, state)
         return out
