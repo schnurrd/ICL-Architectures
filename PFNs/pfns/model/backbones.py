@@ -35,7 +35,10 @@ from pfns.model.fla_patches import (
     _maybe_patch_linear_attn_with_stateless_recurrent,
     _maybe_patch_shortconv_forward_pytorch,
 )
-from pfns.model.fla_state_passing import FLAStatePassing
+from pfns.model.fla_state_passing import (
+    FLAStatePassing,
+    prepare_deltanet_cache_for_fla,
+)
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.linear_attention import LinearAttention
 from pfns.model.mode_normalization import (
@@ -1056,6 +1059,8 @@ class FLABackbone(Backbone):
                 device=x_batched.device,
             )
         )
+        if initial_cache_params is not None and isinstance(self.fla, DeltaNetModel):
+            initial_cache_params = prepare_deltanet_cache_for_fla(initial_cache_params)
 
         if self.sequence_mode in FLA_SPLIT_SEQUENCE_MODES or not self.training:
             attn_out, state = self._run_split_sequence(
