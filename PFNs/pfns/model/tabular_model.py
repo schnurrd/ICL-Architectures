@@ -310,33 +310,25 @@ class TabularModel(nn.Module):
 
     def _is_per_feature_transformer(self) -> bool:
         """Returns whether the backbone is the PerFeature transformer stack."""
-        layers = None
-        if isinstance(self.transformer_layers, LayerStack):
-            layers = self.transformer_layers.layers
-        else:
-            layer_stack = getattr(self.transformer_layers, "layer_stack", None)
-            if layer_stack is not None:
-                layers = getattr(layer_stack, "layers", None)
-            if layers is None:
-                layers = getattr(self.transformer_layers, "layers", None)
+        layers = self._get_transformer_layer_list()
         if isinstance(layers, (nn.ModuleList, list, tuple)) and len(layers) > 0:
             return all(isinstance(layer, PerFeatureLayer) for layer in layers)
         return False
+
+    def _get_transformer_layer_list(self) -> nn.ModuleList | list[nn.Module] | tuple[nn.Module, ...] | None:
+        layer_stack = getattr(self.transformer_layers, "layer_stack", None)
+        if layer_stack is not None:
+            layers = getattr(layer_stack, "layers", None)
+            if layers is not None:
+                return layers
+        return getattr(self.transformer_layers, "layers", None)
 
     def _get_sequence_mode(self) -> str | None:
         sequence_mode = getattr(self.transformer_layers, "sequence_mode", None)
         if sequence_mode in CANONICAL_SEQUENCE_MODES:
             return sequence_mode
 
-        layers = None
-        if isinstance(self.transformer_layers, LayerStack):
-            layers = self.transformer_layers.layers
-        else:
-            layer_stack = getattr(self.transformer_layers, "layer_stack", None)
-            if layer_stack is not None:
-                layers = getattr(layer_stack, "layers", None)
-            if layers is None:
-                layers = getattr(self.transformer_layers, "layers", None)
+        layers = self._get_transformer_layer_list()
 
         if not isinstance(layers, (nn.ModuleList, list, tuple)) or len(layers) == 0:
             return None

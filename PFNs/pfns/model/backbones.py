@@ -729,7 +729,6 @@ class FLABackbone(Backbone):
             return output
 
         if self.cache_chunk_size is None or seq_len <= self.cache_chunk_size:
-            chunk_start = 0
             return _run_parallel_chunk(test_x)
 
         outputs = []
