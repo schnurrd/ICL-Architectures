@@ -518,6 +518,20 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
+    # "Bidirectional_GLA_Comb_ST_1": {
+    #     "display_name": "Bidirectional 1 (GLA)",
+    #     "wandb_run_id": "fla_models/runs/8huzh1z4",
+    # },
+     "Bidirectional_GLA_Comb_ST": {
+        "display_name": "Bidirectional (GLA)",
+        "wandb_run_id": "fla_models/runs/s5rtc3kk",
+    },
+    "GLA_Comb_ST_Reference_bidirectional": {
+        "display_name": "Reference GLA",
+        "wandb_run_id": "fla_models/runs/2v2xw7d2",
+    }
+}
 
 ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     "Oracle_Hidden_State_GLA_Comb_ST_base": {
@@ -740,6 +754,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "deltanet_added_regularization": DELTANET_ADDED_REGULARIZATION,
     "deltanet_finetuned": DELTANET_FINETUNED_MODELS,
     "subsampled": SUBSAMPLED_MODELS,
+    "bidirectional": BIDIRECTIONAL_MODELS,
     "state_passing": STATE_PASSING_MODELS,
     "fla_models": {
         **KDA_MODELS,

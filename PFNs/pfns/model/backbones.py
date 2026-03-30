@@ -6,7 +6,6 @@ different backbones that can be used within the ModelConfig.
 from __future__ import annotations
 
 import copy
-import inspect
 import os
 import typing as tp
 from abc import ABC, abstractmethod
@@ -87,15 +86,6 @@ class BidirectionalFLALayer(nn.Module):
         self.forward_layer = layer
         self.backward_layer = layer if share_weights else copy.deepcopy(layer)
         self.fusion_out = nn.Linear(hidden_size * 2, hidden_size)
-
-        signature = inspect.signature(layer.forward)
-        self._accepts_var_kwargs = any(
-            param.kind == inspect.Parameter.VAR_KEYWORD
-            for param in signature.parameters.values()
-        )
-        self._accepted_kwargs = {
-            name for name in signature.parameters if name != "hidden_states"
-        }
         self._build_cache = False
 
     def set_runtime_mode(
@@ -113,26 +103,19 @@ class BidirectionalFLALayer(nn.Module):
         include_cache_inputs: bool,
         use_cache: bool,
     ) -> dict[str, tp.Any]:
-        branch_kwargs: dict[str, tp.Any] = {}
-        for key, value in kwargs.items():
-            if key in {"past_key_values", "cache_params"} and not include_cache_inputs:
-                continue
-            if key == "use_cache":
-                value = use_cache
-            if key == "output_attentions":
-                value = False
-            if reverse and key in {"attention_mask", "cache_position"}:
-                if torch.is_tensor(value) and value.ndim >= 1:
-                    value = value.flip(-1)
-            branch_kwargs[key] = value
-
-        if self._accepts_var_kwargs:
-            return branch_kwargs
-        return {
+        branch_kwargs = {
             key: value
-            for key, value in branch_kwargs.items()
-            if key in self._accepted_kwargs
+            for key, value in kwargs.items()
+            if include_cache_inputs or key not in {"past_key_values", "cache_params"}
         }
+        branch_kwargs["use_cache"] = use_cache
+        branch_kwargs["output_attentions"] = False
+        if reverse:
+            for key in ("attention_mask", "cache_position"):
+                value = branch_kwargs.get(key)
+                if torch.is_tensor(value) and value.ndim >= 1:
+                    branch_kwargs[key] = value.flip(-1)
+        return branch_kwargs
 
     @staticmethod
     def _extract_hidden_states(output: tp.Any) -> torch.Tensor:
@@ -175,11 +158,11 @@ class BidirectionalFLALayer(nn.Module):
         return combined_kwargs
 
     def forward(self, hidden_states: torch.Tensor, **kwargs: tp.Any) -> tp.Any:
-        has_cache_input = (
-            kwargs.get("past_key_values") is not None
-            or kwargs.get("cache_params") is not None
-        )
         use_cache = bool(kwargs.get("use_cache"))
+        has_cache_input = any(
+            kwargs.get(key) is not None
+            for key in ("past_key_values", "cache_params")
+        )
         forward_kwargs = self._prepare_branch_kwargs(
             kwargs,
             reverse=False,
@@ -189,6 +172,7 @@ class BidirectionalFLALayer(nn.Module):
         if has_cache_input and not self._build_cache:
             return self.forward_layer(hidden_states, **forward_kwargs)
 
+        reversed_hidden_states = hidden_states.flip(1)
         backward_kwargs = self._prepare_branch_kwargs(
             kwargs,
             reverse=True,
@@ -196,35 +180,29 @@ class BidirectionalFLALayer(nn.Module):
             use_cache=False,
         )
 
-        reference_output: tp.Any
         if self.share_weights and not use_cache:
             combined_kwargs = self._combine_branch_kwargs(forward_kwargs, backward_kwargs)
-        else:
-            combined_kwargs = None
+            if combined_kwargs is not None:
+                combined_output = self.forward_layer(
+                    torch.cat([hidden_states, reversed_hidden_states], dim=0),
+                    **combined_kwargs,
+                )
+                combined_hidden = self._extract_hidden_states(combined_output)
+                forward_hidden, backward_hidden = combined_hidden.chunk(2, dim=0)
+                fused_hidden = self.fusion_out(
+                    torch.cat([forward_hidden, backward_hidden.flip(1)], dim=-1)
+                )
+                return self._rebuild_output_like(combined_output, fused_hidden)
 
-        if combined_kwargs is not None:
-            combined_output = self.forward_layer(
-                torch.cat([hidden_states, hidden_states.flip(1)], dim=0),
-                **combined_kwargs,
-            )
-            combined_hidden = self._extract_hidden_states(combined_output)
-            forward_hidden, backward_hidden = combined_hidden.chunk(2, dim=0)
-            backward_hidden = backward_hidden.flip(1)
-            reference_output = combined_output
-        else:
-            forward_output = self.forward_layer(hidden_states, **forward_kwargs)
-            forward_hidden = self._extract_hidden_states(forward_output)
-
-            backward_output = self.backward_layer(
-                hidden_states.flip(1),
-                **backward_kwargs,
-            )
-            backward_hidden = self._extract_hidden_states(backward_output).flip(1)
-            reference_output = forward_output
-
-        fusion_input = torch.cat([forward_hidden, backward_hidden], dim=-1)
-        fused_hidden = self.fusion_out(fusion_input)
-        return self._rebuild_output_like(reference_output, fused_hidden)
+        forward_output = self.forward_layer(hidden_states, **forward_kwargs)
+        forward_hidden = self._extract_hidden_states(forward_output)
+        backward_output = self.backward_layer(
+            reversed_hidden_states,
+            **backward_kwargs,
+        )
+        backward_hidden = self._extract_hidden_states(backward_output).flip(1)
+        fused_hidden = self.fusion_out(torch.cat([forward_hidden, backward_hidden], dim=-1))
+        return self._rebuild_output_like(forward_output, fused_hidden)
 
 
 def _make_fla_model_bidirectional(
@@ -802,22 +780,6 @@ class FLABackbone(Backbone):
             .transpose(1, 2)
         )
 
-    def _run_split_sequence(
-        self,
-        x_batched: torch.Tensor,
-        *,
-        train_len: int,
-        initial_cache_params: tp.Any | None = None,
-    ) -> tuple[torch.Tensor, tp.Any]:
-        train_x = x_batched[:, :train_len]
-        test_x = x_batched[:, train_len:]
-        train_out, state = self.incontext_fit(
-            train_x,
-            initial_cache_params=initial_cache_params,
-        )
-        test_out = self.incontext_predict(test_x, state)
-        return torch.cat([train_out, test_out], dim=1), state
-
     def incontext_fit(
         self,
         train_x: torch.Tensor,
@@ -847,8 +809,9 @@ class FLABackbone(Backbone):
         **kwargs: tp.Any,
     ) -> torch.Tensor:
         """Run the FLA model on test inputs using cached past key values in parallel."""
-        x_batched, shape_info = self._prepare_fla_input(test_x)
         cache_params = cached_state["cache_params"]
+
+        x_batched, shape_info = self._prepare_fla_input(test_x)
         output = self._run_test_with_cache(
             x_batched,
             cache_params,
@@ -864,19 +827,15 @@ class FLABackbone(Backbone):
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        is_mamba2 = isinstance(self.fla, Mamba2Model)
-        build_bidirectional_cache = (
-            return_cache
-            and cache_params is None
+        use_cache = return_cache or (
+            cache_params is not None and isinstance(self.fla, Mamba2Model)
         )
-        use_cache = return_cache or (cache_params is not None and is_mamba2)
         kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": use_cache}
         if cache_params is not None:
             if isinstance(self.fla, self._CUSTOM_RECURRENT_MODELS):
                 kwargs["past_key_values"] = cache_params
             else:
                 raise ValueError("Unsupported FLA model type for cache_params.")
-
         try:
             with ExitStack() as stack:
                 for ctx in self._patch_contexts(
@@ -886,7 +845,7 @@ class FLABackbone(Backbone):
                     stack.enter_context(ctx)
                 stack.enter_context(
                     self._bidirectional_runtime_mode(
-                        build_cache=build_bidirectional_cache,
+                        build_cache=(return_cache and cache_params),
                     )
                 )
                 out = self.fla(**kwargs)
@@ -1063,11 +1022,12 @@ class FLABackbone(Backbone):
             initial_cache_params = prepare_deltanet_cache_for_fla(initial_cache_params)
 
         if self.sequence_mode in FLA_SPLIT_SEQUENCE_MODES or not self.training:
-            attn_out, state = self._run_split_sequence(
-                x_batched,
-                train_len=train_len,
+            train_out, state = self.incontext_fit(
+                x_batched[:, :train_len],
                 initial_cache_params=initial_cache_params,
             )
+            test_out = self.incontext_predict(x_batched[:, train_len:], state)
+            attn_out = torch.cat([train_out, test_out], dim=1)
             if state_passing is not None:
                 state_passing.remember(state["cache_params"])
         else:
