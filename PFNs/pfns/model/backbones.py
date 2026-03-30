@@ -397,6 +397,9 @@ class FLABackbone(Backbone):
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
+        assert not (
+            state_passing and isinstance(self.fla, Mamba2Model)
+        ), "Mamba2 does not support state_passing."
         self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
         self.state_passing = (
@@ -616,26 +619,6 @@ class FLABackbone(Backbone):
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        if (
-            cache_params is not None
-            and isinstance(self.fla, Mamba2Model)
-            and x.size(1) > 1
-            and not use_custom_recurrent
-        ):
-            outputs = []
-            running_cache = cache_params
-            for t in range(x.size(1)):
-                out_t, running_cache = self._run_fla(
-                    x[:, t : t + 1],
-                    cache_params=running_cache,
-                    return_cache=True,
-                    use_custom_recurrent=False,
-                    use_custom_shortconv=use_custom_shortconv,
-                )
-                outputs.append(out_t)
-            output = torch.cat(outputs, dim=1)
-            return output, running_cache if return_cache else None
-
         use_cache = return_cache or (
             cache_params is not None and isinstance(self.fla, Mamba2Model)
         )
@@ -836,18 +819,13 @@ class FLABackbone(Backbone):
             )
             test_out = self.incontext_predict(test_x, state)
             if state_passing is not None:
-                state_passing.remember_split_cache(
-                    state["cache_params"],
-                    test_x,
-                    run_fla=self._run_fla,
-                    copy_cache=self._copy_cache,
-                )
+                state_passing.remember(state["cache_params"])
             attn_out = torch.cat([train_out, test_out], dim=1)
         else:
             attn_out, cache_params = self._run_fla(
                 x_batched,
                 cache_params=initial_cache_params,
-                return_cache=self.training and self.state_passing is not None,
+                return_cache=self.state_passing is not None,
             )
             if state_passing is not None:
                 state_passing.remember(cache_params)

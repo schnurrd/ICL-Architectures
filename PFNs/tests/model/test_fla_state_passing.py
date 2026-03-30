@@ -5,11 +5,16 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from pfns.model.fla_state_passing import FLAStatePassing, aligned_indices
+from pfns.model.fla_state_passing import FLAStatePassing
 from tests.model.fla_test_utils import (
     FLA_MODEL_TYPES,
     build_fla_backbone,
     fla_hidden_size,
+)
+
+
+STATE_PASSING_MODEL_TYPES = tuple(
+    model_type for model_type in FLA_MODEL_TYPES if model_type != "mamba2"
 )
 
 
@@ -98,14 +103,23 @@ def test_state_passing_zeroes_mamba_style_cache() -> None:
     assert torch.count_nonzero(sampled.ssm_states) == 0
 
 
-def test_state_passing_uses_aligned_cycles_for_unequal_batch_sizes() -> None:
-    indices = aligned_indices(3, 8, device=torch.device("cpu"))
+def test_state_passing_cycles_cache_entries_for_unequal_batch_sizes() -> None:
+    recurrent_state = torch.arange(3 * 2, dtype=torch.float32).reshape(3, 2)
+    cache = _RecurrentCache(
+        layers=[_LayerCache(state={"recurrent_state": recurrent_state.clone()})]
+    )
+    helper = FLAStatePassing(dropout_prob=0.0)
+    helper.remember(cache)
 
-    assert tuple(indices.shape) == (8,)
-    torch.testing.assert_close(indices, torch.tensor([0, 1, 2, 0, 1, 2, 0, 1]))
+    sampled = helper.sample_initial_cache(8, device=torch.device("cpu"))
+
+    assert sampled is not None
+    sampled_state = sampled.layers[0].state["recurrent_state"]
+    expected = recurrent_state.index_select(0, torch.tensor([0, 1, 2, 0, 1, 2, 0, 1]))
+    torch.testing.assert_close(sampled_state, expected)
 
 
-@pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
+@pytest.mark.parametrize("model_type", STATE_PASSING_MODEL_TYPES)
 @pytest.mark.parametrize("sequence_mode", ["Comb_ST", "Comb_MT"])
 def test_state_passing_changes_training_outputs(
     model_type: str,
@@ -144,8 +158,8 @@ def test_state_passing_changes_training_outputs(
     assert not torch.allclose(out_with_prev, out_without_prev, rtol=1e-4, atol=1e-4)
 
 
-@pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
-def test_state_passing_remembers_full_sequence_final_cache(model_type: str) -> None:
+@pytest.mark.parametrize("model_type", STATE_PASSING_MODEL_TYPES)
+def test_state_passing_remembers_train_cache(model_type: str) -> None:
     pytest.importorskip("fla")
     if not torch.cuda.is_available():
         pytest.skip("FLA backend requires CUDA/Triton for this test.")
@@ -167,8 +181,6 @@ def test_state_passing_remembers_full_sequence_final_cache(model_type: str) -> N
     x = torch.randn(batch_size, seq_len, 1, embed_dim, device=device)
     x_batched = x.transpose(1, 2).reshape(batch_size, seq_len, embed_dim)
     train_x = x_batched[:, :train_len]
-    test_x = x_batched[:, train_len:]
-
     with torch.no_grad():
         assert backbone.state_passing is not None
         backbone.state_passing.reset()
@@ -176,10 +188,6 @@ def test_state_passing_remembers_full_sequence_final_cache(model_type: str) -> N
         remembered_cache = backbone.state_passing.previous_cache
 
         _, state = backbone.incontext_fit(train_x)
-        _, expected_cache = backbone._run_fla(
-            test_x,
-            cache_params=backbone._copy_cache(state["cache_params"]),
-            return_cache=True,
-        )
+        expected_cache = state["cache_params"]
 
     _assert_same_tensors(remembered_cache, expected_cache)

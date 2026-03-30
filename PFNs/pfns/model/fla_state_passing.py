@@ -76,6 +76,7 @@ def freeze_cache(cache_params: tp.Any) -> tp.Any:
 
 
 def cache_batch_size(cache_params: tp.Any) -> int:
+    """Infers the batch size from the cache_params structure."""
     if cache_params is None:
         raise ValueError("cache_params must not be None.")
     if torch.is_tensor(cache_params):
@@ -105,10 +106,6 @@ def zero_cache_entries(cache_params: tp.Any, zero_mask: torch.Tensor) -> tp.Any:
     )
 
 
-def aligned_indices(prev_batch_size: int, batch_size: int, *, device: torch.device) -> torch.Tensor:
-    return torch.arange(batch_size, device=device) % prev_batch_size
-
-
 @dataclass
 class FLAStatePassing:
     dropout_prob: float = 0.1
@@ -134,27 +131,10 @@ class FLAStatePassing:
         if previous_cache is None or batch_size <= 0:
             return None
         prev_batch_size = cache_batch_size(previous_cache)
-        indices = aligned_indices(prev_batch_size, batch_size, device=device)
+        indices = torch.arange(batch_size, device=device) % prev_batch_size
         cache = select_cache_entries(previous_cache, indices)
         return (
             cache
             if self.dropout_prob <= 0.0
             else zero_cache_entries(cache, torch.rand(batch_size, device=device) < self.dropout_prob)
         )
-
-    def remember_split_cache(
-        self,
-        train_cache: tp.Any | None,
-        test_x: torch.Tensor,
-        *,
-        run_fla: tp.Callable[..., tuple[torch.Tensor, tp.Any | None]],
-        copy_cache: tp.Callable[[tp.Any], tp.Any],
-    ) -> None:
-        final_cache = train_cache
-        if test_x.numel() > 0:
-            _, final_cache = run_fla(
-                test_x,
-                cache_params=copy_cache(final_cache),
-                return_cache=True,
-            )
-        self.remember(final_cache)
