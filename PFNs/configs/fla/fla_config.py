@@ -393,7 +393,7 @@ def get_config(
         f"stages{len(resolved_seq_len_stages)}" if resolved_seq_len_stages else None,
         f"cache{cache_chunk_size}" if cache_chunk_size else None,
         "sp" if state_passing else None,
-        f"spd{state_passing_dropout:g}" if state_passing else None,
+        f"spd{state_passing_dropout:g}" if state_passing and state_passing_dropout != 0.1 else None,
         f"lr{resolved_lr:g}" if lr else None,
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
