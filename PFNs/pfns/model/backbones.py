@@ -12,6 +12,7 @@ import typing as tp
 from abc import ABC, abstractmethod
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import torch
 from torch import nn
@@ -22,6 +23,7 @@ from fla.models import Mamba2Config, Mamba2Model
 from fla.models import KDAConfig, KDAModel
 from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
+from fla.models import LinearAttentionConfig, LinearAttentionModel
 
 from pfns import base_config
 from pfns.model.fla_patches import (
@@ -30,8 +32,10 @@ from pfns.model.fla_patches import (
     _maybe_patch_deltanet_with_stateless_recurrent,
     _maybe_patch_gated_deltanet_with_stateless_recurrent,
     _maybe_patch_mamba2_with_stateless_recurrent,
+    _maybe_patch_linear_attn_with_stateless_recurrent,
     _maybe_patch_shortconv_forward_pytorch,
 )
+from pfns.model.fla_state_passing import FLAStatePassing
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.linear_attention import LinearAttention
 from pfns.model.mode_normalization import (
@@ -47,6 +51,7 @@ FLA_MODEL_REGISTRY = {
     "kda": (KDAConfig, KDAModel),
     "deltanet": (DeltaNetConfig, DeltaNetModel),
     "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
+    "linear_attn": (LinearAttentionConfig, LinearAttentionModel),
 }
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 FLA_SPLIT_SEQUENCE_MODES = {"Comb_ST", "Int_ST"}
@@ -508,15 +513,16 @@ class TransformerBackbone(Backbone):
 class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
-    model_type: tp.Literal["gla", "mamba2", "kda", "deltanet", "gated_deltanet"] = "gla"
+    model_type: tp.Literal[
+        "gla", "mamba2", "kda", "deltanet", "gated_deltanet", "linear_attn"
+    ] = "linear_attn"
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
     bidirectional: bool = False
     bidirectional_share_weights: bool = True
-    # Backward-compatibility only: older checkpoints may serialize this field.
-    # It is ignored by FLABackbone and has no effect on training/inference.
-    deltanet_state_reg_weight: float | None = None
+    state_passing: bool = False
+    state_passing_dropout: float = 0.1
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
@@ -534,6 +540,8 @@ class FLABackboneConfig(BackboneConfig):
                 f"in {sorted(BIDIRECTIONAL_FLA_SEQUENCE_MODES)}, "
                 f"got {self.sequence_mode!r}."
             )
+        if not 0.0 <= self.state_passing_dropout <= 1.0:
+            raise ValueError("state_passing_dropout must be in [0, 1].")
 
     def create_backbone(self, ninp: int, attention_between_features: bool, **kwargs: tp.Any) -> "Backbone":
         ConfigClass, ModelClass = FLA_MODEL_REGISTRY[self.model_type]
@@ -564,23 +572,44 @@ class FLABackboneConfig(BackboneConfig):
             sequence_mode=self.sequence_mode,
             cache_chunk_size=self.cache_chunk_size,
             bidirectional=self.bidirectional,
+            state_passing=self.state_passing,
+            state_passing_dropout=self.state_passing_dropout,
         )
 
 
 class FLABackbone(Backbone):
     """Wrapper for FLA models to conform to Backbone interface."""
 
+    _CUSTOM_RECURRENT_MODELS: tuple[type[nn.Module], ...] = (
+        GLAModel,
+        KDAModel,
+        DeltaNetModel,
+        GatedDeltaNetModel,
+        Mamba2Model,
+        LinearAttentionModel,
+    )
+
     def __init__(
         self,
         fla_model: nn.Module,
         sequence_mode: str = "Comb_ST",
         cache_chunk_size: int | None = None,
+        state_passing: bool = False,
+        state_passing_dropout: float = 0.1,
         bidirectional: bool = False,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
+        assert not (
+            state_passing and isinstance(self.fla, Mamba2Model)
+        ), "Mamba2 does not support state_passing."
         self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
+        self.state_passing = (
+            FLAStatePassing(dropout_prob=state_passing_dropout)
+            if state_passing
+            else None
+        )
         self.bidirectional = bool(bidirectional)
 
     @property
@@ -637,7 +666,7 @@ class FLABackbone(Backbone):
         def _repeat_value(value: tp.Any) -> tp.Any:
             if torch.is_tensor(value):
                 if repeat == 1:
-                    return value
+                    return value.clone()
                 return value.repeat_interleave(repeat, dim=dim)
             if isinstance(value, tuple):
                 return tuple(_repeat_value(item) for item in value)
@@ -662,13 +691,13 @@ class FLABackbone(Backbone):
             return None
         if torch.is_tensor(cache_params):
             if repeat == 1:
-                return cache_params
+                return cache_params.clone()
             return cache_params.repeat_interleave(repeat, dim=0)
         if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):  # Mamba2 style
             cache_params_copy = FLABackbone._shallow_copy(cache_params)
             if repeat == 1:
-                cache_params_copy.conv_states = cache_params.conv_states
-                cache_params_copy.ssm_states = cache_params.ssm_states
+                cache_params_copy.conv_states = cache_params.conv_states.clone()
+                cache_params_copy.ssm_states = cache_params.ssm_states.clone()
             else:
                 cache_params_copy.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
                 cache_params_copy.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
@@ -785,6 +814,8 @@ class FLABackbone(Backbone):
     def incontext_fit(
         self,
         train_x: torch.Tensor,
+        *,
+        initial_cache_params: tp.Any | None = None,
         **kwargs: tp.Any,
     ) -> tuple[torch.Tensor, tp.Any]:
         """Run the FLA model on the training context and return cached state.
@@ -793,11 +824,12 @@ class FLABackbone(Backbone):
         (B, S, N, E). However we currently only support N=1 for unflattened input.
         """
         x_batched, shape_info = self._prepare_fla_input(train_x)
-        train_out, cache_params = self._run_fla(x_batched, return_cache=True)
-        cached_state = {
-            "cache_params": cache_params,
-            "cache_position_start": x_batched.size(1),
-        }
+        train_out, cache_params = self._run_fla(
+            x_batched,
+            cache_params=initial_cache_params,
+            return_cache=True,
+        )
+        cached_state = {"cache_params": cache_params}
         out = self._unprepare_fla_output(train_out, shape_info)
         return out, cached_state
 
@@ -809,12 +841,10 @@ class FLABackbone(Backbone):
     ) -> torch.Tensor:
         """Run the FLA model on test inputs using cached past key values in parallel."""
         x_batched, shape_info = self._prepare_fla_input(test_x)
-        cache_position_start = cached_state.get("cache_position_start", None)
         cache_params = cached_state["cache_params"]
         output = self._run_test_with_cache(
             x_batched,
             cache_params,
-            cache_position_start=cache_position_start,
         )
         return self._unprepare_fla_output(output, shape_info)
 
@@ -823,7 +853,6 @@ class FLABackbone(Backbone):
         x: torch.Tensor,
         *,
         cache_params: tp.Any | None = None,
-        cache_position_start: int | None = None,
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
@@ -836,18 +865,7 @@ class FLABackbone(Backbone):
         use_cache = return_cache or (cache_params is not None and is_mamba2)
         kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": use_cache}
         if cache_params is not None:
-            if is_mamba2:
-                kwargs["cache_params"] = cache_params
-                if cache_position_start is None:
-                    raise ValueError(
-                        "cache_position_start is required for Mamba2 when cache_params is provided."
-                    )
-                kwargs["cache_position"] = torch.arange(
-                    cache_position_start,
-                    cache_position_start + x.size(1),
-                    device=x.device,
-                ).unsqueeze(0).expand(x.size(0), -1)
-            elif isinstance(self.fla, (GLAModel, KDAModel, DeltaNetModel, GatedDeltaNetModel)):
+            if isinstance(self.fla, self._CUSTOM_RECURRENT_MODELS):
                 kwargs["past_key_values"] = cache_params
             else:
                 raise ValueError("Unsupported FLA model type for cache_params.")
@@ -883,9 +901,6 @@ class FLABackbone(Backbone):
                 cache_params = out.cache_params
             else:
                 raise RuntimeError("FLA model output does not contain past_key_values or cache_params.")
-            # Store cache_position_start as fallback for direct _run_fla calls (bypassing incontext_fit)
-            if cache_params is not None and not hasattr(cache_params, "_cache_position_start"):
-                cache_params._cache_position_start = x.size(1)
         return last_hidden_state, cache_params
 
     def _patch_contexts(
@@ -900,34 +915,33 @@ class FLABackbone(Backbone):
         model = self.fla
         contexts: list[tp.ContextManager[tp.Any]] = []
         contexts.append(_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv or use_custom_recurrent))
-        if not use_custom_recurrent:
-            return contexts
 
         patch_registry: tuple[
             tuple[
-                type[nn.Module] | tuple[type[nn.Module], ...],
+                type[nn.Module],
                 tp.Callable[..., tp.ContextManager[tp.Any]],
             ],
             ...,
         ] = (
-            ((GLAModel,), _maybe_patch_gla_with_stateless_recurrent),
-            ((KDAModel,), _maybe_patch_kda_with_stateless_recurrent),
-            ((DeltaNetModel,), _maybe_patch_deltanet_with_stateless_recurrent),
-            ((GatedDeltaNetModel,), _maybe_patch_gated_deltanet_with_stateless_recurrent),
-            ((Mamba2Model,), _maybe_patch_mamba2_with_stateless_recurrent),
+            (GLAModel, _maybe_patch_gla_with_stateless_recurrent),
+            (KDAModel, _maybe_patch_kda_with_stateless_recurrent),
+            (DeltaNetModel, _maybe_patch_deltanet_with_stateless_recurrent),
+            (GatedDeltaNetModel, _maybe_patch_gated_deltanet_with_stateless_recurrent),
+            (Mamba2Model, _maybe_patch_mamba2_with_stateless_recurrent),
+            (LinearAttentionModel, _maybe_patch_linear_attn_with_stateless_recurrent),
         )
-        for model_types, ctx_factory in patch_registry:
-            if isinstance(model, model_types):
-                contexts.append(
-                    ctx_factory(True)
-                )
+        for model_type, ctx_factory in patch_registry:
+            if isinstance(model, model_type):
+                contexts.append(ctx_factory(use_custom_recurrent))
         return contexts
+
+    def _supports_custom_recurrent(self) -> bool:
+        return isinstance(self.fla, self._CUSTOM_RECURRENT_MODELS)
 
     def _run_test_with_cache(
         self,
         test_x: torch.Tensor,
         cache_params: tp.Any,
-        cache_position_start: int | None = None,
         use_custom_recurrent: bool = True,
         use_custom_shortconv: bool = True,
     ) -> torch.Tensor:
@@ -938,17 +952,13 @@ class FLABackbone(Backbone):
             return test_x
 
         assert cache_params is not None, "Cache parameters must be provided for test-time evaluation."
-        if cache_position_start is None:
-            cache_position_start = getattr(cache_params, "_cache_position_start", None)
 
         batch_size, seq_len, embed_dim = test_x.shape
-        
+        supports_custom_recurrent = self._supports_custom_recurrent()
+
         def _run_parallel_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
             chunk_len = chunk_x.size(1)
-            
-            if not use_custom_recurrent or not isinstance(
-                self.fla, (GLAModel, KDAModel, DeltaNetModel, GatedDeltaNetModel, Mamba2Model)
-            ):
+            if not use_custom_recurrent or not supports_custom_recurrent:
                 expanded_cache = self._repeat_cache(cache_params, chunk_len)
             else:
                 expanded_cache = cache_params
@@ -956,7 +966,6 @@ class FLABackbone(Backbone):
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
-                cache_position_start=cache_position_start,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
@@ -978,7 +987,6 @@ class FLABackbone(Backbone):
         self,
         test_x: torch.Tensor,
         cache_params: tp.Any | None,
-        cache_position_start: int | None = None,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
     ) -> torch.Tensor:
@@ -987,8 +995,6 @@ class FLABackbone(Backbone):
         """
         if test_x.numel() == 0:
             return test_x
-        if cache_position_start is None and cache_params is not None:
-            cache_position_start = getattr(cache_params, "_cache_position_start", None)
 
         output_tokens = []
         seq_len = test_x.size(1)
@@ -998,7 +1004,6 @@ class FLABackbone(Backbone):
             output, _ = self._run_fla(
                 current_input,
                 cache_params=self._copy_cache(cache_params),
-                cache_position_start=cache_position_start,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
@@ -1038,6 +1043,28 @@ class FLABackbone(Backbone):
         x_batched, shape_info = self._prepare_fla_input(x)
         seq_len = x_batched.size(1)
         train_len = min(single_eval_pos, seq_len)
+        state_passing = self.state_passing if self.training else None
+        initial_cache_params = (
+            None
+            if state_passing is None
+            else state_passing.sample_initial_cache(
+                x_batched.size(0),
+                device=x_batched.device,
+            )
+        )
+    
+        if self.sequence_mode in {"Comb_ST", "Int_ST"} or not self.training:
+            train_x = x_batched[:, :train_len]
+            test_x = x_batched[:, train_len:]
+
+            train_out, state = self.incontext_fit(
+                train_x,
+                initial_cache_params=initial_cache_params,
+            )
+            test_out = self.incontext_predict(test_x, state)
+            if state_passing is not None:
+                state_passing.remember(state["cache_params"])
+            attn_out = torch.cat([train_out, test_out], dim=1)
 
         if self.sequence_mode in FLA_SPLIT_SEQUENCE_MODES or not self.training:
             attn_out = self._run_split_sequence(x_batched, train_len=train_len)
@@ -1102,6 +1129,23 @@ class LinearAttentionBackbone(Backbone):
         if self.recompute_every_n_layers is not None and self.recompute_every_n_layers <= 0:
             raise ValueError("recompute_every_n_layers must be >= 1")
 
+    @staticmethod
+    def _pack_recurrent_state(state: dict[str, torch.Tensor]) -> torch.Tensor:
+        return torch.cat([state["kv_state"], state["k_sum"].unsqueeze(-1)], dim=-1)
+
+    @staticmethod
+    def _unpack_recurrent_state(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        recurrent_state = state["recurrent_state"]
+        if "k_sum" in state:
+            return {
+                "kv_state": recurrent_state,
+                "k_sum": state["k_sum"],
+            }
+        return {
+            "kv_state": recurrent_state[..., :-1],
+            "k_sum": recurrent_state[..., -1],
+        }
+
     def forward(
         self,
         x: torch.Tensor,
@@ -1146,7 +1190,19 @@ class LinearAttentionBackbone(Backbone):
         for layer in self.layers:
             out, state = layer.incontext_fit(out)
             layer_states.append(state)
-        cached_state = {"layer_states": layer_states}
+        cached_state = {
+            "cache_params": SimpleNamespace(
+                layers=[
+                    SimpleNamespace(
+                        state={
+                            "recurrent_state": state["kv_state"],
+                            "k_sum": state["k_sum"],
+                        }
+                    )
+                    for state in layer_states
+                ]
+            )
+        }
         return out, cached_state
 
     def incontext_predict(
@@ -1156,7 +1212,14 @@ class LinearAttentionBackbone(Backbone):
         **kwargs: tp.Any,
     ) -> torch.Tensor:
         out = x
-        layer_states = cached_state.get("layer_states", [])
+        cache_params = cached_state.get("cache_params")
+        if cache_params is not None:
+            layer_states = [
+                self._unpack_recurrent_state(layer.state)
+                for layer in cache_params.layers
+            ]
+        else:
+            layer_states = cached_state.get("layer_states", [])
         for layer, state in zip(self.layers, layer_states):
             out = layer.incontext_predict(out, state)
         return out

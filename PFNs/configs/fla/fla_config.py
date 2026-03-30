@@ -158,6 +158,26 @@ MODEL_SETTINGS = {
             "vocab_size": 1, # dummy value, not used default 32000
         },
     },
+    # Linear Attention Config: https://github.com/fla-org/flash-linear-attention/blob/main/fla/models/linear_attn/configuration_linear_attn.py
+    # Model size: depends on layer count; this preset matches existing hidden size/head choices in this repo.
+    "linear_attn": {
+        "emsize": 320,
+        "config_kwargs": {
+            "attn_mode": "chunk",
+            "hidden_size": 320,
+            "num_hidden_layers": 12,
+            "num_heads": 4,
+            "intermediate_size": 320 * 2,
+            "feature_map": "identity",
+            "norm_q": False,
+            "norm_k": False,
+            "norm_feature_map": False,
+            "hidden_act": "swish",
+            "norm_eps": 1e-6,
+            "use_cache": True,
+            "vocab_size": 1, # dummy value, not used default 32000
+        },
+    },
 }
 
 def _normalize_model_type(model_type: str) -> str:
@@ -168,6 +188,8 @@ def _normalize_model_type(model_type: str) -> str:
         return "deltanet"
     if model_type == "gated_delta_net":
         return "gated_deltanet"
+    if model_type in {"linear_attention", "linearattn"}:
+        return "linear_attn"
     return model_type
 
 
@@ -179,6 +201,8 @@ def get_config(
     sequence_mode: str = "Comb_ST",
     bidirectional: bool = False,
     bidirectional_share_weights: bool = True,
+    state_passing: bool = False,
+    state_passing_dropout: float = 0.1,
     task_variant: str = "tabular_prior",
     # Training
     training_setup: str = "high",
@@ -317,6 +341,8 @@ def get_config(
         "sequence_mode": sequence_mode,
         "bidirectional": bidirectional,
         "bidirectional_share_weights": bidirectional_share_weights,
+        "state_passing": bool(state_passing),
+        "state_passing_dropout": float(state_passing_dropout),
     }
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
@@ -370,6 +396,8 @@ def get_config(
         "evalsplit" if eval_pos_split_pct is not None else None,
         f"stages{len(resolved_seq_len_stages)}" if resolved_seq_len_stages else None,
         f"cache{cache_chunk_size}" if cache_chunk_size else None,
+        "sp" if state_passing else None,
+        f"spd{state_passing_dropout:g}" if state_passing and state_passing_dropout != 0.1 else None,
         f"lr{resolved_lr:g}" if lr else None,
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,

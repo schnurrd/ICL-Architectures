@@ -68,7 +68,7 @@ class InferenceEngine:
         num_classes: int,
         device: str = "cpu",
         softmax_temperature: float = 0.8,
-        batch_size_inference: int = 32,
+        batch_size_inference: int | None = 32,
         average_logits: bool = True,
         extend_features: bool = True,
         autocast_dtype: torch.dtype | None = None,
@@ -434,7 +434,12 @@ class InferenceEngine:
         import warnings
         from torch.utils.checkpoint import checkpoint
 
-        inference_mode_ctx = torch.inference_mode() if self.no_grad else NOP()
+        inference_mode_ctx = (
+            torch.inference_mode()
+            if self.no_grad and not getattr(self.model, "requires_grad_during_eval", False)
+            else NOP()
+        )
+        use_checkpoint = not getattr(self.model, "requires_grad_during_eval", False)
         autocast_dtype = self.autocast_dtype
         autocast_enabled = is_autocast_dtype_enabled(autocast_dtype)
 
@@ -450,12 +455,16 @@ class InferenceEngine:
                 )
 
                 outputs = []
-                for split_input, split_label in zip(
-                    torch.split(batch_input, self.batch_size_inference, dim=1),
-                    torch.split(batch_label, self.batch_size_inference, dim=1),
-                ):
-                    if self.device == "cpu":
-                        out = checkpoint(
+                if self.batch_size_inference is None:
+                    input_splits = (batch_input,)
+                    label_splits = (batch_label,)
+                else:
+                    input_splits = torch.split(batch_input, self.batch_size_inference, dim=1)
+                    label_splits = torch.split(batch_label, self.batch_size_inference, dim=1)
+
+                def run_forward(split_input: torch.Tensor, split_label: torch.Tensor) -> torch.Tensor:
+                    if use_checkpoint:
+                        return checkpoint(
                             self._forward_fn,
                             split_input,
                             split_label,
@@ -463,20 +472,23 @@ class InferenceEngine:
                             categorical_inds,
                             use_reentrant=False,
                         )
-                    else:
+                    return self._forward_fn(
+                        split_input,
+                        split_label,
+                        style,
+                        categorical_inds,
+                    )
+
+                for split_input, split_label in zip(input_splits, label_splits):
+                    if self.device != "cpu":
                         with torch.amp.autocast(
                             "cuda",
                             enabled=autocast_enabled,
                             dtype=autocast_dtype,
                         ):
-                            out = checkpoint(
-                                self._forward_fn,
-                                split_input,
-                                split_label,
-                                style,
-                                categorical_inds,
-                                use_reentrant=False,
-                            )
+                            out = run_forward(split_input, split_label)
+                    else:
+                        out = run_forward(split_input, split_label)
                     outputs.append(out)
 
         return torch.cat(outputs, dim=1)
@@ -494,12 +506,39 @@ class InferenceEngine:
         y_bf = y.transpose(0, 1).float()
         style_bf = style.repeat(x_bf.shape[0], 1) if style is not None else None
 
-        output = self.model.forward(
-            x=x_bf,
-            y=y_bf,
-            style=style_bf,
-            categorical_inds=categorical_inds,
-        ).transpose(0, 1)
+        if getattr(self.model, "requires_grad_during_eval", False):
+            train_len = y_bf.shape[1]
+            state = self.model.incontext_fit(
+                x=x_bf[:, :train_len, :],
+                y=y_bf,
+                style=None,
+                y_style=None,
+                categorical_inds=categorical_inds,
+            )
+            output = self.model.incontext_predict(
+                state,
+                test_x=x_bf[:, train_len:, :],
+                style=None,
+                y_style=None,
+                categorical_inds=categorical_inds,
+                only_return_standard_out=True,
+            )
+            if isinstance(output, dict):
+                output = output["standard"]
+            if output.shape[0] == x_bf.shape[0]:
+                output = output.transpose(0, 1)
+            elif output.shape[1] != x_bf.shape[0]:
+                raise RuntimeError(
+                    "Unexpected output shape from incontext_predict. "
+                    f"Got {tuple(output.shape)} for batch size {x_bf.shape[0]}."
+                )
+        else:
+            output = self.model.forward(
+                x=x_bf,
+                y=y_bf,
+                style=style_bf,
+                categorical_inds=categorical_inds,
+            ).transpose(0, 1)
 
         output = output[:, :, 0 : self.num_classes]
 
@@ -595,7 +634,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
         only_inference: bool = True,
         seed: int = 0,
         no_grad: bool = True,
-        batch_size_inference: int = 32,
+        batch_size_inference: int | None = 32,
         subsample_dataset_size: Optional[int] = None,
         preprocess_transforms: list[str] = None,
         fla_cache_chunk_size: int | None = None,

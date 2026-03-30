@@ -16,7 +16,7 @@ def _filter_model_types(model_types: tuple[str, ...]) -> tuple[str, ...]:
 
 
 FLA_MODEL_TYPES = _filter_model_types(
-    ("gla", "kda", "deltanet", "gated_deltanet", "mamba2")
+    ("gla", "kda", "deltanet", "gated_deltanet", "mamba2", "linear_attn")
 )
 
 
@@ -101,6 +101,21 @@ def fla_model_config_kwargs(
             "use_cache": True,
             "use_short_conv": True,
         }
+    if model_type == "linear_attn":
+        return {
+            "attn_mode": "fused_recurrent",
+            "hidden_size": hidden_size,
+            "num_hidden_layers": num_layers,
+            "num_heads": num_heads,
+            "intermediate_size": intermediate_size,
+            "feature_map": "identity",
+            "norm_q": False,
+            "norm_k": False,
+            "norm_feature_map": False,
+            "hidden_act": "swish",
+            "norm_eps": 1e-5,
+            "use_cache": True,
+        }
     raise ValueError(f"Unsupported model_type: {model_type}")
 
 
@@ -128,6 +143,8 @@ def build_fla_backbone(
     size: str = "small",
     sequence_mode: str = "Comb_ST",
     cache_chunk_size: int | None = None,
+    state_passing: bool = False,
+    state_passing_dropout: float = 0.1,
     bidirectional: bool = False,
     bidirectional_share_weights: bool = True,
     train: bool = False,
@@ -140,6 +157,8 @@ def build_fla_backbone(
         config_kwargs=kwargs,
         sequence_mode=sequence_mode,
         cache_chunk_size=cache_chunk_size,
+        state_passing=state_passing,
+        state_passing_dropout=state_passing_dropout,
         bidirectional=bidirectional,
         bidirectional_share_weights=bidirectional_share_weights,
     )

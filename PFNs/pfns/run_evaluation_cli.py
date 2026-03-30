@@ -15,6 +15,7 @@ from pfns.evaluation.evaluate import evaluate_on_openml
 from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
 from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENCHMARK
 from pfns.datasets.tabular_datasets import get_benchmark_suite_dids
+from pfns.experiments.model_benchmarks.oracle_hidden_state_baseline import build_oracle_hidden_state_baseline
 from pfns.experiments.model_benchmarks.plotting import resolve_display_name_map
 from pfns.utils import get_default_device
 SUMMARY_METRIC_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -163,6 +164,12 @@ def run_evaluation(
             fla_cache_chunk_size=fla_cache_chunk_size,
             seed=random_state,
         )
+        if model_config.get("oracle_hidden_state_baseline"):
+            tabpfn.model = build_oracle_hidden_state_baseline(
+                base_model=tabpfn.model,
+                base_config=tabpfn.config,
+                model_config=model_config,
+            )
         model_name = str(model_config.get("name") or tabpfn.name)
         return evaluate_on_openml(
             models=[tabpfn],
