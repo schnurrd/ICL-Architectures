@@ -294,7 +294,6 @@ def _fla_recurrent_state_trajectory(
         _, cache = backbone._run_fla(
             token,
             cache_params=cache,
-            cache_position_start=token_idx if cache is not None else None,
             return_cache=True,
         )
         rows.extend(_rows_from_cache_trajectory(model_name=model_name, token_idx=token_idx + 1, cache_params=cache))

@@ -169,12 +169,10 @@ def test_bidirectional_cached_prediction_matches_helper_paths(model_type: str) -
         parallel_out = backbone._run_test_with_cache(
             test_x,
             backbone._copy_cache(state["cache_params"]),
-            cache_position_start=state["cache_position_start"],
         )
         naive_out = backbone._run_test_with_cache_naive(
             test_x,
             backbone._copy_cache(state["cache_params"]),
-            cache_position_start=state["cache_position_start"],
         )
         predict_out = backbone.incontext_predict(test_x, state)
 

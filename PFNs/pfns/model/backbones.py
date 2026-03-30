@@ -804,12 +804,16 @@ class FLABackbone(Backbone):
         x_batched: torch.Tensor,
         *,
         train_len: int,
-    ) -> torch.Tensor:
+        initial_cache_params: tp.Any | None = None,
+    ) -> tuple[torch.Tensor, tp.Any]:
         train_x = x_batched[:, :train_len]
         test_x = x_batched[:, train_len:]
-        train_out, state = self.incontext_fit(train_x)
+        train_out, state = self.incontext_fit(
+            train_x,
+            initial_cache_params=initial_cache_params,
+        )
         test_out = self.incontext_predict(test_x, state)
-        return torch.cat([train_out, test_out], dim=1)
+        return torch.cat([train_out, test_out], dim=1), state
 
     def incontext_fit(
         self,
@@ -1052,24 +1056,23 @@ class FLABackbone(Backbone):
                 device=x_batched.device,
             )
         )
-    
-        if self.sequence_mode in {"Comb_ST", "Int_ST"} or not self.training:
-            train_x = x_batched[:, :train_len]
-            test_x = x_batched[:, train_len:]
-
-            train_out, state = self.incontext_fit(
-                train_x,
-                initial_cache_params=initial_cache_params,
-            )
-            test_out = self.incontext_predict(test_x, state)
-            if state_passing is not None:
-                state_passing.remember(state["cache_params"])
-            attn_out = torch.cat([train_out, test_out], dim=1)
 
         if self.sequence_mode in FLA_SPLIT_SEQUENCE_MODES or not self.training:
-            attn_out = self._run_split_sequence(x_batched, train_len=train_len)
+            attn_out, state = self._run_split_sequence(
+                x_batched,
+                train_len=train_len,
+                initial_cache_params=initial_cache_params,
+            )
+            if state_passing is not None:
+                state_passing.remember(state["cache_params"])
         else:
-            attn_out, _ = self._run_fla(x_batched, return_cache=False)
+            attn_out, cache_params = self._run_fla(
+                x_batched,
+                cache_params=initial_cache_params,
+                return_cache=state_passing is not None,
+            )
+            if state_passing is not None:
+                state_passing.remember(cache_params)
 
         return self._unprepare_fla_output(attn_out, shape_info)
 
