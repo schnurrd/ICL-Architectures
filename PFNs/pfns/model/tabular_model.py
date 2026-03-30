@@ -537,11 +537,13 @@ class TabularModel(nn.Module):
         style: torch.Tensor | None,
         y_style: torch.Tensor | None,
         categorical_inds: list[int] | None,
-        pair_position_offset: int,
-        pair_eval_pos: int | None,
-        use_cached_pair_positions: bool,
+        pair_position_offset: int = 0,
+        pair_eval_pos: int | None = None,
+        use_cached_pair_positions: bool = False,
         cache_trainset_representation: bool,
     ) -> tuple[torch.Tensor, int, bool, bool]:
+        if pair_eval_pos is None:
+            pair_eval_pos = single_eval_pos
         current_context_len = single_eval_pos or 0
 
         if isinstance(x, dict):
