@@ -150,6 +150,11 @@ class BidirectionalFLALayer(nn.Module):
                     or forward_value.shape != backward_value.shape
                 ):
                     return None
+                if torch.equal(forward_value, backward_value):
+                    combined_kwargs[key] = forward_value
+                    continue
+                if forward_value.ndim < 2:
+                    return None
                 combined_kwargs[key] = torch.cat([forward_value, backward_value], dim=0)
                 continue
             if forward_value != backward_value:
@@ -170,6 +175,7 @@ class BidirectionalFLALayer(nn.Module):
             use_cache=use_cache,
         )
         if has_cache_input and not self._build_cache:
+            # Cached prediction must stay causal across test tokens.
             return self.forward_layer(hidden_states, **forward_kwargs)
 
         reversed_hidden_states = hidden_states.flip(1)
@@ -181,6 +187,7 @@ class BidirectionalFLALayer(nn.Module):
         )
 
         if self.share_weights and not use_cache:
+            # This fast path is only safe when we do not need to split cache outputs.
             combined_kwargs = self._combine_branch_kwargs(forward_kwargs, backward_kwargs)
             if combined_kwargs is not None:
                 combined_output = self.forward_layer(
@@ -845,7 +852,7 @@ class FLABackbone(Backbone):
                     stack.enter_context(ctx)
                 stack.enter_context(
                     self._bidirectional_runtime_mode(
-                        build_cache=(return_cache and cache_params),
+                        build_cache=(return_cache and cache_params is None),
                     )
                 )
                 out = self.fla(**kwargs)
