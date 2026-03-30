@@ -344,11 +344,19 @@ class OracleHiddenStateBaseline(nn.Module):
             best_states = [state.detach().clone() for state in recurrent_states]
             evals_without_improvement = 0
             processed_tokens = 0
+            if self.optimization_config.verbose:
+                initial_states = [state.detach().clone() for state in recurrent_states]
+                initial_state_norms = [
+                    max(float(state.detach().norm().item()), 1e-12)
+                    for state in recurrent_states
+                ]
 
             optimize_generator = torch.Generator(device=x.device)
             optimize_generator.manual_seed(self.optimization_config.selection_seed + 1)
 
             for epoch_idx in range(1, self.optimization_config.num_epochs + 1):
+                epoch_train_loss_total = 0.0
+                epoch_train_loss_weight = 0
                 permutation = torch.randperm(train_len, device=x.device, generator=optimize_generator)
                 for batch_idx in range(steps_per_epoch):
                     batch_start = time.perf_counter()
@@ -385,14 +393,35 @@ class OracleHiddenStateBaseline(nn.Module):
                     optimizer.step()
                     timing_ms["optim_step"] += (time.perf_counter() - step_start) * 1000.0
                     processed_tokens += int(query_y.shape[1])
+                    batch_weight = int(query_y.shape[1])
+                    epoch_train_loss_total += float(loss.item()) * batch_weight
+                    epoch_train_loss_weight += batch_weight
 
                 eval_start = time.perf_counter()
+                current_train_loss = epoch_train_loss_total / max(1, epoch_train_loss_weight)
                 full_loss = val_loss()
                 timing_ms["eval"] += (time.perf_counter() - eval_start) * 1000.0
-                self._log(
-                    f"epoch={epoch_idx} {selection_name}_loss={full_loss:.6f} "
+                log_message = (
+                    f"epoch={epoch_idx} train_loss={current_train_loss:.6f} "
+                    f"{selection_name}_loss={full_loss:.6f} "
                     f"best_{selection_name}_loss={best_loss:.6f}"
                 )
+                if self.optimization_config.verbose:
+                    relative_update_norms = [
+                        float((state.detach() - initial_state).norm().item()) / initial_norm
+                        for state, initial_state, initial_norm in zip(
+                            recurrent_states,
+                            initial_states,
+                            initial_state_norms,
+                            strict=True,
+                        )
+                    ]
+                    log_message += (
+                        f" mean_rel_state_update="
+                        f"{sum(relative_update_norms) / max(1, len(relative_update_norms)):.3e} "
+                        f"max_rel_state_update={max(relative_update_norms, default=0.0):.3e}"
+                    )
+                self._log(log_message)
                 if full_loss + self.optimization_config.tolerance < best_loss:
                     best_loss = full_loss
                     best_states = [state.detach().clone() for state in recurrent_states]
