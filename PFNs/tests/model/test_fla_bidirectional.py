@@ -3,12 +3,16 @@ import torch
 
 pytest.importorskip("fla")
 
-from pfns.model.backbones import BidirectionalFLALayer
+from pfns.model.backbones import BidirectionalFLACache, BidirectionalFLALayer
 from tests.model.fla_test_utils import (
     FLA_MODEL_TYPES,
     build_fla_backbone,
     fla_hidden_size,
     fla_model_config_kwargs,
+)
+
+BIDIRECTIONAL_FLA_MODEL_TYPES = tuple(
+    model_type for model_type in FLA_MODEL_TYPES if model_type != "mamba2"
 )
 
 
@@ -22,7 +26,7 @@ def _enable_bidirectional_fusion(backbone: torch.nn.Module) -> None:
 
 
 @pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
-@pytest.mark.parametrize("sequence_mode", ["Comb_MT", "Int_MT"])
+@pytest.mark.parametrize("sequence_mode", ["Int_ST", "Comb_MT", "Int_MT"])
 def test_bidirectional_rejects_unsupported_sequence_modes(
     model_type: str,
     sequence_mode: str,
@@ -36,7 +40,7 @@ def test_bidirectional_rejects_unsupported_sequence_modes(
         )
 
 
-@pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
+@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
 def test_bidirectional_wraps_every_layer(model_type: str) -> None:
     backbone = build_fla_backbone(model_type, size="small", bidirectional=True)
     expected_num_layers = int(
@@ -47,34 +51,32 @@ def test_bidirectional_wraps_every_layer(model_type: str) -> None:
     assert all(isinstance(layer, BidirectionalFLALayer) for layer in backbone.layers)
 
 
-def test_bidirectional_mamba2_incontext_fit_uses_single_model_pass() -> None:
+def test_bidirectional_rejects_mamba2() -> None:
+    with pytest.raises(ValueError, match="does not support model_type='mamba2'"):
+        build_fla_backbone("mamba2", size="small", bidirectional=True)
+
+
+@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
+def test_bidirectional_incontext_fit_builds_forward_and_backward_caches(model_type: str) -> None:
     if not torch.cuda.is_available():
         pytest.skip("FLA backend requires CUDA/Triton for this test.")
 
     torch.manual_seed(0)
     device = torch.device("cuda")
-    backbone = build_fla_backbone("mamba2", size="small", bidirectional=True).to(device)
-    embed_dim = fla_hidden_size("mamba2", size="small")
+    backbone = build_fla_backbone(model_type, size="small", bidirectional=True).to(device)
+    embed_dim = fla_hidden_size(model_type, size="small")
     train_x = torch.randn(2, 5, embed_dim, device=device)
-
-    call_count = 0
-    original_forward = backbone.fla.forward
-
-    def counted_forward(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return original_forward(*args, **kwargs)
-
-    backbone.fla.forward = counted_forward
 
     with torch.no_grad():
         _, state = backbone.incontext_fit(train_x)
 
-    assert call_count == 1
-    assert state["cache_params"] is not None
+    cache = state["cache_params"]
+    assert isinstance(cache, BidirectionalFLACache)
+    assert cache.forward_cache is not None
+    assert cache.backward_cache is not None
 
 
-@pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
+@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
 def test_bidirectional_incontext_fit_matches_non_cached_train_pass(model_type: str) -> None:
     if not torch.cuda.is_available():
         pytest.skip("FLA backend requires CUDA/Triton for this test.")
@@ -93,7 +95,7 @@ def test_bidirectional_incontext_fit_matches_non_cached_train_pass(model_type: s
     torch.testing.assert_close(fit_out, direct_out, rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
+@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
 def test_bidirectional_train_tokens_can_use_future_train_context(model_type: str) -> None:
     if not torch.cuda.is_available():
         pytest.skip("FLA backend requires CUDA/Triton for this test.")
@@ -130,7 +132,7 @@ def test_bidirectional_train_tokens_can_use_future_train_context(model_type: str
     )
 
 
-@pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
+@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
 def test_bidirectional_test_tokens_are_independent(model_type: str) -> None:
     if not torch.cuda.is_available():
         pytest.skip("FLA backend requires CUDA/Triton for this test.")
@@ -152,7 +154,7 @@ def test_bidirectional_test_tokens_are_independent(model_type: str) -> None:
     torch.testing.assert_close(out[:, 1:, :], out_perturbed[:, 1:, :], rtol=1e-5, atol=1e-5)
 
 
-@pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
+@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
 def test_bidirectional_cached_prediction_matches_helper_paths(model_type: str) -> None:
     if not torch.cuda.is_available():
         pytest.skip("FLA backend requires CUDA/Triton for this test.")

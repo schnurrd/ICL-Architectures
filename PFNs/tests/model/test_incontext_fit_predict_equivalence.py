@@ -14,6 +14,10 @@ from tests.model.fla_test_utils import (
     fla_tolerances,
 )
 
+BIDIRECTIONAL_FLA_MODEL_TYPES = tuple(
+    model_type for model_type in FLA_MODEL_TYPES if model_type != "mamba2"
+)
+
 
 def _build_model(
     *,
@@ -230,7 +234,7 @@ def test_incontext_fit_predict_matches_forward_fla(model_type: str) -> None:
     )
 
 
-@pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
+@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
 def test_incontext_fit_predict_matches_forward_bidirectional_fla(model_type: str) -> None:
     if not torch.cuda.is_available():
         pytest.skip("FLA equivalence test requires CUDA.")

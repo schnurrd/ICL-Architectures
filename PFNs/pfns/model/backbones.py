@@ -57,7 +57,7 @@ FLA_MODEL_REGISTRY = {
 }
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 FLA_SPLIT_SEQUENCE_MODES = {"Comb_ST", "Int_ST"}
-BIDIRECTIONAL_FLA_SEQUENCE_MODES = FLA_SPLIT_SEQUENCE_MODES
+BIDIRECTIONAL_FLA_SEQUENCE_MODES = {"Comb_ST"}
 
 
 def _resolve_fla_sequence_mode(sequence_mode: str) -> str:
@@ -69,6 +69,12 @@ def _get_fla_layers(fla_model: nn.Module) -> nn.ModuleList:
     if not isinstance(layers, nn.ModuleList):
         raise ValueError("FLA model does not expose layers as an nn.ModuleList.")
     return layers
+
+
+@dataclass
+class BidirectionalFLACache:
+    forward_cache: tp.Any | None
+    backward_cache: tp.Any | None
 
 
 class BidirectionalFLALayer(nn.Module):
@@ -86,29 +92,18 @@ class BidirectionalFLALayer(nn.Module):
         self.forward_layer = layer
         self.backward_layer = layer if share_weights else copy.deepcopy(layer)
         self.fusion_out = nn.Linear(hidden_size * 2, hidden_size)
-        self._build_cache = False
-
-    def set_runtime_mode(
-        self,
-        *,
-        build_cache: bool = False,
-    ) -> None:
-        self._build_cache = build_cache
 
     def _prepare_branch_kwargs(
         self,
         kwargs: dict[str, tp.Any],
         *,
         reverse: bool,
-        include_cache_inputs: bool,
-        use_cache: bool,
     ) -> dict[str, tp.Any]:
-        branch_kwargs = {
-            key: value
-            for key, value in kwargs.items()
-            if include_cache_inputs or key not in {"past_key_values", "cache_params"}
-        }
-        branch_kwargs["use_cache"] = use_cache
+        branch_kwargs: dict[str, tp.Any] = {}
+        for key, value in kwargs.items():
+            if key in {"past_key_values", "cache_params"}:
+                continue
+            branch_kwargs[key] = value
         branch_kwargs["output_attentions"] = False
         if reverse:
             for key in ("attention_mask", "cache_position"):
@@ -123,14 +118,52 @@ class BidirectionalFLALayer(nn.Module):
             return output
         if isinstance(output, tuple) and output and torch.is_tensor(output[0]):
             return output[0]
+        hidden_states = getattr(output, "hidden_states", None)
+        if torch.is_tensor(hidden_states):
+            return hidden_states
+        last_hidden_state = getattr(output, "last_hidden_state", None)
+        if torch.is_tensor(last_hidden_state):
+            return last_hidden_state
         raise TypeError("Unsupported FLA layer output for bidirectional fusion.")
 
     @staticmethod
-    def _rebuild_output_like(reference_output: tp.Any, hidden_states: torch.Tensor) -> tp.Any:
+    def _extract_cache(output: tp.Any) -> tp.Any | None:
+        if isinstance(output, tuple):
+            return output[2] if len(output) >= 3 else None
+        if hasattr(output, "past_key_values"):
+            return output.past_key_values
+        if hasattr(output, "cache_params"):
+            return output.cache_params
+        return None
+
+    @staticmethod
+    def _rebuild_output_like(
+        reference_output: tp.Any,
+        hidden_states: torch.Tensor,
+        *,
+        cache_value: tp.Any | None = None,
+        override_cache: bool = False,
+    ) -> tp.Any:
         if torch.is_tensor(reference_output):
             return hidden_states
         if isinstance(reference_output, tuple) and reference_output:
-            return (hidden_states, *reference_output[1:])
+            output_items = list(reference_output)
+            output_items[0] = hidden_states
+            if override_cache and len(output_items) >= 3:
+                output_items[2] = cache_value
+            return tuple(output_items)
+        if hasattr(reference_output, "__dict__"):
+            rebuilt_output = copy.copy(reference_output)
+            if hasattr(rebuilt_output, "hidden_states"):
+                rebuilt_output.hidden_states = hidden_states
+            if hasattr(rebuilt_output, "last_hidden_state"):
+                rebuilt_output.last_hidden_state = hidden_states
+            if override_cache:
+                if hasattr(rebuilt_output, "past_key_values"):
+                    rebuilt_output.past_key_values = cache_value
+                if hasattr(rebuilt_output, "cache_params"):
+                    rebuilt_output.cache_params = cache_value
+            return rebuilt_output
         raise TypeError("Unsupported FLA layer output for bidirectional fusion.")
 
     @staticmethod
@@ -162,29 +195,37 @@ class BidirectionalFLALayer(nn.Module):
             combined_kwargs[key] = forward_value
         return combined_kwargs
 
+    def _fuse_hidden_states(
+        self,
+        forward_hidden: torch.Tensor,
+        backward_hidden: torch.Tensor,
+    ) -> torch.Tensor:
+        fusion_input = torch.cat([forward_hidden, backward_hidden], dim=-1)
+        return self.fusion_out(fusion_input)
+
     def forward(self, hidden_states: torch.Tensor, **kwargs: tp.Any) -> tp.Any:
-        use_cache = bool(kwargs.get("use_cache"))
-        has_cache_input = any(
-            kwargs.get(key) is not None
-            for key in ("past_key_values", "cache_params")
-        )
+        cache_value = kwargs.get("past_key_values")
+        if cache_value is None:
+            cache_value = kwargs.get("cache_params")
+        if isinstance(cache_value, BidirectionalFLACache):
+            forward_cache = cache_value.forward_cache
+            backward_cache = cache_value.backward_cache
+        else:
+            forward_cache = FLABackbone._copy_cache(cache_value)
+            backward_cache = FLABackbone._copy_cache(cache_value)
+        use_cache = bool(kwargs.get("use_cache", False))
         forward_kwargs = self._prepare_branch_kwargs(
             kwargs,
             reverse=False,
-            include_cache_inputs=True,
-            use_cache=use_cache,
         )
-        if has_cache_input and not self._build_cache:
-            # Cached prediction must stay causal across test tokens.
-            return self.forward_layer(hidden_states, **forward_kwargs)
-
         reversed_hidden_states = hidden_states.flip(1)
         backward_kwargs = self._prepare_branch_kwargs(
             kwargs,
             reverse=True,
-            include_cache_inputs=False,
-            use_cache=False,
         )
+        if use_cache:
+            forward_kwargs["past_key_values"] = forward_cache
+            backward_kwargs["past_key_values"] = backward_cache
 
         if self.share_weights and not use_cache:
             # This fast path is only safe when we do not need to split cache outputs.
@@ -196,8 +237,9 @@ class BidirectionalFLALayer(nn.Module):
                 )
                 combined_hidden = self._extract_hidden_states(combined_output)
                 forward_hidden, backward_hidden = combined_hidden.chunk(2, dim=0)
-                fused_hidden = self.fusion_out(
-                    torch.cat([forward_hidden, backward_hidden.flip(1)], dim=-1)
+                fused_hidden = self._fuse_hidden_states(
+                    forward_hidden,
+                    backward_hidden.flip(1),
                 )
                 return self._rebuild_output_like(combined_output, fused_hidden)
 
@@ -208,7 +250,18 @@ class BidirectionalFLALayer(nn.Module):
             **backward_kwargs,
         )
         backward_hidden = self._extract_hidden_states(backward_output).flip(1)
-        fused_hidden = self.fusion_out(torch.cat([forward_hidden, backward_hidden], dim=-1))
+        fused_hidden = self._fuse_hidden_states(forward_hidden, backward_hidden)
+        if use_cache:
+            cache_output = BidirectionalFLACache(
+                forward_cache=self._extract_cache(forward_output),
+                backward_cache=self._extract_cache(backward_output),
+            )
+            return self._rebuild_output_like(
+                forward_output,
+                fused_hidden,
+                cache_value=cache_output,
+                override_cache=True,
+            )
         return self._rebuild_output_like(forward_output, fused_hidden)
 
 
@@ -528,6 +581,10 @@ class FLABackboneConfig(BackboneConfig):
                 f"in {sorted(BIDIRECTIONAL_FLA_SEQUENCE_MODES)}, "
                 f"got {self.sequence_mode!r}."
             )
+        if self.bidirectional and self.model_type == "mamba2":
+            raise ValueError("Bidirectional FLA does not support model_type='mamba2'.")
+        if self.bidirectional and self.state_passing:
+            raise ValueError("Bidirectional FLA does not support state_passing.")
         if not 0.0 <= self.state_passing_dropout <= 1.0:
             raise ValueError("state_passing_dropout must be in [0, 1].")
 
@@ -555,7 +612,9 @@ class FLABackboneConfig(BackboneConfig):
                 share_weights=self.bidirectional_share_weights,
             )
 
-        return FLABackbone(
+        backbone_cls = BidirectionalFLABackbone if self.bidirectional else FLABackbone
+
+        return backbone_cls(
             fla_model=fla_model,
             sequence_mode=self.sequence_mode,
             cache_chunk_size=self.cache_chunk_size,
@@ -738,25 +797,6 @@ class FLABackbone(Backbone):
             return cache_params_copy
         return FLABackbone._shallow_copy(cache_params)
 
-    @contextmanager
-    def _bidirectional_runtime_mode(
-        self,
-        *,
-        build_cache: bool = False,
-    ) -> tp.Iterator[None]:
-        if not self.bidirectional:
-            yield
-            return
-
-        layers = tuple(layer for layer in self.layers if isinstance(layer, BidirectionalFLALayer))
-        for layer in layers:
-            layer.set_runtime_mode(build_cache=build_cache)
-        try:
-            yield
-        finally:
-            for layer in layers:
-                layer.set_runtime_mode()
-
     @staticmethod
     def _prepare_fla_input(
         x: torch.Tensor,
@@ -850,11 +890,6 @@ class FLABackbone(Backbone):
                     use_custom_shortconv=use_custom_shortconv,
                 ):
                     stack.enter_context(ctx)
-                stack.enter_context(
-                    self._bidirectional_runtime_mode(
-                        build_cache=(return_cache and cache_params is None),
-                    )
-                )
                 out = self.fla(**kwargs)
         except TypeError as exc:
             raise TypeError(
@@ -1047,6 +1082,169 @@ class FLABackbone(Backbone):
                 state_passing.remember(cache_params)
 
         return self._unprepare_fla_output(attn_out, shape_info)
+
+
+class BidirectionalFLABackbone(FLABackbone):
+    def __init__(
+        self,
+        fla_model: nn.Module,
+        sequence_mode: str = "Comb_ST",
+        cache_chunk_size: int | None = None,
+        state_passing: bool = False,
+        state_passing_dropout: float = 0.1,
+        bidirectional: bool = True,
+    ):
+        super().__init__(
+            fla_model=fla_model,
+            sequence_mode=sequence_mode,
+            cache_chunk_size=cache_chunk_size,
+            state_passing=state_passing,
+            state_passing_dropout=state_passing_dropout,
+            bidirectional=bidirectional,
+        )
+
+    @staticmethod
+    def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
+        if isinstance(cache_params, BidirectionalFLACache):
+            return BidirectionalFLACache(
+                forward_cache=FLABackbone._repeat_cache(cache_params.forward_cache, repeat),
+                backward_cache=FLABackbone._repeat_cache(cache_params.backward_cache, repeat),
+            )
+        return FLABackbone._repeat_cache(cache_params, repeat)
+
+    @staticmethod
+    def _copy_cache(cache_params: tp.Any) -> tp.Any:
+        if isinstance(cache_params, BidirectionalFLACache):
+            return BidirectionalFLACache(
+                forward_cache=FLABackbone._copy_cache(cache_params.forward_cache),
+                backward_cache=FLABackbone._copy_cache(cache_params.backward_cache),
+            )
+        return FLABackbone._copy_cache(cache_params)
+
+    def incontext_fit(
+        self,
+        train_x: torch.Tensor,
+        *,
+        initial_cache_params: tp.Any | None = None,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, tp.Any]:
+        x_batched, shape_info = self._prepare_fla_input(train_x)
+        if initial_cache_params is not None:
+            raise ValueError("Bidirectional FLA does not support initial_cache_params.")
+
+        train_out, cache_params = self._run_fla(
+            x_batched,
+            return_cache=True,
+        )
+        if not isinstance(cache_params, BidirectionalFLACache):
+            raise TypeError(
+                "Bidirectional FLA train cache build must return a BidirectionalFLACache."
+            )
+        out = self._unprepare_fla_output(train_out, shape_info)
+        return out, {"cache_params": cache_params}
+
+    def _run_test_with_cache(
+        self,
+        test_x: torch.Tensor,
+        cache_params: tp.Any,
+        use_custom_recurrent: bool = True,
+        use_custom_shortconv: bool = True,
+    ) -> torch.Tensor:
+        if not isinstance(cache_params, BidirectionalFLACache):
+            raise TypeError("BidirectionalFLABackbone requires a BidirectionalFLACache for prediction.")
+        if test_x.numel() == 0:
+            return test_x
+        return self._run_test_with_bidirectional_cache(
+            test_x,
+            cache_params,
+            use_custom_recurrent=use_custom_recurrent,
+            use_custom_shortconv=use_custom_shortconv,
+        )
+
+    def _run_test_with_bidirectional_cache(
+        self,
+        test_x: torch.Tensor,
+        cache_params: BidirectionalFLACache,
+        *,
+        use_custom_recurrent: bool,
+        use_custom_shortconv: bool,
+    ) -> torch.Tensor:
+        batch_size, seq_len, embed_dim = test_x.shape
+        supports_custom_recurrent = self._supports_custom_recurrent()
+
+        def _prepare_branch_cache(branch_cache: tp.Any, chunk_len: int) -> tp.Any:
+            if use_custom_recurrent and supports_custom_recurrent:
+                return branch_cache
+            return self._repeat_cache(branch_cache, chunk_len)
+
+        def _run_parallel_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
+            chunk_len = chunk_x.size(1)
+            forward_cache = _prepare_branch_cache(cache_params.forward_cache, chunk_len)
+            backward_cache = _prepare_branch_cache(cache_params.backward_cache, chunk_len)
+            hidden = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
+            layer_kwargs = {
+                "use_cache": False,
+                "output_attentions": False,
+                "past_key_values": None,
+            }
+            with ExitStack() as stack:
+                for ctx in self._patch_contexts(
+                    use_custom_recurrent=use_custom_recurrent,
+                    use_custom_shortconv=use_custom_shortconv,
+                ):
+                    stack.enter_context(ctx)
+                for layer in self.layers:
+                    if not isinstance(layer, BidirectionalFLALayer):
+                        raise TypeError("Expected BidirectionalFLALayer in bidirectional FLA backbone.")
+                    forward_output = layer.forward_layer(
+                        hidden,
+                        **(layer_kwargs | {"past_key_values": forward_cache}),
+                    )
+                    backward_output = layer.backward_layer(
+                        hidden,
+                        **(layer_kwargs | {"past_key_values": backward_cache}),
+                    )
+                    hidden = layer._fuse_hidden_states(
+                        layer._extract_hidden_states(forward_output),
+                        layer._extract_hidden_states(backward_output),
+                    )
+            if hasattr(self.fla, "norm"):
+                hidden = self.fla.norm(hidden)
+            return hidden.view(batch_size, chunk_len, embed_dim)
+
+        if self.cache_chunk_size is None or seq_len <= self.cache_chunk_size:
+            return _run_parallel_chunk(test_x)
+
+        outputs = []
+        for chunk_start in range(0, seq_len, self.cache_chunk_size):
+            chunk_end = min(chunk_start + self.cache_chunk_size, seq_len)
+            outputs.append(_run_parallel_chunk(test_x[:, chunk_start:chunk_end]))
+        return torch.cat(outputs, dim=1)
+
+    def _run_test_with_cache_naive(
+        self,
+        test_x: torch.Tensor,
+        cache_params: tp.Any | None,
+        use_custom_recurrent: bool = False,
+        use_custom_shortconv: bool = False,
+    ) -> torch.Tensor:
+        if not isinstance(cache_params, BidirectionalFLACache):
+            raise TypeError("BidirectionalFLABackbone requires a BidirectionalFLACache for prediction.")
+        if test_x.numel() == 0:
+            return test_x
+
+        output_tokens = []
+        for t in range(test_x.size(1)):
+            current_input = test_x[:, t : t + 1, :]
+            output_tokens.append(
+                self._run_test_with_bidirectional_cache(
+                    current_input,
+                    self._copy_cache(cache_params),
+                    use_custom_recurrent=use_custom_recurrent,
+                    use_custom_shortconv=use_custom_shortconv,
+                )
+            )
+        return torch.cat(output_tokens, dim=1)
 
 
 @dataclass(frozen=True)
