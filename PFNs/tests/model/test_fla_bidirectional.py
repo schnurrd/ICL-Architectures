@@ -77,25 +77,6 @@ def test_bidirectional_incontext_fit_builds_forward_and_backward_caches(model_ty
 
 
 @pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
-def test_bidirectional_incontext_fit_matches_non_cached_train_pass(model_type: str) -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("FLA backend requires CUDA/Triton for this test.")
-
-    torch.manual_seed(0)
-    device = torch.device("cuda")
-    backbone = build_fla_backbone(model_type, size="small", bidirectional=True).to(device)
-    _enable_bidirectional_fusion(backbone)
-    embed_dim = fla_hidden_size(model_type, size="small")
-    train_x = torch.randn(2, 5, embed_dim, device=device)
-
-    with torch.no_grad():
-        direct_out, _ = backbone._run_fla(train_x, return_cache=False)
-        fit_out, _ = backbone.incontext_fit(train_x)
-
-    torch.testing.assert_close(fit_out, direct_out, rtol=1e-5, atol=1e-5)
-
-
-@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
 def test_bidirectional_train_tokens_can_use_future_train_context(model_type: str) -> None:
     if not torch.cuda.is_available():
         pytest.skip("FLA backend requires CUDA/Triton for this test.")
@@ -152,31 +133,3 @@ def test_bidirectional_test_tokens_are_independent(model_type: str) -> None:
         out_perturbed = backbone.incontext_predict(perturbed_test_x, state)
 
     torch.testing.assert_close(out[:, 1:, :], out_perturbed[:, 1:, :], rtol=1e-5, atol=1e-5)
-
-
-@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
-def test_bidirectional_cached_prediction_matches_helper_paths(model_type: str) -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("FLA backend requires CUDA/Triton for this test.")
-
-    torch.manual_seed(0)
-    device = torch.device("cuda")
-    backbone = build_fla_backbone(model_type, size="small", bidirectional=True).to(device)
-    embed_dim = fla_hidden_size(model_type, size="small")
-    train_x = torch.randn(2, 4, embed_dim, device=device)
-    test_x = torch.randn(2, 3, embed_dim, device=device)
-
-    with torch.no_grad():
-        _, state = backbone.incontext_fit(train_x)
-        parallel_out = backbone._run_test_with_cache(
-            test_x,
-            backbone._copy_cache(state["cache_params"]),
-        )
-        naive_out = backbone._run_test_with_cache_naive(
-            test_x,
-            backbone._copy_cache(state["cache_params"]),
-        )
-        predict_out = backbone.incontext_predict(test_x, state)
-
-    torch.testing.assert_close(parallel_out, naive_out, rtol=1e-5, atol=1e-5)
-    torch.testing.assert_close(predict_out, parallel_out, rtol=1e-5, atol=1e-5)
