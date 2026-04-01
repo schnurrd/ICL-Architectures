@@ -336,7 +336,7 @@ class FLABackboneConfig(BackboneConfig):
     cache_chunk_size: int | None = None
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
-    mimetic_init_mode: MimeticInitMode = "gates"
+    mimetic_init_mode: MimeticInitMode = "gate_only"
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:

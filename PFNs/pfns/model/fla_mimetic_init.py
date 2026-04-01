@@ -16,7 +16,7 @@ _MIMETIC_A_LOG = -8.0
 _MIMETIC_DT_BIAS = float(torch.log(torch.expm1(torch.tensor(1.0, dtype=torch.float32))))
 _MIMETIC_OUTPUT_GATE_SWISH_NEUTRAL_BIAS = 1.27846 # -> swish(1.27846) ~ 1.0
 _SUPPORTED_LAYER_TYPES = (GatedLinearAttention, GatedDeltaNet)
-MimeticInitMode = Literal["gates", "full", "old"]
+MimeticInitMode = Literal["gate_only", "full_with_output_gate", "full_without_output_gate"]
 
 def _zero_linear_(linear: nn.Linear, *, bias_value: float = 0.0) -> None:
     with torch.no_grad():
@@ -82,12 +82,12 @@ def _zero_gate_(module: nn.Module, *, final_bias_value: float = 0.0) -> None:
         )
 
 
-def _neutralize_gla_output_gate_(module: GatedLinearAttention) -> None:
+def _neutralize_output_gate_(module: nn.Module, *, enabled_attr: str) -> None:
     """Set output gate projection so swish(g_proj(x)) is near 1 at init.
 
     Implementation: biasful g_proj with zero weights and constant bias.
     """
-    if not getattr(module, "use_output_gate", False) or not hasattr(module, "g_proj"):
+    if not getattr(module, enabled_attr, False) or not hasattr(module, "g_proj"):
         return
 
     g_proj = module.g_proj
@@ -98,7 +98,7 @@ def _neutralize_gla_output_gate_(module: GatedLinearAttention) -> None:
         replacement = nn.Linear(g_proj.in_features, g_proj.out_features, bias=True)
         replacement = replacement.to(device=g_proj.weight.device, dtype=g_proj.weight.dtype)
         module.g_proj = replacement
-        g_proj = module.g_proj
+        g_proj = replacement
 
     _zero_linear_(g_proj, bias_value=_MIMETIC_OUTPUT_GATE_SWISH_NEUTRAL_BIAS)
 
@@ -134,10 +134,11 @@ def _require_attrs(module: nn.Module, names: tuple[str, ...]) -> None:
 
 def _normalize_mimetic_init_mode(mode: MimeticInitMode | bool) -> MimeticInitMode:
     if isinstance(mode, bool):
-        return "gates" if mode else "full"
-    if mode not in {"gates", "full", "old"}:
+        return "gate_only" if mode else "full_with_output_gate"
+    if mode not in {"gate_only", "full_with_output_gate", "full_without_output_gate"}:
         raise ValueError(
-            "mode must be one of 'gates', 'full', or 'old'; "
+            "mode must be one of 'gate_only', 'full_with_output_gate', "
+            "or 'full_without_output_gate'; "
             f"got {mode!r}."
         )
     return mode
@@ -149,7 +150,7 @@ def apply_mimetic_fla_init(
     layer_indices: Iterable[int] | None = None,
     qk_perturb_std: float = 0.0,
     allow_short_conv: bool = True,
-    mode: MimeticInitMode | bool = "gates",
+    mode: MimeticInitMode | bool = "gate_only",
 ) -> None:
     """
     Apply mimetic init to selected supported FLA layers.
@@ -159,15 +160,17 @@ def apply_mimetic_fla_init(
         layer_indices: Supported-layer indices to initialize. None initializes all.
         qk_perturb_std: Optional Gaussian stddev added to q/k weights after identity init.
         allow_short_conv: Whether to apply causal-identity init to short-conv paths.
-        mode: Mimetic init recipe. "gates" only neutralizes gating paths,
-            "full" applies the full projection recipe, and "old" matches
-            the full recipe without GLA output-gate neutralization.
+        mode: Mimetic init recipe. "gate_only" neutralizes gating paths without
+            projection identity init, "full_with_output_gate" adds the full
+            projection recipe and GLA output-gate neutralization, and
+            "full_without_output_gate" applies the full projection recipe
+            without GLA output-gate neutralization.
     """
     if qk_perturb_std < 0.0:
         raise ValueError(f"qk_perturb_std must be >= 0, got {qk_perturb_std}.")
     resolved_mode = _normalize_mimetic_init_mode(mode)
-    apply_full_init = resolved_mode in {"full", "old"}
-    neutralize_gla_output_gate = resolved_mode in {"gates", "full"}
+    apply_full_init = resolved_mode in {"full_with_output_gate", "full_without_output_gate"}
+    neutralize_gla_output_gate = resolved_mode in {"gate_only", "full_with_output_gate"}
 
     supported_layers = [
         module
@@ -211,14 +214,15 @@ def apply_mimetic_fla_init(
                 _set_encoder_decoder_identity_(module.v_proj, module.o_proj)
             # sets g_proj bias to ~1.278 and zeros weights, so swish(g_proj(x)) ~ 1 at init => open gate
             if neutralize_gla_output_gate:
-                _neutralize_gla_output_gate_(module)
+                _neutralize_output_gate_(module, enabled_attr="use_output_gate")
             # Zero the recurrent gate to and add a large positive bias to make it open at init. exp(logsigmoid(6)) ~ 0.9975
             _zero_gate_(module.gk_proj, final_bias_value=_MIMETIC_OPEN_GATE_BIAS)
         else:
-            # GatedDeltaNet recipe: shared projection init + stable recurrence defaults.
+            # GatedDeltaNet recipe: gate-only mode neutralizes only gating paths;
+            # full modes also apply shared projection init and stable recurrence defaults.
             _require_attrs(
                 module,
-                ("q_proj", "k_proj", "v_proj", "o_proj", "a_proj", "A_log", "dt_bias"),
+                ("q_proj", "k_proj", "v_proj", "o_proj", "a_proj", "b_proj", "A_log", "dt_bias"),
             )
             if apply_full_init:
                 if allow_short_conv and getattr(module, "use_short_conv", False):
@@ -233,10 +237,13 @@ def apply_mimetic_fla_init(
                     perturb_std=qk_perturb_std,
                 )
                 _set_encoder_decoder_identity_(module.v_proj, module.o_proj)
+                with torch.no_grad():
+                    module.A_log.fill_(_MIMETIC_A_LOG)
+                    module.dt_bias.fill_(_MIMETIC_DT_BIAS)
             _zero_gate_(module.a_proj)
-            with torch.no_grad():
-                module.A_log.fill_(_MIMETIC_A_LOG)
-                module.dt_bias.fill_(_MIMETIC_DT_BIAS)
+            _zero_gate_(module.b_proj)
+            if neutralize_gla_output_gate:
+                _neutralize_output_gate_(module, enabled_attr="use_gate")
         applied_any = True
 
     if not applied_any:

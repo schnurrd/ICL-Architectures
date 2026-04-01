@@ -215,7 +215,7 @@ def get_config(
     # Model options
     cache_chunk_size: int | None = None,
     mimetic_init: bool = False,
-    mimetic_init_mode: MimeticInitMode = "gates",
+    mimetic_init_mode: MimeticInitMode = "gate_only",
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None,
     use_short_conv: bool | None = None,
     feature_positional_embedding: str | None = None,
