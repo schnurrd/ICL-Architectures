@@ -509,45 +509,65 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
 
 MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
     "mimetic:GLA_Comb_ST_Ref": {
-        "display_name": "GLA Comb ST (Reference)",
+        "display_name": "GLA Comb ST",
         "wandb_run_id": "fla_models/runs/2v2xw7d2",
     },
-    "mimetic:GLA_Comb_ST_Simple": {
-        "display_name": "Mimetic GLA Comb ST (Simple)",
-        "wandb_run_id": "fla_models/runs/5r6j4hjs",
-    },
-    "mimetic:GLA_Comb_ST_Improved_1_layer": {
-        "display_name": "Mimetic GLA Comb ST (Improved, 1 Layer)",
-        "wandb_run_id": "fla_models/runs/bvqfpbpl",
-    },
-    "mimetic:GLA_Comb_ST_Improved_all_layer": {
-        "display_name": "Mimetic GLA Comb ST (Improved, All Layers)",
-        "wandb_run_id": "fla_models/runs/7mkque2f",
-    },
-    "mimetic:GLA_Comb_ST_New_Simple": {
-        "display_name": "Mimetic GLA Comb ST (New Simple)",
-        "wandb_run_id": "fla_models/runs/cubna8dc",
-    },
-    "mimetic:Gated_DeltaNet_Comb_ST_Ref": {
-        "display_name": "Gated DeltaNet Comb ST (Reference)",
-        "wandb_run_id": "fla_models/runs/nv19z5jw",
-    },
-    "mimetic:Gated_DeltaNet_Comb_ST_Improved": {
-        "display_name": "Mimetic Gated DeltaNet Comb ST (Improved)",
-        "wandb_run_id": "fla_models/runs/h83z2jq5",
-    },
-    "mimetic:Gated_DeltaNet_Comb_ST_New_Simple": {
-        "display_name": "Mimetic Gated DeltaNet Comb ST (New Simple)",
-        "wandb_run_id": "fla_models/runs/cubna8dc",
-    },
-    "mimetic:Gated_DeltaNet_Comb_ST_New_Gates": {
-        "display_name": "Mimetic Gated DeltaNet Comb ST Newest Gates",
+    "mimetic:GLA_Comb_ST_Gating_only": {
+        "display_name": "Mimetic GLA\nComb ST",
         "wandb_run_id": "fla_models/runs/i8vmztxo",
     },
-    "mimetic:Gated_DeltaNet_Comb_ST_New_Full": {
-        "display_name": "Mimetic Gated DeltaNet Comb ST Newest Full",
-        "wandb_run_id": "fla_models/runs/tfmv77e1",
+    "mimetic:Linear_Attention_FLA_Comb_ST": { 
+        "display_name": "Linear Attention\nComb ST",
+        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
     },
+    "mimetic:DeltaNet_Comb_ST": {
+        "display_name": "DeltaNet\nComb ST",
+        "wandb_run_id": "fla_models/runs/ob2m9rth",
+    },
+    "mimetic:Gated_DeltaNet_Comb_ST": {
+        "display_name": "Gated DeltaNet\nComb ST",
+        "wandb_run_id": "fla_models/runs/g7rh5nv9",  
+    },
+    # "mimetic:Gated_DeltaNet_Comb_ST_mimetic": {
+    #     "display_name": "Mimetic Gated\nDeltaNet Comb ST",
+    #     "wandb_run_id": "fla_models/runs/4r98jepy",  
+    # },
+    # "mimetic:GLA_Comb_ST_Simple": {
+    #     "display_name": "Mimetic GLA Comb ST (Simple)",
+    #     "wandb_run_id": "fla_models/runs/5r6j4hjs",
+    # },
+    # "mimetic:GLA_Comb_ST_Improved_1_layer": {
+    #     "display_name": "Mimetic GLA Comb ST (Improved, 1 Layer)",
+    #     "wandb_run_id": "fla_models/runs/bvqfpbpl",
+    # },
+    # "mimetic:GLA_Comb_ST_Improved_all_layer": {
+    #     "display_name": "Mimetic GLA Comb ST (Improved, All Layers)",
+    #     "wandb_run_id": "fla_models/runs/7mkque2f",
+    # },
+    # "mimetic:GLA_Comb_ST_New_Simple": {
+    #     "display_name": "Mimetic GLA Comb ST (New Simple)",
+    #     "wandb_run_id": "fla_models/runs/cubna8dc",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_Ref": {
+    #     "display_name": "Gated DeltaNet Comb ST (Reference)",
+    #     "wandb_run_id": "fla_models/runs/nv19z5jw",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_Improved": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST (Improved)",
+    #     "wandb_run_id": "fla_models/runs/h83z2jq5",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_New_Simple": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST (New Simple)",
+    #     "wandb_run_id": "fla_models/runs/cubna8dc",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_New_Gates": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST Newest Gates",
+    #     "wandb_run_id": "fla_models/runs/i8vmztxo",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_New_Full": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST Newest Full",
+    #     "wandb_run_id": "fla_models/runs/tfmv77e1",
+    # },
 }
 
 

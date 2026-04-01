@@ -42,6 +42,15 @@ def resolve_display_name_map(df: pd.DataFrame | None = None) -> dict[str, str]:
     return display_name_map
 
 
+def _uses_pretraining_split(metric_keys: set[str]) -> bool:
+    split_metrics = {"acc", "ce", "roc_auc"}
+    return any(
+        metric_key in split_metrics
+        or any(metric_key.endswith(f"_{base_metric}") for base_metric in split_metrics)
+        for metric_key in metric_keys
+    )
+
+
 def build_model_style_map(
     model_names: list[str],
     *,
@@ -357,7 +366,7 @@ def plot_curves_from_df(
     boundary_color = "#546e7a"
     boundary_linestyle = "--"
     metric_keys = {metric_key for metric_key, _ in specs}
-    show_split = bool(metric_keys.intersection({"acc", "ce", "roc_auc"}))
+    show_split = _uses_pretraining_split(metric_keys)
 
     for idx, (metric_key, metric_name) in enumerate(specs):
         ax = axes[idx]
