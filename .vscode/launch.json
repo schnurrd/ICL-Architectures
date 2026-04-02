@@ -45,11 +45,16 @@
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
                 "--overwrite", "--no-wandb",
                 "--config-arg", "model_type='deltanet'",
-                "--config-arg", "sequence_mode='cached'",
-                "--config-arg", "cache_chunk_size=None",
-                "--config-arg", "training_setup='low'",
-                "--config-arg", "batch_size=2",
-                "--config-index", "-1"
+                "--config-arg", "sequence_mode='comb_st'",
+                //"--config-arg", "interleaved_pair_positional_embedding='sinusoidal'" 
+                "--config-arg", "bidirectional=True",
+                // "--config-arg", "bidirectional_test_time=True",
+                // "--config-arg", "mimetic_init=True",
+                // "--config-arg", "sequence_mode='cached'",
+                // "--config-arg", "cache_chunk_size=None",
+                // "--config-arg", "training_setup='low'",
+                // "--config-arg", "batch_size=2",
+                // "--config-index", "-1"
             ],
             "justMyCode": false
         },
@@ -146,9 +151,21 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "--num-runs", "1",
-                "--run-index", "0",
-                "--include-baselines",
+                // "--num-runs", "1",
+                // "--run-index", "0",
+                // "--include-baselines",
+                "--models", "Oracle_Hidden_State_DeltaNet_Comb_ST_base"
+            ]
+        },
+        {
+            "name": "Python Debugger: Length Generalization Experiments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/PFNs/notebooks/run_synthetic_seq_len_experiments.py",
+            "console": "integratedTerminal",
+            "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
+            "args": [
+                "--models", "Oracle_Hidden_State_DeltaNet_Comb_ST_high_patience"
             ]
         },
     ]
