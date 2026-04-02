@@ -471,6 +471,17 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     # },
 }
 
+STATE_PASSING_MODELS: dict[str, dict[str, Any]] = {
+    "State_Passing_GLA_Comb_ST": {
+        "display_name": "State Passing (GLA)",
+        "wandb_run_id": "fla_models/runs/66hynh1d"
+    },
+    "GLA_Comb_ST": {
+        "display_name": "GLA Combined Single Target",
+        "wandb_run_id": "fla_models/runs/g1ul5lyc",
+    },
+}
+
 SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
     "subsampled:DeltaNet_Comb_ST_1K": {
         "display_name": "DeltaNet Comb ST (Subsampled 1K)",
@@ -609,6 +620,21 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_lr": 3e-3,
         "oracle_weight_decay": 1e-5,
         "oracle_patience": 20,
+        "oracle_query_batch_size": 4000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_random_init_hidden_state": True,
+        "oracle_verbose": False,
+        "eval_autocast_dtype": "bf16",
+    },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base_state_init_v2": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 5e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 40,
         "oracle_query_batch_size": 4000,
         "oracle_selection_fraction": 0.1,
         "oracle_evaluate_only_max_seqlen": True,
@@ -778,6 +804,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "deltanet_finetuned": DELTANET_FINETUNED_MODELS,
     "mimetic_initialization": MIMETIC_INITIALIZATION_MODELS,
     "subsampled": SUBSAMPLED_MODELS,
+    "state_passing": STATE_PASSING_MODELS,
     "fla_models": {
         **KDA_MODELS,
         **GLA_MODELS,

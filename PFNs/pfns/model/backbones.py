@@ -34,6 +34,10 @@ from pfns.model.fla_patches import (
     _maybe_patch_linear_attn_with_stateless_recurrent,
     _maybe_patch_shortconv_forward_pytorch,
 )
+from pfns.model.fla_state_passing import (
+    FLAStatePassing,
+    prepare_deltanet_cache_for_fla,
+)
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.linear_attention import LinearAttention
 from pfns.model.mode_normalization import (
@@ -334,6 +338,8 @@ class FLABackboneConfig(BackboneConfig):
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
+    state_passing: bool = False
+    state_passing_dropout: float = 0.1
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_init_mode: MimeticInitMode = "gate_only"
@@ -348,6 +354,8 @@ class FLABackboneConfig(BackboneConfig):
             "sequence_mode",
             _resolve_fla_sequence_mode(self.sequence_mode),
         )
+        if not 0.0 <= self.state_passing_dropout <= 1.0:
+            raise ValueError("state_passing_dropout must be in [0, 1].")
 
     def create_backbone(self, ninp: int, attention_between_features: bool, **kwargs: tp.Any) -> "Backbone":
         ConfigClass, ModelClass = FLA_MODEL_REGISTRY[self.model_type]
@@ -377,6 +385,8 @@ class FLABackboneConfig(BackboneConfig):
             fla_model=fla_model,
             sequence_mode=self.sequence_mode,
             cache_chunk_size=self.cache_chunk_size,
+            state_passing=self.state_passing,
+            state_passing_dropout=self.state_passing_dropout,
         )
 
 
@@ -397,11 +407,21 @@ class FLABackbone(Backbone):
         fla_model: nn.Module,
         sequence_mode: str = "Comb_ST",
         cache_chunk_size: int | None = None,
+        state_passing: bool = False,
+        state_passing_dropout: float = 0.1,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
+        assert not (
+            state_passing and isinstance(self.fla, Mamba2Model)
+        ), "Mamba2 does not support state_passing."
         self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
+        self.state_passing = (
+            FLAStatePassing(dropout_prob=state_passing_dropout)
+            if state_passing
+            else None
+        )
 
     @staticmethod
     def _summarize_cache(cache_params: tp.Any) -> str:
@@ -570,6 +590,8 @@ class FLABackbone(Backbone):
     def incontext_fit(
         self,
         train_x: torch.Tensor,
+        *,
+        initial_cache_params: tp.Any | None = None,
         **kwargs: tp.Any,
     ) -> tuple[torch.Tensor, tp.Any]:
         """Run the FLA model on the training context and return cached state.
@@ -578,11 +600,12 @@ class FLABackbone(Backbone):
         (B, S, N, E). However we currently only support N=1 for unflattened input.
         """
         x_batched, shape_info = self._prepare_fla_input(train_x)
-        train_out, cache_params = self._run_fla(x_batched, return_cache=True)
-        cached_state = {
-            "cache_params": cache_params,
-            "cache_position_start": x_batched.size(1),
-        }
+        train_out, cache_params = self._run_fla(
+            x_batched,
+            cache_params=initial_cache_params,
+            return_cache=True,
+        )
+        cached_state = {"cache_params": cache_params}
         out = self._unprepare_fla_output(train_out, shape_info)
         return out, cached_state
 
@@ -593,14 +616,12 @@ class FLABackbone(Backbone):
         **kwargs: tp.Any,
     ) -> torch.Tensor:
         """Run the FLA model on test inputs using cached past key values in parallel."""
-        cache_position_start = cached_state.get("cache_position_start", None)
         cache_params = cached_state["cache_params"]
 
         x_batched, shape_info = self._prepare_fla_input(test_x)
         output = self._run_test_with_cache(
             x_batched,
             cache_params,
-            cache_position_start=cache_position_start,
         )
         return self._unprepare_fla_output(output, shape_info)
 
@@ -648,9 +669,6 @@ class FLABackbone(Backbone):
                 cache_params = out.cache_params
             else:
                 raise RuntimeError("FLA model output does not contain past_key_values or cache_params.")
-            # Store cache_position_start as fallback for direct _run_fla calls (bypassing incontext_fit)
-            if cache_params is not None and not hasattr(cache_params, "_cache_position_start"):
-                cache_params._cache_position_start = x.size(1)
         return last_hidden_state, cache_params
 
     def _patch_contexts(
@@ -692,7 +710,6 @@ class FLABackbone(Backbone):
         self,
         test_x: torch.Tensor,
         cache_params: tp.Any,
-        cache_position_start: int | None = None,
         use_custom_recurrent: bool = True,
         use_custom_shortconv: bool = True,
     ) -> torch.Tensor:
@@ -703,8 +720,6 @@ class FLABackbone(Backbone):
             return test_x
 
         assert cache_params is not None, "Cache parameters must be provided for test-time evaluation."
-        if cache_position_start is None:
-            cache_position_start = getattr(cache_params, "_cache_position_start", None)
 
         batch_size, seq_len, embed_dim = test_x.shape
         supports_custom_recurrent = self._supports_custom_recurrent()
@@ -740,7 +755,6 @@ class FLABackbone(Backbone):
         self,
         test_x: torch.Tensor,
         cache_params: tp.Any | None,
-        cache_position_start: int | None = None,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
     ) -> torch.Tensor:
@@ -749,8 +763,6 @@ class FLABackbone(Backbone):
         """
         if test_x.numel() == 0:
             return test_x
-        if cache_position_start is None and cache_params is not None:
-            cache_position_start = getattr(cache_params, "_cache_position_start", None)
 
         output_tokens = []
         seq_len = test_x.size(1)
@@ -802,16 +814,38 @@ class FLABackbone(Backbone):
         x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
 
         train_len = min(single_eval_pos, seq_len)
+        state_passing = self.state_passing if self.training else None
+        initial_cache_params = (
+            None
+            if state_passing is None
+            else state_passing.sample_initial_cache(
+                x_batched.size(0),
+                device=x_batched.device,
+            )
+        )
+        if initial_cache_params is not None and isinstance(self.fla, DeltaNetModel):
+            initial_cache_params = prepare_deltanet_cache_for_fla(initial_cache_params)
     
         if self.sequence_mode in {"Comb_ST", "Int_ST"} or not self.training:
             train_x = x_batched[:, :train_len]
             test_x = x_batched[:, train_len:]
 
-            train_out, state = self.incontext_fit(train_x)
+            train_out, state = self.incontext_fit(
+                train_x,
+                initial_cache_params=initial_cache_params,
+            )
             test_out = self.incontext_predict(test_x, state)
+            if state_passing is not None:
+                state_passing.remember(state["cache_params"])
             attn_out = torch.cat([train_out, test_out], dim=1)
         else:
-            attn_out, _ = self._run_fla(x_batched, return_cache=False)
+            attn_out, cache_params = self._run_fla(
+                x_batched,
+                cache_params=initial_cache_params,
+                return_cache=self.state_passing is not None,
+            )
+            if state_passing is not None:
+                state_passing.remember(cache_params)
         
         out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
         return out
