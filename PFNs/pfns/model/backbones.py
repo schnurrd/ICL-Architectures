@@ -112,7 +112,7 @@ class BidirectionalFLALayer(nn.Module):
         *,
         hidden_size: int,
         share_weights: bool = True,
-        state_fusion: str = "linear_output_two_cache",
+        state_fusion: str = "mean_output_mean_cache",
     ) -> None:
         super().__init__()
         self.share_weights = bool(share_weights)
@@ -311,7 +311,7 @@ def _make_fla_model_bidirectional(
     *,
     hidden_size: int,
     share_weights: bool = True,
-    state_fusion: str = "linear_output_two_cache",
+    state_fusion: str = "mean_output_mean_cache",
 ) -> nn.Module:
     layers = _get_fla_layers(fla_model)
     fla_model.layers = nn.ModuleList(
@@ -605,7 +605,7 @@ class FLABackboneConfig(BackboneConfig):
     cache_chunk_size: int | None = None
     bidirectional: bool = False
     bidirectional_share_weights: bool = True
-    state_fusion: str = "linear_output_two_cache"
+    bidirectional_state_fusion: str = "mean_output_mean_cache"
     state_passing: bool = False
     state_passing_dropout: float = 0.1
     mimetic_init: bool = False
@@ -622,11 +622,6 @@ class FLABackboneConfig(BackboneConfig):
             "sequence_mode",
             _resolve_fla_sequence_mode(self.sequence_mode),
         )
-        object.__setattr__(
-            self,
-            "state_fusion",
-            self.state_fusion,
-        )
         if self.bidirectional and self.sequence_mode not in BIDIRECTIONAL_FLA_SEQUENCE_MODES:
             raise ValueError(
                 "Bidirectional FLA currently supports only sequence_mode "
@@ -635,14 +630,17 @@ class FLABackboneConfig(BackboneConfig):
             )
         if self.bidirectional and self.model_type == "mamba2":
             raise ValueError("Bidirectional FLA does not support model_type='mamba2'.")
-        if self.state_fusion not in BIDIRECTIONAL_STATE_FUSIONS:
-            raise ValueError(
-                f"state_fusion must be one of {sorted(BIDIRECTIONAL_STATE_FUSIONS)}."
-            )
-        if self.state_fusion != "linear_output_two_cache" and not self.bidirectional:
-            raise ValueError("state_fusion requires bidirectional=True.")
-        if _uses_fused_prediction_cache(self.state_fusion) and not self.bidirectional_share_weights:
-            raise ValueError("state_fusion requires bidirectional_share_weights=True.")
+        if self.bidirectional:
+            if self.bidirectional_state_fusion not in BIDIRECTIONAL_STATE_FUSIONS:
+                raise ValueError(
+                    "bidirectional_state_fusion must be one of "
+                    f"{sorted(BIDIRECTIONAL_STATE_FUSIONS)}."
+                )
+            if (
+                _uses_fused_prediction_cache(self.bidirectional_state_fusion)
+                and not self.bidirectional_share_weights
+            ):
+                raise ValueError("bidirectional_state_fusion requires bidirectional_share_weights=True.")
         if self.bidirectional and self.state_passing:
             raise ValueError("Bidirectional FLA does not support state_passing.")
         if not 0.0 <= self.state_passing_dropout <= 1.0:
@@ -677,7 +675,7 @@ class FLABackboneConfig(BackboneConfig):
                 wrapped_model,
                 hidden_size=int(config.hidden_size),
                 share_weights=self.bidirectional_share_weights,
-                state_fusion=self.state_fusion,
+                state_fusion=self.bidirectional_state_fusion,
             )
 
         backbone_cls = BidirectionalFLABackbone if self.bidirectional else FLABackbone
@@ -691,7 +689,7 @@ class FLABackboneConfig(BackboneConfig):
             state_passing_dropout=self.state_passing_dropout,
         )
         if self.bidirectional:
-            backbone_kwargs["state_fusion"] = self.state_fusion
+            backbone_kwargs["state_fusion"] = self.bidirectional_state_fusion
 
         return backbone_cls(**backbone_kwargs)
 
@@ -1165,7 +1163,7 @@ class BidirectionalFLABackbone(FLABackbone):
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
         bidirectional: bool = True,
-        state_fusion: str = "linear_output_two_cache",
+        state_fusion: str = "mean_output_mean_cache",
     ):
         super().__init__(
             fla_model=fla_model,

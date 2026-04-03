@@ -23,7 +23,7 @@ BIDIRECTIONAL_FLA_MODEL_TYPES = tuple(
 def _enable_bidirectional_fusion(backbone: torch.nn.Module) -> None:
     with torch.no_grad():
         for layer in backbone.layers:
-            if isinstance(layer, BidirectionalFLALayer):
+            if isinstance(layer, BidirectionalFLALayer) and layer.fusion_out is not None:
                 layer.fusion_out.weight.normal_(mean=0.0, std=0.2)
                 if layer.fusion_out.bias is not None:
                     layer.fusion_out.bias.zero_()
@@ -60,19 +60,25 @@ def test_bidirectional_rejects_mamba2() -> None:
         build_fla_backbone("mamba2", size="small", bidirectional=True)
 
 
-def test_bidirectional_state_fusion_requires_bidirectional_mode() -> None:
-    with pytest.raises(ValueError, match="state_fusion requires bidirectional=True"):
-        build_fla_backbone("gla", size="small", state_fusion="mean")
+def test_non_bidirectional_ignores_bidirectional_state_fusion() -> None:
+    backbone = build_fla_backbone(
+        "gla",
+        size="small",
+        bidirectional=False,
+        bidirectional_state_fusion="mean_output_two_cache",
+    )
+
+    assert backbone is not None
 
 
 def test_bidirectional_state_fusion_requires_shared_weights() -> None:
-    with pytest.raises(ValueError, match="state_fusion requires bidirectional_share_weights=True"):
+    with pytest.raises(ValueError, match="bidirectional_state_fusion requires bidirectional_share_weights=True"):
         build_fla_backbone(
             "gla",
             size="small",
             bidirectional=True,
             bidirectional_share_weights=False,
-            state_fusion="mean_fused_cache",
+            bidirectional_state_fusion="mean_output_mean_cache",
         )
 
 
@@ -80,14 +86,25 @@ def test_bidirectional_layer_mean_state_fusion_averages_hidden_states() -> None:
     layer = BidirectionalFLALayer(
         torch.nn.Identity(),
         hidden_size=4,
-        state_fusion="mean",
+        state_fusion="mean_output_two_cache",
     )
+    assert layer.fusion_out is None
     forward_hidden = torch.tensor([[[1.0, 3.0, 5.0, 7.0]]])
     backward_hidden = torch.tensor([[[3.0, 5.0, 7.0, 9.0]]])
 
     fused_hidden = layer._fuse_hidden_states(forward_hidden, backward_hidden)
 
     torch.testing.assert_close(fused_hidden, (forward_hidden + backward_hidden) / 2)
+
+
+def test_bidirectional_layer_mean_fused_cache_linear_output_keeps_fusion_out() -> None:
+    layer = BidirectionalFLALayer(
+        torch.nn.Identity(),
+        hidden_size=4,
+        state_fusion="linear_output_mean_cache",
+    )
+
+    assert layer.fusion_out is not None
 
 
 @pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
@@ -97,7 +114,12 @@ def test_bidirectional_incontext_fit_builds_forward_and_backward_caches(model_ty
 
     torch.manual_seed(0)
     device = torch.device("cuda")
-    backbone = build_fla_backbone(model_type, size="small", bidirectional=True).to(device)
+    backbone = build_fla_backbone(
+        model_type,
+        size="small",
+        bidirectional=True,
+        bidirectional_state_fusion="linear_output_two_cache",
+    ).to(device)
     embed_dim = fla_hidden_size(model_type, size="small")
     train_x = torch.randn(2, 5, embed_dim, device=device)
 
@@ -111,6 +133,25 @@ def test_bidirectional_incontext_fit_builds_forward_and_backward_caches(model_ty
 
 
 @pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
+def test_bidirectional_default_state_fusion_returns_mean_fused_prediction_cache(model_type: str) -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("FLA backend requires CUDA/Triton for this test.")
+
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+    backbone = build_fla_backbone(model_type, size="small", bidirectional=True).to(device)
+    embed_dim = fla_hidden_size(model_type, size="small")
+    train_x = torch.randn(2, 5, embed_dim, device=device)
+
+    with torch.no_grad():
+        _, state = backbone.incontext_fit(train_x)
+
+    cache = state["cache_params"]
+    assert isinstance(cache, FusedBidirectionalFLACache)
+    assert cache.state_fusion == "mean_output_mean_cache"
+
+
+@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
 def test_bidirectional_mean_state_fusion_keeps_bidirectional_prediction_cache(model_type: str) -> None:
     if not torch.cuda.is_available():
         pytest.skip("FLA backend requires CUDA/Triton for this test.")
@@ -121,7 +162,7 @@ def test_bidirectional_mean_state_fusion_keeps_bidirectional_prediction_cache(mo
         model_type,
         size="small",
         bidirectional=True,
-        state_fusion="mean",
+        bidirectional_state_fusion="mean_output_two_cache",
     ).to(device)
     embed_dim = fla_hidden_size(model_type, size="small")
     train_x = torch.randn(2, 5, embed_dim, device=device)
@@ -139,8 +180,12 @@ def test_bidirectional_mean_state_fusion_keeps_bidirectional_prediction_cache(mo
     assert torch.isfinite(out).all()
 
 
+@pytest.mark.parametrize("state_fusion", ["mean_output_mean_cache", "linear_output_mean_cache"])
 @pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
-def test_bidirectional_state_fusion_returns_fused_prediction_cache(model_type: str) -> None:
+def test_bidirectional_state_fusion_returns_fused_prediction_cache(
+    model_type: str,
+    state_fusion: str,
+) -> None:
     if not torch.cuda.is_available():
         pytest.skip("FLA backend requires CUDA/Triton for this test.")
 
@@ -150,7 +195,7 @@ def test_bidirectional_state_fusion_returns_fused_prediction_cache(model_type: s
         model_type,
         size="small",
         bidirectional=True,
-        state_fusion="mean_fused_cache",
+        bidirectional_state_fusion=state_fusion,
     ).to(device)
     embed_dim = fla_hidden_size(model_type, size="small")
     train_x = torch.randn(2, 5, embed_dim, device=device)
@@ -162,7 +207,7 @@ def test_bidirectional_state_fusion_returns_fused_prediction_cache(model_type: s
 
     cache = state["cache_params"]
     assert isinstance(cache, FusedBidirectionalFLACache)
-    assert cache.state_fusion == "mean_fused_cache"
+    assert cache.state_fusion == state_fusion
     assert cache.cache is not None
     assert out.shape == test_x.shape
     assert torch.isfinite(out).all()

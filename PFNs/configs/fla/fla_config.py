@@ -202,7 +202,7 @@ def get_config(
     sequence_mode: str = "Comb_ST",
     bidirectional: bool = False,
     bidirectional_share_weights: bool = True,
-    state_fusion: str = "linear_output_two_cache",
+    bidirectional_state_fusion: str = "mean_output_mean_cache",
     state_passing: bool = False,
     state_passing_dropout: float = 0.1,
     task_variant: str = "tabular_prior",
@@ -346,7 +346,7 @@ def get_config(
         "sequence_mode": sequence_mode,
         "bidirectional": bidirectional,
         "bidirectional_share_weights": bidirectional_share_weights,
-        "state_fusion": state_fusion,
+        "bidirectional_state_fusion": bidirectional_state_fusion,
         "state_passing": bool(state_passing),
         "state_passing_dropout": float(state_passing_dropout),
         "mimetic_init": mimetic_init,
@@ -418,7 +418,7 @@ def get_config(
             if bidirectional
             else None
         ),
-        f"sfusion_{state_fusion}" if bidirectional and state_fusion != "none" else None,
+        f"sfusion_{bidirectional_state_fusion}" if bidirectional else None,
         f"fpe_{feature_positional_embedding}",
     ]
     extras_str = "_".join(e for e in extras if e)
