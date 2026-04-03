@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 import matplotlib.pyplot as plt
 from matplotlib import colors as mcolors
@@ -19,6 +19,12 @@ from pfns.experiments.model_benchmarks.model_registry import (
     get_autocast_models_from_registry,
 )
 from pfns.experiments.model_benchmarks.models import load_models_for_benchmark
+from pfns.experiments.model_benchmarks.plotting import (
+    apply_pretraining_split_background,
+    create_panel_figure,
+    plot_grouped_runs_with_distribution,
+    resolve_display_name_map,
+)
 from pfns.tensor_tree_utils import iter_named_tensors
 from pfns.training_utils import (
     categorical_mask_to_inds,
@@ -29,7 +35,14 @@ from pfns.training_utils import (
 
 _HIDDEN_STATE_HINTS = ("state", "cache", "kv", "ssm", "h0")
 _LAYER_PATTERN = re.compile(r"(?:layers|layer_states)\[(\d+)\]")
-_MATRIX_METRICS = ("frobenius_norm", "spectral_norm", "effective_rank")
+_MATRIX_METRICS = ("frobenius_norm", "spectral_norm", "effective_rank", "stable_rank")
+_METRIC_DISPLAY_NAMES = {
+    "abs_max": "Absolute Max",
+    "frobenius_norm": "Frobenius Norm",
+    "spectral_norm": "Spectral Norm",
+    "effective_rank": "Effective Rank",
+    "stable_rank": "Stable Rank",
+}
 
 
 @dataclass(frozen=True)
@@ -152,7 +165,7 @@ def _head_matrices(tensor: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
         return [(0, arr)]
     arr = arr.movedim(arr.ndim - 3, 0)
     if arr.ndim > 3:
-        arr = arr.reshape(arr.shape[0], -1, arr.shape[-2], arr.shape[-1]).mean(dim=1)
+        arr = arr.reshape(arr.shape[0], -1, arr.shape[-2], arr.shape[-1]).squeeze(1)
     return [(head_idx, arr[head_idx]) for head_idx in range(int(arr.shape[0]))]
 
 
@@ -162,6 +175,17 @@ def _effective_rank_from_singular_values(singular_values: torch.Tensor) -> float
         return 0.0
     probs = singular_values / singular_values.sum()
     return float((-(probs * probs.log()).sum()).exp().item())
+
+
+def _stable_rank_from_singular_values(singular_values: torch.Tensor) -> float:
+    singular_values = singular_values[singular_values > 0]
+    if singular_values.numel() == 0:
+        return 0.0
+    spectral_norm = singular_values.max()
+    if float(spectral_norm.item()) == 0.0:
+        return 0.0
+    frobenius_sq = singular_values.square().sum()
+    return float((frobenius_sq / spectral_norm.square()).item())
 
 
 def _matrix_metrics(matrix: torch.Tensor) -> dict[str, float | tuple[int, ...] | int]:
@@ -174,6 +198,7 @@ def _matrix_metrics(matrix: torch.Tensor) -> dict[str, float | tuple[int, ...] |
             "frobenius_norm": float("nan"),
             "spectral_norm": float("nan"),
             "effective_rank": 0.0,
+            "stable_rank": 0.0,
         }
     if not bool(torch.isfinite(arr).all()):
         raise ValueError("Matrix contains non-finite values, cannot compute metrics.")
@@ -184,6 +209,7 @@ def _matrix_metrics(matrix: torch.Tensor) -> dict[str, float | tuple[int, ...] |
         "frobenius_norm": float(torch.linalg.vector_norm(arr).item()),
         "spectral_norm": float(singular_values.max().item()),
         "effective_rank": _effective_rank_from_singular_values(singular_values),
+        "stable_rank": _stable_rank_from_singular_values(singular_values),
     }
 
 
@@ -396,7 +422,7 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
         cols = [
             "model", "tensor_name", "layer_idx", "head_idx", "seqlen",
             "abs_max_mean",
-            "frobenius_norm_mean", "spectral_norm_mean", "effective_rank_mean", "n",
+            "frobenius_norm_mean", "spectral_norm_mean", "effective_rank_mean", "stable_rank_mean", "n",
         ]
         return pd.DataFrame(columns=cols)
     group_cols = [c for c in ("model", "tensor_name", "layer_idx", "head_idx", "seqlen") if c in df.columns]
@@ -407,6 +433,7 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             frobenius_norm_mean=("frobenius_norm", "mean"),
             spectral_norm_mean=("spectral_norm", "mean"),
             effective_rank_mean=("effective_rank", "mean"),
+            stable_rank_mean=("stable_rank", "mean"),
             n=("rep", "nunique"),
         )
         .reset_index()
@@ -434,6 +461,7 @@ def plot_hidden_state_metric(
     tensor_names: list[str] | None = None,
     model: str | None = None,
     log_x: bool = True,
+    run_alpha: float = 0.35,
 ) -> None:
     if df.empty:
         print(f"No rows to plot for: {title}")
@@ -450,10 +478,14 @@ def plot_hidden_state_metric(
     model_values = sorted(plot_df["model"].astype(str).unique().tolist())
     split = model is None and len(model_values) > 1
     panel_models = model_values if split else [model_values[0]]
-    fig, axes = plt.subplots(1, len(panel_models), figsize=(6.4 * len(panel_models), 5), sharey=split, squeeze=False)
+    fig, axes = create_panel_figure(
+        panel_count=len(panel_models),
+        figsize=(6.4 * len(panel_models), 5),
+        sharey=split,
+    )
     palette = list(mcolors.TABLEAU_COLORS.values())
     for idx, model_name in enumerate(panel_models):
-        ax = axes[0, idx if split else 0]
+        ax = axes[idx if split else 0]
         sub = plot_df if not split else plot_df[plot_df["model"] == model_name]
         agg = sub.groupby(["tensor_name", "seqlen"], observed=True)[metric].mean().reset_index().sort_values(["tensor_name", "seqlen"])
         names = agg["tensor_name"].astype(str).unique().tolist()
@@ -461,7 +493,31 @@ def plot_hidden_state_metric(
         shades = np.linspace(0.55, 0.05, num=max(len(names), 1))
         colors = {name: tuple((1 - a) * base + a * np.ones(3)) for name, a in zip(names, shades, strict=False)}
         for name, group in agg.groupby("tensor_name", observed=True):
-            ax.plot(group["seqlen"], group[metric], marker="o", linewidth=1.6, markersize=3.5, color=colors[str(name)], label=_short_tensor_label(str(name)))
+            color = colors[str(name)]
+            raw_group = sub[sub["tensor_name"] == name]
+            if "rep" in raw_group.columns:
+                for _, rep_df in raw_group.groupby("rep", observed=True, sort=True):
+                    rep_df = rep_df.sort_values("seqlen")
+                    ax.plot(
+                        rep_df["seqlen"],
+                        rep_df[metric],
+                        linewidth=0.55,
+                        color=color,
+                        alpha=run_alpha,
+                        marker=None,
+                        label="_nolegend_",
+                        zorder=2,
+                    )
+            ax.plot(
+                group["seqlen"],
+                group[metric],
+                marker="o",
+                linewidth=1.6,
+                markersize=3.5,
+                color=color,
+                label=_short_tensor_label(str(name)),
+                zorder=3,
+            )
         if log_x:
             ax.set_xscale("log")
         ax.set_xlabel("Sequence length")
@@ -488,37 +544,104 @@ def _plot_recurrent_metric(
     model: str | None = None,
     training_context_length: int | None = None,
     log_x: bool = True,
+    plot_mode: Literal["individual_runs", "violin"] = "individual_runs",
+    run_alpha: float = 0.35,
+    distribution_alpha: float | None = 0.3,
+    distribution_width_frac: float = 0.4,
 ) -> None:
+    if plot_mode not in {"individual_runs", "violin"}:
+        raise ValueError("plot_mode must be 'individual_runs' or 'violin'.")
+    if not 0.0 < run_alpha <= 1.0:
+        raise ValueError("run_alpha must be in the interval (0, 1].")
+    if distribution_alpha is not None and not 0.0 < distribution_alpha <= 1.0:
+        raise ValueError("distribution_alpha must be in the interval (0, 1].")
+    if not 0.0 < distribution_width_frac:
+        raise ValueError("distribution_width_frac must be positive.")
+
     model_values = sorted(plot_df["model"].astype(str).unique().tolist())
+    display_name_map = resolve_display_name_map(plot_df)
+    metric_label = _METRIC_DISPLAY_NAMES.get(metric, metric.replace("_", " ").title())
     split = model is None and len(model_values) > 1
+    palette = list(mcolors.TABLEAU_COLORS.values())
     for group_value, group_df in plot_df.groupby(group_key, observed=True):
         panel_models = model_values if split else [model_values[0]]
-        fig, axes = plt.subplots(1, len(panel_models), figsize=(6.4 * len(panel_models), 5), sharey=split, squeeze=False)
+        fig, axes = create_panel_figure(
+            panel_count=len(panel_models),
+            figsize=(6.4 * len(panel_models), 5),
+            sharey=split,
+        )
         for idx, model_name in enumerate(panel_models):
-            ax = axes[0, idx if split else 0]
+            ax = axes[idx if split else 0]
             sub = group_df if not split else group_df[group_df["model"] == model_name]
-            agg = sub.groupby([line_key, "seqlen"], observed=True)[metric].mean().reset_index().sort_values([line_key, "seqlen"])
+            violin_values: list[np.ndarray] = []
+            summary_fn = "median" if plot_mode == "violin" else "mean"
+            agg = (
+                sub.groupby([line_key, "seqlen"], observed=True)[metric]
+                .agg(summary_fn)
+                .reset_index()
+                .sort_values([line_key, "seqlen"])
+            )
             if agg.empty:
                 ax.set_visible(False)
                 continue
-            for line_value, line_df in agg.groupby(line_key, observed=True):
+            line_values = agg[line_key].dropna().unique().tolist()
+            colors = {value: palette[i % len(palette)] for i, value in enumerate(line_values)}
+            for line_idx, (line_value, line_df) in enumerate(agg.groupby(line_key, observed=True)):
                 value = int(line_value)
                 label = f"{line_name}[{value}]" if value >= 0 else f"{line_name}[unknown]"
-                ax.plot(line_df["seqlen"], line_df[metric], marker="o", linewidth=1.3, label=label)
-            if training_context_length is not None:
-                ax.axvline(
-                    int(training_context_length),
-                    color="black",
-                    linestyle="--",
-                    linewidth=1.5,
-                    alpha=0.9,
-                    label="Train context",
+                color = colors[line_value]
+                raw_line_df = sub[sub[line_key] == line_value]
+                if plot_mode == "violin":
+                    violin_values.append(raw_line_df[metric].to_numpy(dtype=float, copy=False))
+                plot_grouped_runs_with_distribution(
+                    ax=ax,
+                    sub=raw_line_df,
+                    x_col="seqlen",
+                    value_col=metric,
+                    rep_col="rep",
+                    model_label=label,
+                    marker="o",
+                    linestyle="-",
+                    color=color,
+                    run_alpha=run_alpha,
+                    distribution_alpha=distribution_alpha,
+                    distribution_width_frac=distribution_width_frac,
+                    show_run_lines=plot_mode == "individual_runs",
+                    log_x=log_x,
+                    distribution_style="half_violin" if plot_mode == "violin" else "none",
+                    model_index=line_idx,
+                    model_count=len(line_values),
+                    summary_stat=summary_fn,
+                    line_width=1.3,
+                    marker_size=5.5,
+                    distribution_zorder=2,
+                    summary_zorder=3,
                 )
+            if plot_mode == "violin" and violin_values:
+                all_violin_values = np.concatenate(
+                    [values.astype(float, copy=False) for values in violin_values if values.size > 0]
+                )
+                finite_violin_values = all_violin_values[np.isfinite(all_violin_values)]
+                if finite_violin_values.size > 0:
+                    y_min = float(finite_violin_values.min())
+                    y_max = float(finite_violin_values.max())
+                    pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
+                    ax.set_ylim(y_min - pad, y_max + pad)
             if log_x:
                 ax.set_xscale("log")
-            ax.set_xlabel("Sequence length")
-            ax.set_ylabel(metric)
-            ax.set_title(str(model_name) if split else f"{title_prefix} | {group_name}[{int(group_value)}]")
+            if training_context_length is not None:
+                apply_pretraining_split_background(
+                    ax,
+                    boundary=float(training_context_length),
+                    boundary_label="Train context",
+                )
+            ax.set_xlabel("Sequence Length")
+            ax.set_ylabel(metric_label if idx == 0 else "")
+            ax.set_title(
+                display_name_map.get(str(model_name), str(model_name))
+                if split
+                else f"{title_prefix} | {group_name}[{int(group_value)}]"
+            )
             ax.grid(True, alpha=0.3)
             ax.legend(loc="best", fontsize=8, ncol=2)
         if split:
@@ -534,7 +657,12 @@ def plot_recurrent_metric_per_head(
     metric: str,
     title_prefix: str,
     model: str | None = None,
+    training_context_length: int | None = None,
     log_x: bool = True,
+    plot_mode: Literal["individual_runs", "violin"] = "individual_runs",
+    run_alpha: float = 0.35,
+    distribution_alpha: float | None = 0.3,
+    distribution_width_frac: float = 0.4,
 ) -> None:
     if df.empty:
         print(f"No rows to plot for: {title_prefix}")
@@ -549,7 +677,22 @@ def plot_recurrent_metric_per_head(
     if plot_df.empty:
         print(f"No matching rows to plot for: {title_prefix}")
         return
-    _plot_recurrent_metric(plot_df, metric=metric, title_prefix=title_prefix, group_key="head_idx", line_key="layer_idx", group_name="head", line_name="layer", model=model, log_x=log_x)
+    _plot_recurrent_metric(
+        plot_df,
+        metric=metric,
+        title_prefix=title_prefix,
+        group_key="head_idx",
+        line_key="layer_idx",
+        group_name="head",
+        line_name="layer",
+        model=model,
+        training_context_length=training_context_length,
+        log_x=log_x,
+        plot_mode=plot_mode,
+        run_alpha=run_alpha,
+        distribution_alpha=distribution_alpha,
+        distribution_width_frac=distribution_width_frac,
+    )
 
 
 def plot_recurrent_metric_per_layer(
@@ -562,6 +705,10 @@ def plot_recurrent_metric_per_layer(
     head_indices: list[int] | tuple[int, ...] | None = None,
     training_context_length: int | None = None,
     log_x: bool = True,
+    plot_mode: Literal["individual_runs", "violin"] = "individual_runs",
+    run_alpha: float = 0.35,
+    distribution_alpha: float | None = 0.3,
+    distribution_width_frac: float = 0.4,
 ) -> None:
     if df.empty:
         print(f"No rows to plot for: {title_prefix}")
@@ -591,106 +738,8 @@ def plot_recurrent_metric_per_layer(
         model=model,
         training_context_length=training_context_length,
         log_x=log_x,
+        plot_mode=plot_mode,
+        run_alpha=run_alpha,
+        distribution_alpha=distribution_alpha,
+        distribution_width_frac=distribution_width_frac,
     )
-
-
-def plot_recurrent_effective_rank_trajectory(
-    df: pd.DataFrame,
-    *,
-    title_prefix: str = "Recurrent-state effective rank over token positions",
-    model: str | None = None,
-    layer_indices: list[int] | tuple[int, ...] | None = None,
-    head_indices: list[int] | tuple[int, ...] | None = None,
-    training_context_length: int | None = None,
-    boundary_positions: list[int] | tuple[int, ...] | None = None,
-    max_heads: int | None = 4,
-    show_legend: bool = True,
-) -> None:
-    if df.empty:
-        print(f"No rows to plot for: {title_prefix}")
-        return
-    missing = sorted({"model", "token_idx", "layer_idx", "head_idx", "effective_rank"} - set(df.columns))
-    if missing:
-        print(f"Skipping {title_prefix}: missing columns {missing}")
-        return
-    plot_df = df.copy()
-    if model is not None:
-        plot_df = plot_df[plot_df["model"] == model]
-    if layer_indices is not None:
-        plot_df = plot_df[plot_df["layer_idx"].isin({int(v) for v in layer_indices})]
-    if head_indices is not None:
-        plot_df = plot_df[plot_df["head_idx"].isin({int(v) for v in head_indices})]
-    if plot_df.empty:
-        print(f"No matching rows to plot for: {title_prefix}")
-        return
-    model_values = [model] if model is not None else sorted(plot_df["model"].astype(str).unique().tolist())
-    layer_values = sorted((int(v) for v in plot_df["layer_idx"].dropna().unique()), reverse=True)
-    head_values = sorted(int(v) for v in plot_df["head_idx"].dropna().unique())
-    if max_heads is not None:
-        head_values = head_values[: int(max_heads)]
-        plot_df = plot_df[plot_df["head_idx"].isin(head_values)]
-    if plot_df.empty or not layer_values or not head_values:
-        print(f"No matching rows to plot for: {title_prefix}")
-        return
-
-    fig, axes = plt.subplots(
-        len(layer_values),
-        len(model_values),
-        figsize=(4.2 * len(model_values), 2.4 * len(layer_values)),
-        sharex=True,
-        sharey=True,
-        squeeze=False,
-    )
-    colors = {head_idx: f"C{idx}" for idx, head_idx in enumerate(head_values)}
-    for row_idx, layer_idx in enumerate(layer_values):
-        for col_idx, model_name in enumerate(model_values):
-            ax = axes[row_idx, col_idx]
-            sub = plot_df[(plot_df["model"] == model_name) & (plot_df["layer_idx"] == layer_idx)].sort_values(["head_idx", "token_idx"])
-            if sub.empty:
-                ax.set_visible(False)
-                continue
-            for head_idx, group in sub.groupby("head_idx", observed=True):
-                ax.plot(group["token_idx"], group["effective_rank"], linewidth=1.1, alpha=0.9, color=colors[int(head_idx)], label=f"head[{int(head_idx)}]")
-            for idx, position in enumerate(boundary_positions or ()):
-                ax.axvline(
-                    int(position),
-                    color="gray",
-                    linestyle="-",
-                    linewidth=0.8,
-                    alpha=0.35,
-                    label="Boundary" if idx == 0 else None,
-                )
-            if training_context_length is not None:
-                ax.axvline(
-                    int(training_context_length),
-                    color="black",
-                    linestyle="--",
-                    linewidth=1.5,
-                    alpha=0.9,
-                    label="Train context",
-                )
-            ax.grid(True, alpha=0.25)
-            if len(layer_values) == 1:
-                ax.set_title(str(model_name) if len(model_values) > 1 else title_prefix)
-            elif row_idx == 0:
-                ax.set_title(str(model_name))
-            if col_idx == 0:
-                ax.set_ylabel(f"Layer {int(layer_idx)}\nEffective rank")
-            if row_idx == len(layer_values) - 1:
-                ax.set_xlabel("Sequence length")
-
-    if len(layer_values) > 1 or len(model_values) > 1:
-        fig.suptitle(title_prefix, y=0.975)
-    if show_legend and head_values:
-        from matplotlib.lines import Line2D
-
-        fig.legend(
-            handles=[Line2D([0], [0], color=colors[h], linewidth=1.2, label=f"head[{h}]") for h in head_values],
-            loc="upper center",
-            ncol=min(len(head_values), 4),
-            frameon=False,
-            bbox_to_anchor=(0.5, 0.965),
-        )
-        fig.tight_layout(rect=(0, 0, 1, 0.86))
-    else:
-        fig.tight_layout(rect=(0, 0, 1, 0.94))

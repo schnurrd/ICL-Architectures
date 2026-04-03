@@ -5,9 +5,6 @@ pytest.importorskip("fla")
 from fla.layers.gla import fused_recurrent_gla
 from fla.layers.linear_attn import fused_recurrent_linear_attn
 
-from pfns.model.fla_patches import (
-    _maybe_patch_shortconv_forward_pytorch,
-)
 from tests.model.fla_test_utils import (
     fla_cache_equivalence_tolerances,
     FLA_MODEL_TYPES,

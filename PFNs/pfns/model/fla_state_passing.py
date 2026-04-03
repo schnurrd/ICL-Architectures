@@ -106,6 +106,35 @@ def zero_cache_entries(cache_params: tp.Any, zero_mask: torch.Tensor) -> tp.Any:
     )
 
 
+def prepare_deltanet_cache_for_fla(cache_params: tp.Any | None) -> tp.Any | None:
+    # FLA DeltaNet crashes when an initial recurrent state is present but does not require grad.
+    if cache_params is None or not hasattr(cache_params, "layers"):
+        return cache_params
+
+    cache_copy = _shallow_copy(cache_params)
+    new_layers: list[tp.Any] = []
+    changed = False
+
+    for layer in cache_params.layers:
+        state = getattr(layer, "state", None)
+        recurrent_state = state.get("recurrent_state") if isinstance(state, dict) else None
+        if not torch.is_tensor(recurrent_state) or recurrent_state.requires_grad:
+            new_layers.append(layer)
+            continue
+
+        layer_copy = _shallow_copy(layer)
+        layer_copy.state = dict(state)
+        layer_copy.state["recurrent_state"] = recurrent_state.detach().requires_grad_(True)
+        new_layers.append(layer_copy)
+        changed = True
+
+    if not changed:
+        return cache_params
+
+    cache_copy.layers = new_layers
+    return cache_copy
+
+
 @dataclass
 class FLAStatePassing:
     dropout_prob: float = 0.1

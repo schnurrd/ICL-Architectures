@@ -129,6 +129,7 @@ def _maybe_patch_shortconv_forward_pytorch(enabled: bool):
     finally:
         conv_module.ShortConvolution.forward = original_forward
 
+
 @contextmanager
 def _maybe_patch_gla_with_stateless_recurrent(
     enabled: bool,

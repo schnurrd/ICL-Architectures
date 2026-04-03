@@ -24,6 +24,7 @@ from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 from fla.models import LinearAttentionConfig, LinearAttentionModel
 
 from pfns import base_config
+from pfns.model.fla_mimetic_init import MimeticInitMode, apply_mimetic_fla_init
 from pfns.model.fla_patches import (
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
@@ -33,7 +34,10 @@ from pfns.model.fla_patches import (
     _maybe_patch_linear_attn_with_stateless_recurrent,
     _maybe_patch_shortconv_forward_pytorch,
 )
-from pfns.model.fla_state_passing import FLAStatePassing
+from pfns.model.fla_state_passing import (
+    FLAStatePassing,
+    prepare_deltanet_cache_for_fla,
+)
 from pfns.model.layer import PerFeatureLayer
 from pfns.model.linear_attention import LinearAttention
 from pfns.model.mode_normalization import (
@@ -51,6 +55,7 @@ FLA_MODEL_REGISTRY = {
     "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
     "linear_attn": (LinearAttentionConfig, LinearAttentionModel),
 }
+
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 
 
@@ -335,6 +340,9 @@ class FLABackboneConfig(BackboneConfig):
     cache_chunk_size: int | None = None
     state_passing: bool = False
     state_passing_dropout: float = 0.1
+    mimetic_init: bool = False
+    mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
+    mimetic_init_mode: MimeticInitMode = "gate_only"
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
@@ -365,6 +373,13 @@ class FLABackboneConfig(BackboneConfig):
 
         config = ConfigClass(**self.config_kwargs)
         fla_model = ModelClass(config)
+        if self.mimetic_init:
+            layer_indices = self.mimetic_init_layer_indices
+            apply_mimetic_fla_init(
+                fla_model,
+                layer_indices=layer_indices,
+                mode=self.mimetic_init_mode,
+            )
 
         return FLABackbone(
             fla_model=fla_model,
@@ -811,6 +826,8 @@ class FLABackbone(Backbone):
                 device=x_batched.device,
             )
         )
+        if initial_cache_params is not None and isinstance(self.fla, DeltaNetModel):
+            initial_cache_params = prepare_deltanet_cache_for_fla(initial_cache_params)
     
         if self.sequence_mode in {"Comb_ST", "Int_ST"} or not self.training:
             train_x = x_batched[:, :train_len]
