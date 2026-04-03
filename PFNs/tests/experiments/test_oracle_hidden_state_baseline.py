@@ -36,7 +36,7 @@ def test_oracle_hidden_state_baseline_reduces_train_loss():
             lr=0.1,
             patience=8,
             tolerance=0.0,
-            query_batch_size=2,
+            query_batch_fraction=0.5,
         ),
     ).to(device)
 
@@ -91,7 +91,7 @@ def test_oracle_hidden_state_seed_controls_split_and_minibatch_order():
             lr=0.1,
             patience=2,
             tolerance=0.0,
-            query_batch_size=2,
+            query_batch_fraction=0.25,
             selection_fraction=0.25,
             selection_seed=123,
         ),
@@ -117,7 +117,7 @@ def test_oracle_hidden_state_seed_controls_split_and_minibatch_order():
 
     assert torch.equal(permutation_1, permutation_2)
 
-    query_batch_size = 2
+    query_batch_size = oracle._resolve_query_batch_size(int(optimize_x_1.shape[1]))
     batch_indices_1 = permutation_1[:query_batch_size]
     batch_indices_2 = permutation_2[:query_batch_size]
     assert torch.equal(batch_indices_1, batch_indices_2)

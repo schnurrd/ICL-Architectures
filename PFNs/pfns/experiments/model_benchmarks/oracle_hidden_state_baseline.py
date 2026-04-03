@@ -25,7 +25,12 @@ class OracleHiddenStateConfig:
     selection_fraction: float = 0.0 # for val
     selection_seed: int = 42
     
-    query_batch_size: int = 256
+    query_batch_fraction: float = 0.04
+    query_batch_size: int | None = None
+    max_query_batch_size: int = 4_000
+    initial_fit_max_samples: int | None = None
+    auto_scale_lr: bool = False
+    target_initial_relative_update_norm: float = 1.5e-2
     evaluate_only_max_seqlen: bool = False
 
     # Hidden-state initialization for optimization variables
@@ -35,6 +40,7 @@ class OracleHiddenStateConfig:
     
     # Logging
     verbose: bool = False
+    verbose_every_n_epochs: int = 10
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "OracleHiddenStateConfig":
@@ -44,13 +50,39 @@ class OracleHiddenStateConfig:
             weight_decay=float(config.get("oracle_weight_decay", 0.0)),
             patience=int(config.get("oracle_patience", 20)),
             tolerance=float(config.get("oracle_tolerance", 1e-5)),
-            query_batch_size=int(config.get("oracle_query_batch_size", 256)),
+            query_batch_fraction=float(config.get("oracle_query_batch_fraction", 0.04)),
+            query_batch_size=(
+                int(config["oracle_query_batch_size"])
+                if config.get("oracle_query_batch_size") is not None
+                else None
+            ),
+            max_query_batch_size=int(
+                config.get(
+                    "oracle_max_query_batch_size",
+                    config.get("oracle_val_query_batch_size", 4_000),
+                )
+            ),
+            initial_fit_max_samples=(
+                int(config["oracle_initial_fit_max_samples"])
+                if config.get("oracle_initial_fit_max_samples") is not None
+                else None
+            ),
+            auto_scale_lr=bool(
+                config.get(
+                    "oracle_auto_scale_lr",
+                    config.get("oracle_hidden_state_baseline", False),
+                )
+            ),
+            target_initial_relative_update_norm=float(
+                config.get("oracle_target_initial_relative_update_norm", 1.5e-2)
+            ),
             selection_fraction=float(config.get("oracle_selection_fraction", 0.0)),
             selection_seed=int(config.get("oracle_selection_seed", 42)),
             random_init_hidden_state=bool(config.get("oracle_random_init_hidden_state", False)),
             random_init_std=float(config.get("oracle_random_init_std", 1.0)),
             random_init_seed=int(config.get("oracle_random_init_seed", 42)),
             verbose=bool(config.get("oracle_verbose", False)),
+            verbose_every_n_epochs=int(config.get("oracle_verbose_every_n_epochs", 10)),
             evaluate_only_max_seqlen=bool(config.get("oracle_evaluate_only_max_seqlen", False)),
         )
 
@@ -65,8 +97,18 @@ class OracleHiddenStateConfig:
             raise ValueError("oracle_patience must be >= 1")
         if self.tolerance < 0:
             raise ValueError("oracle_tolerance must be >= 0")
-        if self.query_batch_size < 1:
+        if not 0.0 < self.query_batch_fraction <= 1.0:
+            raise ValueError("oracle_query_batch_fraction must be in (0, 1]")
+        if self.query_batch_size is not None and self.query_batch_size < 1:
             raise ValueError("oracle_query_batch_size must be >= 1")
+        if self.max_query_batch_size < 1:
+            raise ValueError("oracle_max_query_batch_size must be >= 1")
+        if self.initial_fit_max_samples is not None and self.initial_fit_max_samples < 1:
+            raise ValueError("oracle_initial_fit_max_samples must be >= 1")
+        if self.target_initial_relative_update_norm <= 0:
+            raise ValueError("oracle_target_initial_relative_update_norm must be > 0")
+        if self.verbose_every_n_epochs < 1:
+            raise ValueError("oracle_verbose_every_n_epochs must be >= 1")
         if not 0.0 <= self.selection_fraction < 1.0:
             raise ValueError("oracle_selection_fraction must be in [0, 1)")
         if self.random_init_std <= 0:
@@ -94,6 +136,12 @@ class OracleHiddenStateBaseline(nn.Module):
     def _log(self, message: str) -> None:
         if self.optimization_config.verbose:
             print(f"OracleHiddenStateBaseline: {message}")
+
+    def _should_log_epoch(self, epoch_idx: int) -> bool:
+        if not self.optimization_config.verbose:
+            return False
+        interval = self.optimization_config.verbose_every_n_epochs
+        return epoch_idx == 1 or epoch_idx % interval == 0 or epoch_idx == self.optimization_config.num_epochs
 
     def _extract_recurrent_states(
         self,
@@ -156,6 +204,56 @@ class OracleHiddenStateBaseline(nn.Module):
             static_state.pop("recurrent_state", None)
             static_layer_states.append(static_state)
         return static_layer_states
+
+    def _resolve_query_batch_size(self, sequence_length: int) -> int:
+        if sequence_length < 1:
+            raise ValueError("Sequence length must be >= 1.")
+        if self.optimization_config.query_batch_size is not None:
+            return min(
+                self.optimization_config.query_batch_size,
+                self.optimization_config.max_query_batch_size,
+                sequence_length,
+            )
+        return min(
+            self.optimization_config.max_query_batch_size,
+            sequence_length,
+            max(1, math.ceil(sequence_length * self.optimization_config.query_batch_fraction)),
+        )
+
+    def _resolve_validation_query_batch_size(self, sequence_length: int) -> int:
+        if sequence_length < 1:
+            raise ValueError("Sequence length must be >= 1.")
+        return min(self.optimization_config.max_query_batch_size, sequence_length)
+
+    @staticmethod
+    def _relative_update_norms(
+        updated_states: list[torch.Tensor],
+        reference_states: list[torch.Tensor],
+    ) -> list[float]:
+        return [
+            float((updated.detach() - reference.detach()).norm().item())
+            / max(float(reference.detach().norm().item()), 1e-12)
+            for updated, reference in zip(updated_states, reference_states, strict=True)
+        ]
+
+    @staticmethod
+    def _mean_update_norm(relative_update_norms: list[float]) -> float:
+        return sum(relative_update_norms) / max(1, len(relative_update_norms))
+
+    @classmethod
+    def _lr_adjustment_factor(
+        cls,
+        *,
+        observed_update: float,
+        target_update: float,
+        max_adjustment: float | None = None,
+    ) -> float | None:
+        if not math.isfinite(observed_update) or observed_update <= 0.0:
+            return None
+        raw_adjustment = target_update / observed_update
+        if max_adjustment is not None:
+            raw_adjustment = min(max_adjustment, raw_adjustment)
+        return raw_adjustment
 
     def _candidate_state(
         self,
@@ -267,6 +365,14 @@ class OracleHiddenStateBaseline(nn.Module):
                     bootstrap_len = min(2, x.shape[1], y.shape[1])
                     fit_x = torch.nan_to_num(x[:, :bootstrap_len], nan=0.0, posinf=0.0, neginf=0.0)
                     fit_y = torch.nan_to_num(y[:, :bootstrap_len], nan=0.0, posinf=0.0, neginf=0.0)
+                elif self.optimization_config.initial_fit_max_samples is not None:
+                    bootstrap_len = min(
+                        self.optimization_config.initial_fit_max_samples,
+                        x.shape[1],
+                        y.shape[1],
+                    )
+                    fit_x = x[:, :bootstrap_len]
+                    fit_y = y[:, :bootstrap_len]
                 initial_state = self.base_model.incontext_fit(
                     x=fit_x,
                     y=fit_y,
@@ -279,17 +385,11 @@ class OracleHiddenStateBaseline(nn.Module):
             cache_params = backbone_state.get("cache_params")
             static_layer_states = self._extract_static_layer_states(cache_params)
             recurrent_states = self._extract_recurrent_states(cache_params)
-            optimizer = torch.optim.AdamW(
-                recurrent_states,
-                lr=self.optimization_config.lr,
-                weight_decay=self.optimization_config.weight_decay,
-            )
             train_x, train_y, val_x, val_y, selection_name = self._train_and_val_split(x, y)
             train_len = int(train_x.shape[1])
             if train_len < 1:
                 raise ValueError("Training sequence length must be >= 1 after train/validation split.")
 
-            fit_start_time = time.perf_counter()
             timing_ms: dict[str, float] = {
                 "prep": 0.0,
                 "batch": 0.0,
@@ -301,7 +401,7 @@ class OracleHiddenStateBaseline(nn.Module):
             }
             prep_start = time.perf_counter()
 
-            query_batch_size = min(self.optimization_config.query_batch_size, train_len)
+            query_batch_size = self._resolve_query_batch_size(train_len)
 
             steps_per_epoch = math.ceil(train_len / query_batch_size)
             timing_ms["prep"] += (time.perf_counter() - prep_start) * 1000.0
@@ -311,18 +411,72 @@ class OracleHiddenStateBaseline(nn.Module):
                 "categorical_inds": categorical_inds,
             }
 
-            def candidate_state() -> dict[str, Any]:
+            def candidate_state(
+                state_tensors: list[torch.Tensor] | None = None,
+            ) -> dict[str, Any]:
                 return self._candidate_state(
                     backbone_state=backbone_state,
                     cache_params=cache_params,
-                    recurrent_states=recurrent_states,
+                    recurrent_states=recurrent_states if state_tensors is None else state_tensors,
                     static_layer_states=static_layer_states,
                 )
+
+            optimizer_lr = self.optimization_config.lr
+            if self.optimization_config.auto_scale_lr:
+                probe_generator = torch.Generator(device=x.device)
+                probe_generator.manual_seed(self.optimization_config.selection_seed + 1)
+                probe_indices = torch.randperm(train_len, device=x.device, generator=probe_generator)[:query_batch_size]
+                probe_x = train_x.index_select(1, probe_indices)
+                probe_y = train_y.index_select(1, probe_indices)
+                probe_states = [nn.Parameter(state.detach().clone()) for state in recurrent_states]
+                probe_optimizer = torch.optim.AdamW(
+                    probe_states,
+                    lr=optimizer_lr,
+                    weight_decay=self.optimization_config.weight_decay,
+                )
+                with torch.enable_grad():
+                    probe_loss = self._training_loss(
+                        backbone_state=candidate_state(probe_states),
+                        query_x=probe_x,
+                        query_y=probe_y,
+                        **common_kwargs,
+                    )
+                if not probe_loss.requires_grad:
+                    raise RuntimeError("Oracle hidden-state LR calibration produced a detached loss")
+                probe_optimizer.zero_grad(set_to_none=True)
+                probe_loss.backward()
+                probe_optimizer.step()
+                relative_update_norms = self._relative_update_norms(probe_states, recurrent_states)
+                mean_relative_update = self._mean_update_norm(relative_update_norms)
+                lr_adjustment = self._lr_adjustment_factor(
+                    observed_update=mean_relative_update,
+                    target_update=self.optimization_config.target_initial_relative_update_norm,
+                )
+                if lr_adjustment is not None:
+                    optimizer_lr *= lr_adjustment
+                    self._log(
+                        "lr calibration "
+                        f"observed_mean_rel_update={mean_relative_update:.3e} "
+                        f"target={self.optimization_config.target_initial_relative_update_norm:.3e} "
+                        f"adjustment={lr_adjustment:.3e} "
+                        f"scaled_lr={optimizer_lr:.3e}"
+                    )
+                else:
+                    self._log(
+                        "Skipping oracle lr calibration because the initial relative update norm "
+                        f"was non-finite or zero: {mean_relative_update!r}"
+                    )
+
+            optimizer = torch.optim.AdamW(
+                recurrent_states,
+                lr=optimizer_lr,
+                weight_decay=self.optimization_config.weight_decay,
+            )
 
             def val_loss() -> float:
                 total_loss = 0.0
                 total_weight = 0
-                val_query_batch_size = min(self.optimization_config.query_batch_size, int(val_x.shape[1]))
+                val_query_batch_size = self._resolve_validation_query_batch_size(int(val_x.shape[1]))
                 with torch.no_grad():
                     step_state = candidate_state()
                     for start in range(0, int(val_x.shape[1]), val_query_batch_size):
@@ -357,6 +511,8 @@ class OracleHiddenStateBaseline(nn.Module):
             for epoch_idx in range(1, self.optimization_config.num_epochs + 1):
                 epoch_train_loss_total = 0.0
                 epoch_train_loss_weight = 0
+                epoch_step_relative_update_norms: list[float] = []
+                epoch_step_max_relative_updates: list[float] = []
                 permutation = torch.randperm(train_len, device=x.device, generator=optimize_generator)
                 for batch_idx in range(steps_per_epoch):
                     batch_start = time.perf_counter()
@@ -389,9 +545,14 @@ class OracleHiddenStateBaseline(nn.Module):
                     loss.backward()
                     timing_ms["backward"] += (time.perf_counter() - backward_start) * 1000.0
 
+                    previous_states = [state.detach().clone() for state in recurrent_states]
                     step_start = time.perf_counter()
                     optimizer.step()
                     timing_ms["optim_step"] += (time.perf_counter() - step_start) * 1000.0
+                    step_relative_update_norms = self._relative_update_norms(recurrent_states, previous_states)
+                    mean_step_relative_update = self._mean_update_norm(step_relative_update_norms)
+                    epoch_step_relative_update_norms.append(mean_step_relative_update)
+                    epoch_step_max_relative_updates.append(max(step_relative_update_norms, default=0.0))
                     processed_tokens += int(query_y.shape[1])
                     batch_weight = int(query_y.shape[1])
                     epoch_train_loss_total += float(loss.item()) * batch_weight
@@ -407,7 +568,7 @@ class OracleHiddenStateBaseline(nn.Module):
                     f"best_{selection_name}_loss={best_loss:.6f}"
                 )
                 if self.optimization_config.verbose:
-                    relative_update_norms = [
+                    relative_drift_norms = [
                         float((state.detach() - initial_state).norm().item()) / initial_norm
                         for state, initial_state, initial_norm in zip(
                             recurrent_states,
@@ -417,11 +578,15 @@ class OracleHiddenStateBaseline(nn.Module):
                         )
                     ]
                     log_message += (
-                        f" mean_rel_state_update="
-                        f"{sum(relative_update_norms) / max(1, len(relative_update_norms)):.3e} "
-                        f"max_rel_state_update={max(relative_update_norms, default=0.0):.3e}"
+                        f" mean_rel_state_step_update="
+                        f"{self._mean_update_norm(epoch_step_relative_update_norms):.3e} "
+                        f"max_rel_state_step_update={max(epoch_step_max_relative_updates, default=0.0):.3e} "
+                        f"mean_rel_state_drift={self._mean_update_norm(relative_drift_norms):.3e} "
+                        f"max_rel_state_drift={max(relative_drift_norms, default=0.0):.3e} "
+                        f"lr={optimizer.param_groups[0]['lr']:.3e}"
                     )
-                self._log(log_message)
+                if self._should_log_epoch(epoch_idx):
+                    self._log(log_message)
                 if full_loss + self.optimization_config.tolerance < best_loss:
                     best_loss = full_loss
                     best_states = [state.detach().clone() for state in recurrent_states]
@@ -432,12 +597,7 @@ class OracleHiddenStateBaseline(nn.Module):
                 if evals_without_improvement >= self.optimization_config.patience:
                     break
 
-            total_fit_ms = (time.perf_counter() - fit_start_time) * 1000.0
             processed_tokens = max(1, processed_tokens)
-            tokens_per_sec = processed_tokens / max(1e-9, total_fit_ms / 1000.0)
-            tracked_total_ms = sum(timing_ms.values())
-            def _pct(name: str) -> float:
-                return 100.0 * timing_ms[name] / tracked_total_ms if tracked_total_ms > 0 else 0.0
             optimized_state = self._candidate_state(
                 backbone_state=backbone_state,
                 cache_params=cache_params,
