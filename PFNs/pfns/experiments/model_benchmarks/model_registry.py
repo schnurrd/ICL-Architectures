@@ -278,12 +278,15 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     # },
     "Linear_Attention_Non_Causal": { # Trained without cat normalization
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
+        "display_name": "Non-Causal Linear\nAttention (Comb ST)",
     },
     "Linear_Attention_Causal_Comb_ST": { # Trained without cat normalization
         "wandb_run_id": "linear_attention/runs/2qth8bnj",
+        "display_name": "Causal Linear\nAttention (Comb ST)",
     },
     "Linear_Attention_Causal_Comb_MT": { # Trained without cat normalization
         "wandb_run_id": "linear_attention/runs/3lyr8wze",
+        "display_name": "Causal Linear\nAttention (Comb MT)",
     },
     # "Linear_Attention_Causal_Comb_ST_Cat_Norm": {
     #     "wandb_run_id": "linear_attention/runs/v14em9ik",
@@ -299,9 +302,11 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     # },
     "Linear_Attention_FLA_Comb_ST": { 
         "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+        "display_name": "Causal Linear Attention (Comb ST)",
     },
     "Linear_Attention_FLA_Comb_MT": { 
         "wandb_run_id": "icl_arch/fla_models/8wf9f1qz",
+        "display_name": "Causal Linear Attention (Comb MT)",
     },
 }
 
@@ -385,19 +390,23 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
     },
     "equal_params:Rebased_Comb_ST": {
-        "display_name": "Linear Attention (Rebased $\\phi$)",
+        "display_name": "Non-Causal Linear\nAttention (Rebased $\\phi$)",
         "wandb_run_id": "fla_models/runs/7z1vh7vl", 
     },
     "equal_params:Linear_Attention_Comb_ST": {
-        "display_name": "Linear Attention",
+        "display_name": "Non-Causal Linear\nAttention",
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
+    },
+    "Linear_Attention_FLA_Comb_ST": { 
+        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+        "display_name": "Causal Linear\nAttention (Comb ST)",
     },
     "equal_params:DeltaNet_Comb_ST": {
         "display_name": "DeltaNet",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
     },
     "equal_params:GLA_Comb_ST": {
-        "display_name": "Gated Linear Attention",
+        "display_name": "Gated Linear\nAttention",
         "wandb_run_id": "fla_models/runs/4vsqz1ee",
     },
     "equal_params:Gated_DeltaNet_Comb_ST": {
@@ -413,7 +422,7 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     #     "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
     # },
     "equal_params:KDA_Comb_ST": {
-        "display_name": "Kimi Delta Attention",
+        "display_name": "Kimi Delta\nAttention",
         "wandb_run_id": "fla_models/runs/5jfgan9d", # old run qaskm2mq
     },
     # "equal_params:Mamba2_Comb_ST": {
@@ -441,7 +450,7 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     #     "eval_autocast_dtype": "fp16",
     # },
     "masked:Transformer_Comb_ST": {
-        "display_name": "Causal Single Target",
+        "display_name": "Causal Single\nTarget",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/gex7h68b", # fp 16 version 2wrxsh60, old 15.2M params version b56ohkmz
         "eval_mode": "forward",
         "eval_autocast_dtype": "fp16",
@@ -452,19 +461,19 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     #     "eval_autocast_dtype": "fp16",
     # },
     "Transformer_Comb_MT": {
-        "display_name": "Causal Multi Target",
+        "display_name": "Causal Multi\nTarget",
         "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
         "eval_mode": "forward",
         "eval_autocast_dtype": "fp16",
     },
     # "Transformer_Int_ST_with_RoPE_pairwise": { 
-    #     "display_name": "Causal Interleaved Single Target",
+    #     "display_name": "Causal Interleaved\nSingle Target",
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
     #     "eval_mode": "forward",
     #     "eval_autocast_dtype": "fp16",
     # },
     # "Transformer_Int_MT_with_RoPE_pairwise": { 
-    #     "display_name": "Causal Interleaved Multi Target",
+    #     "display_name": "Causal Interleaved\nMulti Target",
     #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
     #     "eval_mode": "forward",
     #     "eval_autocast_dtype": "fp16",
@@ -473,23 +482,39 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
 
 STATE_PASSING_MODELS: dict[str, dict[str, Any]] = {
     "State_Passing_GLA_Comb_ST": {
-        "display_name": "State Passing (GLA)",
+        "display_name": "GLA Combined Single\nTarget with State Passing",
         "wandb_run_id": "fla_models/runs/66hynh1d"
     },
     "GLA_Comb_ST": {
-        "display_name": "GLA Combined Single Target",
+        "display_name": "GLA Combined\nSingle Target",
         "wandb_run_id": "fla_models/runs/g1ul5lyc",
     },
 }
 
+
+MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
+    "mimetic:GLA_Comb_ST_Ref": {
+        "display_name": "GLA Comb ST",
+        "wandb_run_id": "fla_models/runs/2v2xw7d2",
+    },
+    "mimetic:GLA_Comb_ST_Open_Gates": {
+        "display_name": "Mimetic GLA Comb ST",
+        "wandb_run_id": "fla_models/runs/i8vmztxo",
+    },
+}
+
 SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
+    "subsampled:DeltaNet_Comb_ST": {
+        "display_name": "DeltaNet Comb ST",
+        "wandb_run_id": "fla_models/runs/ob2m9rth",
+    },
     "subsampled:DeltaNet_Comb_ST_1K": {
         "display_name": "DeltaNet Comb ST (Subsampled 1K)",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "subsample_dataset_size": 1_000,
     },
     "subsampled:DeltaNet_Comb_ST_3K": {
-        "display_name": "DeltaNet Comb ST (Subsampled 3K)",
+        "display_name": "DeltaNet Comb ST\n(Subsampled 3K)",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "subsample_dataset_size": 3_000
     },
@@ -505,7 +530,7 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
         "eval_autocast_dtype": "fp16",
     },
     "subsampled:Transformer_Comb_ST_3K": {
-        "display_name": "Transformer Comb ST (Subsampled 3K)",
+        "display_name": "Transformer Comb ST\n(Subsampled 3K)",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
         "subsample_dataset_size": 3_000,
         "eval_autocast_dtype": "fp16",
@@ -516,6 +541,132 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
         "subsample_dataset_size": 10_000,
         "eval_autocast_dtype": "fp16",
     },
+}
+
+MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
+    "mimetic:GLA_Comb_ST_Ref": {
+        "display_name": "GLA Comb ST",
+        "wandb_run_id": "fla_models/runs/2v2xw7d2",
+    },
+    "mimetic:GLA_Comb_ST_Gating_only": {
+        "display_name": "Mimetic GLA\nComb ST",
+        "wandb_run_id": "fla_models/runs/i8vmztxo",
+    },
+    "mimetic:Linear_Attention_FLA_Comb_ST": { 
+        "display_name": "Linear Attention\nComb ST",
+        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+    },
+    "mimetic:DeltaNet_Comb_ST": {
+        "display_name": "DeltaNet\nComb ST",
+        "wandb_run_id": "fla_models/runs/ob2m9rth",
+    },
+    "mimetic:Gated_DeltaNet_Comb_ST": {
+        "display_name": "Gated DeltaNet\nComb ST",
+        "wandb_run_id": "fla_models/runs/g7rh5nv9",  
+    },
+    # "mimetic:Gated_DeltaNet_Comb_ST_mimetic": {
+    #     "display_name": "Mimetic Gated\nDeltaNet Comb ST",
+    #     "wandb_run_id": "fla_models/runs/4r98jepy",  
+    # },
+    # "mimetic:GLA_Comb_ST_Simple": {
+    #     "display_name": "Mimetic GLA Comb ST (Simple)",
+    #     "wandb_run_id": "fla_models/runs/5r6j4hjs",
+    # },
+    # "mimetic:GLA_Comb_ST_Improved_1_layer": {
+    #     "display_name": "Mimetic GLA Comb ST (Improved, 1 Layer)",
+    #     "wandb_run_id": "fla_models/runs/bvqfpbpl",
+    # },
+    # "mimetic:GLA_Comb_ST_Improved_all_layer": {
+    #     "display_name": "Mimetic GLA Comb ST (Improved, All Layers)",
+    #     "wandb_run_id": "fla_models/runs/7mkque2f",
+    # },
+    # "mimetic:GLA_Comb_ST_New_Simple": {
+    #     "display_name": "Mimetic GLA Comb ST (New Simple)",
+    #     "wandb_run_id": "fla_models/runs/cubna8dc",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_Ref": {
+    #     "display_name": "Gated DeltaNet Comb ST (Reference)",
+    #     "wandb_run_id": "fla_models/runs/nv19z5jw",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_Improved": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST (Improved)",
+    #     "wandb_run_id": "fla_models/runs/h83z2jq5",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_New_Simple": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST (New Simple)",
+    #     "wandb_run_id": "fla_models/runs/cubna8dc",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_New_Gates": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST Newest Gates",
+    #     "wandb_run_id": "fla_models/runs/i8vmztxo",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_New_Full": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST Newest Full",
+    #     "wandb_run_id": "fla_models/runs/tfmv77e1",
+    # },
+}
+
+MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
+    "mimetic:GLA_Comb_ST_Ref": {
+        "display_name": "GLA Comb ST",
+        "wandb_run_id": "fla_models/runs/2v2xw7d2",
+    },
+    "mimetic:GLA_Comb_ST_Gating_only": {
+        "display_name": "Mimetic GLA\nComb ST",
+        "wandb_run_id": "fla_models/runs/i8vmztxo",
+    },
+    "mimetic:Linear_Attention_FLA_Comb_ST": { 
+        "display_name": "Linear Attention\nComb ST",
+        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+    },
+    "mimetic:DeltaNet_Comb_ST": {
+        "display_name": "DeltaNet\nComb ST",
+        "wandb_run_id": "fla_models/runs/ob2m9rth",
+    },
+    "mimetic:Gated_DeltaNet_Comb_ST": {
+        "display_name": "Gated DeltaNet\nComb ST",
+        "wandb_run_id": "fla_models/runs/g7rh5nv9",  
+    },
+    # "mimetic:Gated_DeltaNet_Comb_ST_mimetic": {
+    #     "display_name": "Mimetic Gated\nDeltaNet Comb ST",
+    #     "wandb_run_id": "fla_models/runs/4r98jepy",  
+    # },
+    # "mimetic:GLA_Comb_ST_Simple": {
+    #     "display_name": "Mimetic GLA Comb ST (Simple)",
+    #     "wandb_run_id": "fla_models/runs/5r6j4hjs",
+    # },
+    # "mimetic:GLA_Comb_ST_Improved_1_layer": {
+    #     "display_name": "Mimetic GLA Comb ST (Improved, 1 Layer)",
+    #     "wandb_run_id": "fla_models/runs/bvqfpbpl",
+    # },
+    # "mimetic:GLA_Comb_ST_Improved_all_layer": {
+    #     "display_name": "Mimetic GLA Comb ST (Improved, All Layers)",
+    #     "wandb_run_id": "fla_models/runs/7mkque2f",
+    # },
+    # "mimetic:GLA_Comb_ST_New_Simple": {
+    #     "display_name": "Mimetic GLA Comb ST (New Simple)",
+    #     "wandb_run_id": "fla_models/runs/cubna8dc",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_Ref": {
+    #     "display_name": "Gated DeltaNet Comb ST (Reference)",
+    #     "wandb_run_id": "fla_models/runs/nv19z5jw",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_Improved": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST (Improved)",
+    #     "wandb_run_id": "fla_models/runs/h83z2jq5",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_New_Simple": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST (New Simple)",
+    #     "wandb_run_id": "fla_models/runs/cubna8dc",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_New_Gates": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST Newest Gates",
+    #     "wandb_run_id": "fla_models/runs/i8vmztxo",
+    # },
+    # "mimetic:Gated_DeltaNet_Comb_ST_New_Full": {
+    #     "display_name": "Mimetic Gated DeltaNet Comb ST Newest Full",
+    #     "wandb_run_id": "fla_models/runs/tfmv77e1",
+    # },
 }
 
 BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
@@ -534,22 +685,7 @@ BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
 }
 
 ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
-    "Oracle_Hidden_State_GLA_Comb_ST_base": {
-        **GLA_MODELS["GLA_Comb_ST"],
-        "display_name": "Oracle Hidden State (GLA)",
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 5e-3, # lr was to low here
-        "oracle_weight_decay": 0.0,
-        "oracle_patience": 10,
-        "oracle_query_batch_size": 8000,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_verbose": False,
-        "oracle_log_every_steps": 200,
-        "eval_autocast_dtype": "bf16",
-    },
-    "Oracle_Hidden_State_GLA_Comb_ST_new_base": {
+    "Oracle_Hidden_State_GLA_Comb_ST": {
         **GLA_MODELS["GLA_Comb_ST"],
         "display_name": "Oracle Hidden State (GLA) New Base",
         "oracle_hidden_state_baseline": True,
@@ -563,7 +699,7 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_verbose": False,
         "eval_autocast_dtype": "bf16",
     },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base_state_init": {
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_state_init": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
         "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
         "oracle_hidden_state_baseline": True,
@@ -578,7 +714,7 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_verbose": False,
         "eval_autocast_dtype": "bf16",
     },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base_state_init_v2": {
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_state_init_v2": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
         "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
         "oracle_hidden_state_baseline": True,
@@ -586,129 +722,61 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_lr": 5e-3,
         "oracle_weight_decay": 1e-5,
         "oracle_patience": 40,
-        "oracle_query_batch_size": 4000,
+        "oracle_query_batch_fraction": 0.04,
         "oracle_selection_fraction": 0.1,
         "oracle_evaluate_only_max_seqlen": True,
         "oracle_random_init_hidden_state": True,
         "oracle_verbose": False,
         "eval_autocast_dtype": "bf16",
     },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base": {
+    "Oracle_Hidden_State_DeltaNet_Comb_ST": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) New Base",
+        "display_name": "Oracle Hidden State\n(DeltaNet)",
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 400,
         "oracle_lr": 3e-3,
         "oracle_weight_decay": 1e-5,
         "oracle_patience": 20,
-        "oracle_query_batch_size": 4000,
+        "oracle_query_batch_size": 4000, # increasing or decreasing batch size hurt at seq len 128k
+        #"oracle_query_batch_fraction": 0.04,
         "oracle_selection_fraction": 0.1,
         "oracle_evaluate_only_max_seqlen": True,
         "oracle_verbose": False,
         "eval_autocast_dtype": "bf16",
     },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_new_base_lower_batch_size": {
-        **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) New Base + Lower Batch Size",
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 3e-3,
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 20,
-        "oracle_query_batch_size": 2000,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_verbose": False,
-        "eval_autocast_dtype": "bf16",
-    },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_base": {
-        **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) Base", # reference model for oracle hidden state experiments
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 5e-3,
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 10,
-        "oracle_query_batch_size": 8000,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_verbose": False,
-        "oracle_log_every_steps": 200,
-        "eval_autocast_dtype": "bf16",
-    },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_higher_lr": {
-        **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) Higher LR",
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 1e-3,
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 10,
-        "oracle_query_batch_size": 8000,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_verbose": False,
-        "oracle_log_every_steps": 200,
-        "eval_autocast_dtype": "bf16",
-    },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_lower_lr": {
-        **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) Lower LR",
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 1e-4,
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 10,
-        "oracle_query_batch_size": 8000,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_verbose": False,
-        "oracle_log_every_steps": 200,
-        "eval_autocast_dtype": "bf16",
-    },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_lower_batch_size": {
-        **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) Lower Batch Size",
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 5e-3,
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 10,
-        "oracle_query_batch_size": 4000,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_verbose": False,
-        "oracle_log_every_steps": 200,
-        "eval_autocast_dtype": "bf16",
-    },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_higher_patience": {
-        **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) Higher Patience", # reference model for oracle hidden state experiments
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 5e-3,
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 20,
-        "oracle_query_batch_size": 8000,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_verbose": False,
-        "oracle_log_every_steps": 200,
-        "eval_autocast_dtype": "bf16",
-    },
-    "Oracle_Hidden_State_Linear_Attention_Non_Causal_base": {
+    "Oracle_Hidden_State_Linear_Attention_Non_Causal": {
         **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
         "display_name": "Oracle Hidden State (Linear Attention)",
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 400,
         "oracle_lr": 3e1, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
+        "oracle_auto_scale_lr": False,
         "oracle_weight_decay": 1e-5,
         "oracle_patience": 20,
         "oracle_query_batch_size": 4000,
         "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_evaluate_only_max_seqlen": False,
         "oracle_verbose": False,
+        "oracle_verbose_every_n_epochs": 10,
+        "display_name": "Oracle Hidden State Optimization (Non-CausalLinear Attention)",
     },
+    "Oracle_Hidden_State_Linear_Attention_Non_Causal_new_base": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Oracle Hidden State (Linear Attention New)",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 1e-2, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_auto_scale_lr": True,
+        "oracle_target_initial_relative_update_norm": 2.5e-2,
+        "oracle_query_batch_fraction": 0.2,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": False,
+        "oracle_verbose": False,
+        "oracle_verbose_every_n_epochs": 10,
+    },
+
     # "Oracle_Hidden_State_Rebased_feat_dim_32_base": {
     #     **BASED_MODELS["Rebased_feat_dim_32"],
     #     "display_name": "Oracle Hidden State (Rebased)",
@@ -753,9 +821,11 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "deltanet_high_seq_len": DELTANET_HIGH_SEQ_LEN_MODELS,
     "deltanet_added_regularization": DELTANET_ADDED_REGULARIZATION,
     "deltanet_finetuned": DELTANET_FINETUNED_MODELS,
+    "mimetic_initialization": MIMETIC_INITIALIZATION_MODELS,
     "subsampled": SUBSAMPLED_MODELS,
     "bidirectional": BIDIRECTIONAL_MODELS,
     "state_passing": STATE_PASSING_MODELS,
+    "mimetic_initialization": MIMETIC_INITIALIZATION_MODELS,
     "fla_models": {
         **KDA_MODELS,
         **GLA_MODELS,

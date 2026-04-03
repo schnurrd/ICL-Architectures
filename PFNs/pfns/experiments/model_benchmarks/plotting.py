@@ -15,11 +15,26 @@ from .comparison_analysis import ci95_halfwidth
 from .constants import DEFAULT_COLORS, DEFAULT_LINESTYLES, DEFAULT_MARKERS
 from .model_registry import get_all_models
 
+PRETRAIN_MAX_X = 1_000.0
+PRETRAIN_REGION_COLOR = "#e3f2fd"
+GENERALIZATION_REGION_COLOR = "#fff3e0"
+SPLIT_REGION_ALPHA = 0.35
+SPLIT_BOUNDARY_COLOR = "#546e7a"
+SPLIT_BOUNDARY_LINESTYLE = "--"
+
 
 def _registry_display_name_map() -> dict[str, str]:
     return {
         model_name: str(model_config.get("display_name", model_name))
         for model_name, model_config in get_all_models().items()
+    }
+
+
+def _upper_bound_model_names() -> set[str]:
+    return {
+        model_name
+        for model_name, model_config in get_all_models().items()
+        if bool(model_config.get("oracle_evaluate_only_max_seqlen", False))
     }
 
 
@@ -40,6 +55,44 @@ def resolve_display_name_map(df: pd.DataFrame | None = None) -> dict[str, str]:
         }
     )
     return display_name_map
+
+
+def build_model_legend_name_map(
+    df: pd.DataFrame | None = None,
+    *,
+    append_max_hidden_state_size: bool = False,
+    hidden_state_size_df: pd.DataFrame | None = None,
+    hidden_state_size_col: str = "context_size_mb",
+) -> dict[str, str]:
+    display_name_map = resolve_display_name_map(df)
+    if not append_max_hidden_state_size or hidden_state_size_df is None or hidden_state_size_df.empty:
+        return display_name_map
+    if "model" not in hidden_state_size_df.columns or hidden_state_size_col not in hidden_state_size_df.columns:
+        return display_name_map
+
+    size_df = hidden_state_size_df[["model", hidden_state_size_col]].copy()
+    size_df = size_df.dropna(subset=["model", hidden_state_size_col])
+    if size_df.empty:
+        return display_name_map
+
+    max_size_by_model = (
+        size_df.groupby("model", observed=True)[hidden_state_size_col]
+        .max()
+        .to_dict()
+    )
+    for model_name, max_size in max_size_by_model.items():
+        base_name = display_name_map.get(str(model_name), str(model_name))
+        display_name_map[str(model_name)] = f"{base_name} ({float(max_size):.1f} MB)"
+    return display_name_map
+
+
+def _uses_pretraining_split(metric_keys: set[str]) -> bool:
+    split_metrics = {"acc", "ce", "roc_auc"}
+    return any(
+        metric_key in split_metrics
+        or any(metric_key.endswith(f"_{base_metric}") for base_metric in split_metrics)
+        for metric_key in metric_keys
+    )
 
 
 def build_model_style_map(
@@ -160,7 +213,173 @@ def _compute_strip_positions(
     return center + ordered_offsets * width
 
 
-def _plot_individual_runs_for_model(
+def create_panel_figure(
+    *,
+    panel_count: int,
+    figsize: tuple[float, float] | None = None,
+    dpi: int = 400,
+    sharey: bool = False,
+    panel_width: float = 7.0,
+    panel_height: float = 6.0,
+    min_width: float = 8.0,
+    max_width: float = 24.0,
+) -> tuple[Any, list[Any]]:
+    if figsize is None:
+        figsize = (
+            min(max_width, max(min_width, panel_width * panel_count)),
+            panel_height,
+        )
+    fig, axes = plt.subplots(
+        nrows=1,
+        ncols=panel_count,
+        figsize=figsize,
+        dpi=dpi,
+        sharey=sharey,
+    )
+    if panel_count == 1:
+        axes = [axes]
+    else:
+        axes = list(axes)
+    return fig, axes
+
+
+def apply_pretraining_split_background(
+    ax: Any,
+    *,
+    boundary: float = PRETRAIN_MAX_X,
+    boundary_label: str | None = None,
+    pretrain_region_color: str = PRETRAIN_REGION_COLOR,
+    generalization_region_color: str = GENERALIZATION_REGION_COLOR,
+    region_alpha: float = SPLIT_REGION_ALPHA,
+    boundary_color: str = SPLIT_BOUNDARY_COLOR,
+    boundary_linestyle: str = SPLIT_BOUNDARY_LINESTYLE,
+    boundary_linewidth: float = 1.5,
+) -> bool:
+    x_left, x_right = ax.get_xlim()
+    if x_right <= x_left:
+        return False
+
+    pretrain_end = min(float(boundary), x_right)
+    if pretrain_end > x_left:
+        ax.axvspan(
+            x_left,
+            pretrain_end,
+            color=pretrain_region_color,
+            alpha=region_alpha,
+            zorder=0,
+        )
+
+    if x_right > boundary:
+        ax.axvspan(
+            max(float(boundary), x_left),
+            x_right,
+            color=generalization_region_color,
+            alpha=region_alpha,
+            zorder=0,
+        )
+
+    if x_left <= boundary <= x_right:
+        ax.axvline(
+            float(boundary),
+            color=boundary_color,
+            linestyle=boundary_linestyle,
+            linewidth=boundary_linewidth,
+            alpha=0.9,
+            label=boundary_label,
+        )
+    return True
+
+
+def add_pretraining_split_legend(
+    ax: Any,
+    *,
+    boundary: float = PRETRAIN_MAX_X,
+    pretrain_region_color: str = PRETRAIN_REGION_COLOR,
+    generalization_region_color: str = GENERALIZATION_REGION_COLOR,
+    region_alpha: float = SPLIT_REGION_ALPHA,
+    boundary_color: str = SPLIT_BOUNDARY_COLOR,
+    boundary_linestyle: str = SPLIT_BOUNDARY_LINESTYLE,
+) -> Any:
+    region_handles = [
+        mpatches.Patch(
+            facecolor=pretrain_region_color,
+            alpha=region_alpha,
+            edgecolor="none",
+            label=f"Pre-training range (<={int(boundary / 1000)}k)",
+        ),
+        mpatches.Patch(
+            facecolor=generalization_region_color,
+            alpha=region_alpha,
+            edgecolor="none",
+            label=f"Generalization range (>{int(boundary / 1000)}k)",
+        ),
+        mlines.Line2D(
+            [],
+            [],
+            color=boundary_color,
+            linestyle=boundary_linestyle,
+            linewidth=1.5,
+            label=f"Pre-training limit ({int(boundary / 1000)}k)",
+        ),
+    ]
+    range_legend = ax.legend(
+        handles=region_handles,
+        loc="best",
+        fontsize=8,
+        frameon=True,
+        framealpha=0.9,
+        edgecolor="#d0d0d0",
+        borderaxespad=0.3,
+        labelspacing=0.25,
+        handletextpad=0.5,
+    )
+    ax.add_artist(range_legend)
+    return range_legend
+
+
+def apply_shared_legend_layout(
+    fig: Any,
+    axes: list[Any],
+    *,
+    layout: Literal["bottom", "right"] = "bottom",
+    fontsize: int = 11,
+) -> None:
+    legend_handles, legend_labels = axes[0].get_legend_handles_labels()
+    legend_model_count = len(legend_labels)
+    if legend_model_count > 0:
+        if layout == "right":
+            fig.subplots_adjust(right=0.82)
+            axes[0].legend(
+                legend_handles,
+                legend_labels,
+                fontsize=fontsize,
+                loc="center left",
+                bbox_to_anchor=(1.02, 0.5),
+                ncol=1,
+                borderaxespad=0.0,
+                alignment="left",
+            )
+        else:
+            legend_cols = min(max(1, legend_model_count), 4)
+            legend_rows = max(1, math.ceil(legend_model_count / legend_cols))
+            bottom_margin = min(0.42, 0.14 + 0.055 * legend_rows)
+            fig.subplots_adjust(bottom=bottom_margin)
+            fig.legend(
+                legend_handles,
+                legend_labels,
+                fontsize=fontsize,
+                loc="lower center",
+                bbox_to_anchor=(0.5, 0.03),
+                ncol=legend_cols,
+                borderaxespad=0.0,
+                alignment="center",
+            )
+    for i in range(1, len(axes)):
+        if axes[i].get_legend():
+            axes[i].get_legend().remove()
+
+
+def plot_grouped_runs_with_distribution(
     *,
     ax: Any,
     sub: pd.DataFrame,
@@ -172,10 +391,19 @@ def _plot_individual_runs_for_model(
     linestyle: Any,
     color: str | None,
     run_alpha: float,
+    distribution_alpha: float | None,
+    distribution_width_frac: float,
+    show_run_lines: bool,
     log_x: bool,
     distribution_style: Literal["none", "half_violin", "strip"],
     model_index: int,
     model_count: int,
+    summary_stat: Literal["mean", "median"] = "median",
+    render_as_upper_bound: bool = False,
+    line_width: float = 2.6,
+    marker_size: float = 7.0,
+    distribution_zorder: int = 3,
+    summary_zorder: int = 4,
 ) -> bool:
     unique_x = np.sort(sub[x_col].dropna().unique().astype(float))
     if unique_x.size == 0:
@@ -189,27 +417,29 @@ def _plot_individual_runs_for_model(
     )
     x_position_lookup = {float(base_x): float(curr_x) for base_x, curr_x in zip(unique_x, plot_x)}
 
-    for _, run_df in sub.groupby(rep_col, observed=True, sort=True):
-        run_df = run_df.sort_values(x_col)
-        if run_df.empty:
-            continue
-        run_x = run_df[x_col].to_numpy(dtype=float, copy=True)
-        ax.plot(
-            np.array([x_position_lookup[float(x)] for x in run_x], dtype=float),
-            run_df[value_col],
-            label="_nolegend_",
-            linestyle=linestyle,
-            color=color,
-            linewidth=0.55,
-            marker=None,
-            alpha=run_alpha,
-            zorder=2,
-        )
+    if show_run_lines and not render_as_upper_bound:
+        for _, run_df in sub.groupby(rep_col, observed=True, sort=True):
+            run_df = run_df.sort_values(x_col)
+            if run_df.empty:
+                continue
+            run_x = run_df[x_col].to_numpy(dtype=float, copy=True)
+            ax.plot(
+                np.array([x_position_lookup[float(x)] for x in run_x], dtype=float),
+                run_df[value_col],
+                label="_nolegend_",
+                linestyle=linestyle,
+                color=color,
+                linewidth=0.55,
+                marker=None,
+                alpha=run_alpha,
+                zorder=2,
+            )
 
     grouped = list(sub.groupby(x_col, observed=True, sort=True))
     distribution = (
         sub.groupby(x_col, observed=True)[value_col]
         .agg(
+            mean="mean",
             median="median",
             q25=lambda values: values.quantile(0.25),
             q75=lambda values: values.quantile(0.75),
@@ -220,7 +450,9 @@ def _plot_individual_runs_for_model(
     if distribution.empty:
         return False
 
-    if distribution_style == "half_violin":
+    if render_as_upper_bound:
+        pass
+    elif distribution_style == "half_violin":
         violin = ax.violinplot(
             dataset=[group[value_col].to_numpy(dtype=float, copy=False) for _, group in grouped],
             positions=plot_x,
@@ -228,6 +460,7 @@ def _plot_individual_runs_for_model(
                 plot_x,
                 model_count=model_count,
                 log_x=log_x,
+                width_frac=distribution_width_frac,
             ),
             showmeans=False,
             showmedians=False,
@@ -244,13 +477,14 @@ def _plot_individual_runs_for_model(
         for body in violin["bodies"]:
             body.set_facecolor(color)
             body.set_edgecolor("none")
-            body.set_alpha(0.14)
-            body.set_zorder(3)
+            body.set_alpha(0.14 if distribution_alpha is None else distribution_alpha)
+            body.set_zorder(distribution_zorder)
     elif distribution_style == "strip":
         strip_widths = _compute_violin_widths(
             plot_x,
             model_count=model_count,
             log_x=log_x,
+            width_frac=distribution_width_frac,
         )
         for x_idx, (_, group) in enumerate(grouped):
             values = group[value_col].to_numpy(dtype=float, copy=False)
@@ -265,22 +499,26 @@ def _plot_individual_runs_for_model(
                 values,
                 s=8.0,
                 color=color,
-                alpha=min(0.22, max(0.08, run_alpha * 3.0)),
+                alpha=(
+                    min(0.22, max(0.08, run_alpha * 3.0))
+                    if distribution_alpha is None
+                    else distribution_alpha
+                ),
                 linewidths=0.0,
-                zorder=3,
+                zorder=distribution_zorder,
             )
 
     ax.plot(
         plot_x,
-        distribution["median"],
+        distribution[summary_stat],
         label=model_label,
-        linestyle=linestyle,
+        linestyle=":" if render_as_upper_bound else linestyle,
         color=color,
-        linewidth=2.6,
-        marker=marker,
-        markersize=7,
+        linewidth=line_width,
+        marker=None if render_as_upper_bound else marker,
+        markersize=marker_size,
         alpha=0.95,
-        zorder=4,
+        zorder=summary_zorder,
     )
     return True
 
@@ -300,11 +538,17 @@ def plot_curves_from_df(
     plot_mode: Literal["aggregate", "individual_runs"] = "aggregate",
     rep_col: str = "rep",
     run_alpha: float = 0.35,
+    distribution_alpha: float | None = None,
+    distribution_width_frac: float = 0.18,
+    show_run_lines: bool = True,
     distribution_style: Literal["none", "half_violin", "strip"] = "half_violin",
     log_x: bool = False,
     log_y: bool = False,
     invert_y: bool = False,
     model_legend_layout: Literal["bottom", "right"] = "bottom",
+    append_max_hidden_state_size: bool = False,
+    hidden_state_size_df: pd.DataFrame | None = None,
+    hidden_state_size_col: str = "context_size_mb",
     figsize: tuple[float, float] | None = None,
     dpi: int = 400,
 ):
@@ -328,36 +572,33 @@ def plot_curves_from_df(
         )
     if not 0.0 < run_alpha <= 1.0:
         raise ValueError("run_alpha must be in the interval (0, 1].")
+    if distribution_alpha is not None and not 0.0 < distribution_alpha <= 1.0:
+        raise ValueError("distribution_alpha must be in the interval (0, 1].")
+    if not 0.0 < distribution_width_frac:
+        raise ValueError("distribution_width_frac must be positive.")
 
     if plot_mode == "individual_runs":
         show_std = False
         error_bars = None
 
-    display_name_map = resolve_display_name_map(df)
+    display_name_map = build_model_legend_name_map(
+        df,
+        append_max_hidden_state_size=append_max_hidden_state_size,
+        hidden_state_size_df=hidden_state_size_df,
+        hidden_state_size_col=hidden_state_size_col,
+    )
+    upper_bound_model_names = _upper_bound_model_names()
     sns.set_theme(style="whitegrid", font_scale=1.2)
-    if figsize is None:
-        # Scale the figure with the number of panels
-        panel_width = 7.0
-        min_width = 8.0
-        max_width = 24.0
-        figsize = (
-            min(max_width, max(min_width, panel_width * len(specs))),
-            6.0,
-        )
-    fig, axes = plt.subplots(nrows=1, ncols=len(specs), figsize=figsize, dpi=dpi)
+    fig, axes = create_panel_figure(
+        panel_count=len(specs),
+        figsize=figsize,
+        dpi=dpi,
+    )
     fig.subplots_adjust(left=0.06, bottom=0.12, right=0.98, top=0.92, wspace=0.45)
-    if len(specs) == 1:
-        axes = [axes]
 
     # Fixed pre-training / generalization split styling.
-    pretrain_max_x = 1_000.0
-    pretrain_region_color = "#e3f2fd"
-    generalization_region_color = "#fff3e0"
-    region_alpha = 0.35
-    boundary_color = "#546e7a"
-    boundary_linestyle = "--"
     metric_keys = {metric_key for metric_key, _ in specs}
-    show_split = bool(metric_keys.intersection({"acc", "ce", "roc_auc"}))
+    show_split = _uses_pretraining_split(metric_keys)
 
     for idx, (metric_key, metric_name) in enumerate(specs):
         ax = axes[idx]
@@ -365,7 +606,7 @@ def plot_curves_from_df(
         present_models = subset_metric["model"].astype(str).unique().tolist()
         model_names = [name for name in style_map if name in present_models]
         model_names.extend(name for name in present_models if name not in model_names)
-        pretrain_boundary = float(pretrain_max_x)
+        pretrain_boundary = float(PRETRAIN_MAX_X)
         x_values = subset_metric[x_col].to_numpy(dtype=np.float64, copy=False)
         finite_x_values = x_values[np.isfinite(x_values)]
         positive_x_values = finite_x_values[finite_x_values > 0.0]
@@ -374,8 +615,9 @@ def plot_curves_from_df(
             sub = subset_metric[subset_metric["model"] == model]
             marker, linestyle, color = style_map.get(model, ("o", "-", None))
             model_label = display_name_map.get(str(model), str(model)) if idx == 0 else None
+            render_as_upper_bound = model in upper_bound_model_names
             if plot_mode == "individual_runs":
-                plotted = _plot_individual_runs_for_model(
+                plotted = plot_grouped_runs_with_distribution(
                     ax=ax,
                     sub=sub,
                     x_col=x_col,
@@ -386,10 +628,15 @@ def plot_curves_from_df(
                     linestyle=linestyle,
                     color=color,
                     run_alpha=run_alpha,
+                    distribution_alpha=distribution_alpha,
+                    distribution_width_frac=distribution_width_frac,
+                    show_run_lines=show_run_lines,
                     log_x=log_x,
                     distribution_style=distribution_style,
                     model_index=model_names.index(model),
                     model_count=len(model_names),
+                    summary_stat="median",
+                    render_as_upper_bound=render_as_upper_bound,
                 )
                 if not plotted:
                     continue
@@ -408,13 +655,13 @@ def plot_curves_from_df(
                 agg[x_col],
                 agg["mean"],
                 label=model_label,
-                linestyle=linestyle,
+                linestyle=":" if render_as_upper_bound else linestyle,
                 color=color,
                 linewidth=2.5,
-                marker=marker,
+                marker=None if render_as_upper_bound else marker,
                 markersize=8,
             )
-            if show_std:
+            if show_std and not render_as_upper_bound:
                 std = agg["std"].fillna(0.0)
                 ax.fill_between(
                     agg[x_col],
@@ -423,7 +670,7 @@ def plot_curves_from_df(
                     alpha=0.2,
                     color=color,
                 )
-            if error_bars is not None:
+            if error_bars is not None and not render_as_upper_bound:
                 err = agg[error_bars].fillna(0.0).to_numpy(dtype=float)
                 if np.any(err > 0.0):
                     mean_values = agg["mean"].to_numpy(dtype=float)
@@ -476,107 +723,12 @@ def plot_curves_from_df(
             ax.invert_yaxis()
 
         if show_split:
-            # Shade full visible axis range (not only where data points exist).
-            x_left, x_right = ax.get_xlim()
-            if x_right > x_left:
-                pretrain_end = min(pretrain_boundary, x_right)
-                if pretrain_end > x_left:
-                    ax.axvspan(
-                        x_left,
-                        pretrain_end,
-                        color=pretrain_region_color,
-                        alpha=region_alpha,
-                        zorder=0,
-                    )
-
-                if x_right > pretrain_boundary:
-                    ax.axvspan(
-                        max(pretrain_boundary, x_left),
-                        x_right,
-                        color=generalization_region_color,
-                        alpha=region_alpha,
-                        zorder=0,
-                    )
-
-                if x_left <= pretrain_boundary <= x_right:
-                    ax.axvline(
-                        pretrain_boundary,
-                        color=boundary_color,
-                        linestyle=boundary_linestyle,
-                        linewidth=1.5,
-                        alpha=0.9,
-                    )
+            apply_pretraining_split_background(ax, boundary=pretrain_boundary)
 
     if show_split:
-        region_handles = [
-            mpatches.Patch(
-                facecolor=pretrain_region_color,
-                alpha=region_alpha,
-                edgecolor="none",
-                label="Pre-training range (<=1k)",
-            ),
-            mpatches.Patch(
-                facecolor=generalization_region_color,
-                alpha=region_alpha,
-                edgecolor="none",
-                label="Generalization range (>1k)",
-            ),
-            mlines.Line2D(
-                [],
-                [],
-                color=boundary_color,
-                linestyle=boundary_linestyle,
-                linewidth=1.5,
-                label="Pre-training limit (1k)",
-            ),
-        ]
-        range_legend = axes[0].legend(
-            handles=region_handles,
-            loc="best",
-            fontsize=8,
-            frameon=True,
-            framealpha=0.9,
-            edgecolor="#d0d0d0",
-            borderaxespad=0.3,
-            labelspacing=0.25,
-            handletextpad=0.5,
-        )
-        axes[0].add_artist(range_legend)
+        add_pretraining_split_legend(axes[0], boundary=PRETRAIN_MAX_X)
 
-    legend_handles, legend_labels = axes[0].get_legend_handles_labels()
-    legend_model_count = len(legend_labels)
-    if legend_model_count > 0:
-        if model_legend_layout == "right":
-            fig.subplots_adjust(right=0.82)
-            axes[0].legend(
-                legend_handles,
-                legend_labels,
-                fontsize=11,
-                loc="center left",
-                bbox_to_anchor=(1.02, 0.5),
-                ncol=1,
-                borderaxespad=0.0,
-                alignment="left",
-            )
-        else:
-            legend_cols = min(max(1, legend_model_count), 4)
-            legend_rows = max(1, math.ceil(legend_model_count / legend_cols))
-            # Reserve enough room for x-labels + legend while keeping the legend close to the axes.
-            bottom_margin = min(0.42, 0.14 + 0.055 * legend_rows)
-            fig.subplots_adjust(bottom=bottom_margin)
-            fig.legend(
-                legend_handles,
-                legend_labels,
-                fontsize=11,
-                loc="lower center",
-                bbox_to_anchor=(0.5, 0.03),
-                ncol=legend_cols,
-                borderaxespad=0.0,
-                alignment="center",
-            )
-    for i in range(1, len(specs)):
-        if axes[i].get_legend():
-            axes[i].get_legend().remove()
+    apply_shared_legend_layout(fig, axes, layout=model_legend_layout, fontsize=11)
 
     plt.show()
     return fig, axes

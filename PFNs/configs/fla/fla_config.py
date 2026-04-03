@@ -13,6 +13,7 @@ from configs.config_utils import (
     resolve_eval_pos_split_pct,
     resolve_prior_device,
 )
+from pfns.model.fla_mimetic_init import MimeticInitMode
 from pfns.prior_defaults import (
     ASSOCIATIVE_RECALL_SETTINGS,
     TABPFN_PRIOR_DEFAULTS,
@@ -217,6 +218,9 @@ def get_config(
     aggregate_k_gradients: int | None = None,
     # Model options
     cache_chunk_size: int | None = None,
+    mimetic_init: bool = False,
+    mimetic_init_mode: MimeticInitMode = "gate_only",
+    mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None,
     use_short_conv: bool | None = None,
     feature_positional_embedding: str | None = None,
     config_kwargs_override: dict[str, object] | None = None,
@@ -343,6 +347,9 @@ def get_config(
         "bidirectional_share_weights": bidirectional_share_weights,
         "state_passing": bool(state_passing),
         "state_passing_dropout": float(state_passing_dropout),
+        "mimetic_init": mimetic_init,
+        "mimetic_init_mode": mimetic_init_mode,
+        "mimetic_init_layer_indices": mimetic_init_layer_indices,
     }
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
@@ -402,6 +409,7 @@ def get_config(
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
+        f"mimetic_{mimetic_init_mode}" if mimetic_init else None,
         "bidir" if bidirectional else None,
         (
             f"bidirshare_{int(bidirectional_share_weights)}"
