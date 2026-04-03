@@ -681,7 +681,15 @@ BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
     "GLA_Comb_ST_Reference_bidirectional": {
         "display_name": "Reference GLA",
         "wandb_run_id": "fla_models/runs/2v2xw7d2",
-    }
+    },
+    "Bidirectional_DeltaNet_Comb_ST": {
+        "display_name": "Bidirectional (DeltaNet)",
+        "wandb_run_id": "icl_arch/fla_models/x9876ypz",
+    },
+    "DeltaNet_Comb_ST_Reference_New": {
+        "display_name": "DeltaNet Comb ST (Reference)",
+        "wandb_run_id": "fla_models/runs/tuj1kct1",
+    },
 }
 
 ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
