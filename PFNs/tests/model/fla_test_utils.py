@@ -150,7 +150,7 @@ def build_fla_backbone(
     mimetic_init_mode: str = "gate_only",
     bidirectional: bool = False,
     bidirectional_share_weights: bool = True,
-    state_fusion: str = "none",
+    state_fusion: str = "linear_output_two_cache",
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig

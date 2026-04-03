@@ -60,15 +60,24 @@ FLA_MODEL_REGISTRY = {
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 FLA_SPLIT_SEQUENCE_MODES = {"Comb_ST", "Int_ST"}
 BIDIRECTIONAL_FLA_SEQUENCE_MODES = {"Comb_ST"}
-BIDIRECTIONAL_STATE_FUSIONS = {"none", "mean", "mean_fused_cache"}
+BIDIRECTIONAL_STATE_FUSIONS = {
+    "linear_output_two_cache",
+    "mean_output_two_cache",
+    "mean_output_mean_cache",
+    "linear_output_mean_cache",
+}
 
 
 def _uses_mean_hidden_fusion(state_fusion: str) -> bool:
-    return state_fusion in {"mean", "mean_fused_cache"}
+    return state_fusion in {"mean_output_two_cache", "mean_output_mean_cache"}
 
 
 def _uses_fused_prediction_cache(state_fusion: str) -> bool:
-    return state_fusion == "mean_fused_cache"
+    return state_fusion in {"mean_output_mean_cache", "linear_output_mean_cache"}
+
+
+def _uses_linear_output_fusion(state_fusion: str) -> bool:
+    return state_fusion in {"linear_output_two_cache", "linear_output_mean_cache"}
 
 
 def _resolve_fla_sequence_mode(sequence_mode: str) -> str:
@@ -91,7 +100,7 @@ class BidirectionalFLACache:
 @dataclass
 class FusedBidirectionalFLACache:
     cache: tp.Any | None
-    state_fusion: str = "mean"
+    state_fusion: str = "mean_output_mean_cache"
 
 
 class BidirectionalFLALayer(nn.Module):
@@ -103,14 +112,18 @@ class BidirectionalFLALayer(nn.Module):
         *,
         hidden_size: int,
         share_weights: bool = True,
-        state_fusion: str = "none",
+        state_fusion: str = "linear_output_two_cache",
     ) -> None:
         super().__init__()
         self.share_weights = bool(share_weights)
         self.state_fusion = state_fusion
         self.forward_layer = layer
         self.backward_layer = layer if share_weights else copy.deepcopy(layer)
-        self.fusion_out = nn.Linear(hidden_size * 2, hidden_size)
+        self.fusion_out = (
+            nn.Linear(hidden_size * 2, hidden_size)
+            if _uses_linear_output_fusion(self.state_fusion)
+            else None
+        )
 
     def _prepare_branch_kwargs(
         self,
@@ -221,9 +234,10 @@ class BidirectionalFLALayer(nn.Module):
     ) -> torch.Tensor:
         if _uses_mean_hidden_fusion(self.state_fusion):
             return (forward_hidden + backward_hidden) / 2
-        assert self.state_fusion == "none", (
+        assert _uses_linear_output_fusion(self.state_fusion), (
             f"Unsupported state_fusion mode: {self.state_fusion!r}"
         )
+        assert self.fusion_out is not None
         fusion_input = torch.cat([forward_hidden, backward_hidden], dim=-1)
         return self.fusion_out(fusion_input)
 
@@ -297,7 +311,7 @@ def _make_fla_model_bidirectional(
     *,
     hidden_size: int,
     share_weights: bool = True,
-    state_fusion: str = "none",
+    state_fusion: str = "linear_output_two_cache",
 ) -> nn.Module:
     layers = _get_fla_layers(fla_model)
     fla_model.layers = nn.ModuleList(
@@ -591,7 +605,7 @@ class FLABackboneConfig(BackboneConfig):
     cache_chunk_size: int | None = None
     bidirectional: bool = False
     bidirectional_share_weights: bool = True
-    state_fusion: tp.Literal["none", "mean", "mean_fused_cache"] = "none"
+    state_fusion: str = "linear_output_two_cache"
     state_passing: bool = False
     state_passing_dropout: float = 0.1
     mimetic_init: bool = False
@@ -608,6 +622,11 @@ class FLABackboneConfig(BackboneConfig):
             "sequence_mode",
             _resolve_fla_sequence_mode(self.sequence_mode),
         )
+        object.__setattr__(
+            self,
+            "state_fusion",
+            self.state_fusion,
+        )
         if self.bidirectional and self.sequence_mode not in BIDIRECTIONAL_FLA_SEQUENCE_MODES:
             raise ValueError(
                 "Bidirectional FLA currently supports only sequence_mode "
@@ -620,7 +639,7 @@ class FLABackboneConfig(BackboneConfig):
             raise ValueError(
                 f"state_fusion must be one of {sorted(BIDIRECTIONAL_STATE_FUSIONS)}."
             )
-        if self.state_fusion != "none" and not self.bidirectional:
+        if self.state_fusion != "linear_output_two_cache" and not self.bidirectional:
             raise ValueError("state_fusion requires bidirectional=True.")
         if _uses_fused_prediction_cache(self.state_fusion) and not self.bidirectional_share_weights:
             raise ValueError("state_fusion requires bidirectional_share_weights=True.")
@@ -1146,7 +1165,7 @@ class BidirectionalFLABackbone(FLABackbone):
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
         bidirectional: bool = True,
-        state_fusion: str = "none",
+        state_fusion: str = "linear_output_two_cache",
     ):
         super().__init__(
             fla_model=fla_model,

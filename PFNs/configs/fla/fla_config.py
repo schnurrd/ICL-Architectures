@@ -202,7 +202,7 @@ def get_config(
     sequence_mode: str = "Comb_ST",
     bidirectional: bool = False,
     bidirectional_share_weights: bool = True,
-    state_fusion: str = "none",
+    state_fusion: str = "linear_output_two_cache",
     state_passing: bool = False,
     state_passing_dropout: float = 0.1,
     task_variant: str = "tabular_prior",
