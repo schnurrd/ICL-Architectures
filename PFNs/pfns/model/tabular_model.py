@@ -152,8 +152,9 @@ class TabularModel(nn.Module):
             interleaved_pair_positional_embedding:
                 Input-level positional encoding to apply on interleaved `(x_i, y_i)`
                 token pairs. `"sinusoidal"` adds a shared pair-position signal plus
-                learned x/y role embeddings; `"none"` leaves the interleaved tokens
-                unchanged.
+                learned x/y role embeddings. `"shared_random_pair"` adds a shared,
+                deterministic random pair-ID signal plus learned x/y role embeddings.
+                `"none"` leaves the interleaved tokens unchanged.
             interleaved_pair_position_base:
                 Base used for sinusoidal pair-position embeddings on interleaved
                 `(x_i, y_i)` sequences.
@@ -181,10 +182,15 @@ class TabularModel(nn.Module):
         self.attention_between_features = attention_between_features
         self.batch_first = batch_first
         self.interleave_x_y_pairs = interleave_x_y_pairs
-        if interleaved_pair_positional_embedding not in {"none", "sinusoidal"}:
+        if interleaved_pair_positional_embedding not in {
+            "none",
+            "sinusoidal",
+            "shared_random_pair",
+        }:
             raise ValueError(
                 "interleaved_pair_positional_embedding must be one of "
-                f"{{'none', 'sinusoidal'}}, got {interleaved_pair_positional_embedding!r}."
+                "{'none', 'sinusoidal', 'shared_random_pair'}, got "
+                f"{interleaved_pair_positional_embedding!r}."
             )
         self.interleaved_pair_positional_embedding = interleaved_pair_positional_embedding
         self.interleaved_pair_position_base = float(interleaved_pair_position_base)
@@ -220,7 +226,10 @@ class TabularModel(nn.Module):
         elif feature_positional_embedding == "subspace":
             self.feature_positional_embedding_embeddings = nn.Linear(ninp // 4, ninp)
 
-        if self.interleaved_pair_positional_embedding == "sinusoidal":
+        if self.interleaved_pair_positional_embedding in {
+            "sinusoidal",
+            "shared_random_pair",
+        }:
             self.interleaved_token_type_embedding = nn.Embedding(2, ninp)
             nn.init.zeros_(self.interleaved_token_type_embedding.weight)
             self.interleaved_pair_position_scale = nn.Parameter(torch.tensor(0.1))
@@ -779,16 +788,21 @@ class TabularModel(nn.Module):
             ), f"Only 1 feature per group supported for attention_between_features=False, got {embedded_x.shape=}."
 
             if should_interleave:
-                if self.interleaved_pair_positional_embedding == "sinusoidal":
+                if self.interleaved_pair_positional_embedding in {
+                    "sinusoidal",
+                    "shared_random_pair",
+                }:
                     embedded_x, embedded_y = apply_interleaved_pair_and_role_embeddings(
                         embedded_x,
                         embedded_y,
+                        embedding_type=self.interleaved_pair_positional_embedding,
                         role_embeddings=self.interleaved_token_type_embedding.weight,
                         position_offset=pair_position_offset,
                         eval_pos=pair_eval_pos,
                         use_cached_positions=use_cached_pair_positions,
                         mask_name=sequence_mode if sequence_mode in {"Int_MT", "Int_ST"} else "Int_ST",
                         is_training=self.training,
+                        seed=0 if self.seed is None else int(self.seed),
                         position_base=self.interleaved_pair_position_base,
                         pair_position_scale=self.interleaved_pair_position_scale,
                     )

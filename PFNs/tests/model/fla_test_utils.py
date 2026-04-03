@@ -148,6 +148,8 @@ def build_fla_backbone(
     mimetic_init: bool = False,
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None,
     mimetic_init_mode: str = "gate_only",
+    linear_attn_use_rope: bool = False,
+    linear_attn_rope_base: float = 128_000.0,
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -163,6 +165,8 @@ def build_fla_backbone(
         mimetic_init=mimetic_init,
         mimetic_init_layer_indices=mimetic_init_layer_indices,
         mimetic_init_mode=mimetic_init_mode,
+        linear_attn_use_rope=linear_attn_use_rope,
+        linear_attn_rope_base=linear_attn_rope_base,
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)

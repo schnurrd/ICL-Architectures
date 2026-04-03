@@ -8,6 +8,81 @@ import torch
 import torch.nn.functional as F
 
 from fla.modules.l2norm import l2norm
+from fla.modules.rotary import RotaryEmbedding, rotary_embedding_ref
+
+
+def _build_pairwise_rope_positions(
+    *,
+    seq_len: int,
+    device: torch.device,
+    position_offset: int = 0,
+    freeze_after: int | None = None,
+) -> torch.Tensor:
+    positions = torch.arange(
+        position_offset,
+        position_offset + seq_len,
+        device=device,
+        dtype=torch.long,
+    )
+    if freeze_after is not None:
+        frozen = positions >= freeze_after
+        if frozen.any():
+            positions = positions.clone()
+            positions[frozen] = freeze_after
+    return torch.div(positions, 2, rounding_mode="floor")
+
+
+def _get_rotary_embedding(
+    module: torch.nn.Module,
+    *,
+    dim: int,
+    rope_base: float,
+    device: torch.device,
+) -> RotaryEmbedding:
+    rotary = getattr(module, "_pfns_linear_attn_rotary", None)
+    if (
+        rotary is None
+        or not isinstance(rotary, RotaryEmbedding)
+        or rotary.dim != dim
+        or rotary.base != float(rope_base)
+        or not rotary.interleaved
+    ):
+        rotary = RotaryEmbedding(
+            dim=dim,
+            base=rope_base,
+            interleaved=True,
+            device=device,
+        )
+        module._pfns_linear_attn_rotary = rotary
+    elif rotary.inv_freq.device != device:
+        rotary = rotary.to(device=device)
+        module._pfns_linear_attn_rotary = rotary
+    return rotary
+
+
+def _apply_rope_to_qk(
+    module: torch.nn.Module,
+    x: torch.Tensor,
+    *,
+    positions: torch.Tensor,
+    rope_base: float,
+) -> torch.Tensor:
+    if x.shape[-1] % 2 != 0:
+        raise ValueError(
+            f"RoPE requires an even head dimension, got {x.shape[-1]}."
+        )
+
+    rotary = _get_rotary_embedding(
+        module,
+        dim=x.shape[-1],
+        rope_base=rope_base,
+        device=x.device,
+    )
+    max_position = int(positions.max().item()) + 1 if positions.numel() else 0
+    rotary._update_cos_sin_cache(max_position, device=x.device, dtype=x.dtype)
+    cos = rotary._cos_cached.index_select(0, positions)
+    sin = rotary._sin_cached.index_select(0, positions)
+    return rotary_embedding_ref(x, cos, sin, interleaved=rotary.interleaved)
 
 
 @contextmanager
@@ -814,6 +889,141 @@ def _maybe_patch_mamba2_with_stateless_recurrent(
         yield
     finally:
         mamba_module.Mamba2.forward = original_forward
+
+
+@contextmanager
+def _maybe_patch_linear_attn_with_rope(
+    enabled: bool,
+    *,
+    rope_base: float,
+    freeze_queries_after_cache: bool = False,
+):
+    if not enabled:
+        yield
+        return
+    import fla.layers.linear_attn as linear_attn_layer
+
+    original_forward = linear_attn_layer.LinearAttention.forward
+
+    @torch.compiler.disable
+    def _forward_with_rope(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        past_key_values=None,
+        use_cache: bool | None = False,
+        output_attentions: bool | None = False,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, tp.Any]:
+        mode = "fused_recurrent" if hidden_states.shape[1] <= 64 else self.mode
+        last_state = linear_attn_layer.get_layer_cache(self, past_key_values)
+
+        q = self.q_proj(hidden_states)
+        k = self.k_proj(hidden_states)
+        v = self.v_proj(hidden_states)
+
+        if attention_mask is not None:
+            v = v.mul(attention_mask[:, -v.shape[-2]:, None])
+
+        q = linear_attn_layer.rearrange(q, "... (h d) -> ... h d", d=self.head_k_dim)
+        if self.num_kv_groups > 1:
+            k = linear_attn_layer.repeat(
+                k,
+                "... (h d) -> ... (h g) d",
+                d=self.head_k_dim,
+                g=self.num_kv_groups,
+            )
+            v = linear_attn_layer.repeat(
+                v,
+                "... (h d) -> ... (h g) d",
+                d=self.head_v_dim,
+                g=self.num_kv_groups,
+            )
+        else:
+            k = linear_attn_layer.rearrange(k, "... (h d) -> ... h d", d=self.head_k_dim)
+            v = linear_attn_layer.rearrange(v, "... (h d) -> ... h d", d=self.head_v_dim)
+
+        cache_len = 0
+        if past_key_values is not None:
+            try:
+                cache_len = int(past_key_values.get_seq_length(self.layer_idx))
+            except TypeError:
+                cache_len = int(past_key_values.get_seq_length())
+
+        freeze_after = cache_len if freeze_queries_after_cache and cache_len > 0 else None
+        q_positions = _build_pairwise_rope_positions(
+            seq_len=q.shape[1],
+            device=q.device,
+            position_offset=cache_len,
+            freeze_after=freeze_after,
+        )
+        if cache_len > 0 and hidden_states.shape[1] == 1:
+            k_positions = q_positions
+        else:
+            k_positions = _build_pairwise_rope_positions(
+                seq_len=k.shape[1],
+                device=k.device,
+                position_offset=cache_len,
+            )
+
+        q = _apply_rope_to_qk(self, q, positions=q_positions, rope_base=rope_base)
+        k = _apply_rope_to_qk(self, k, positions=k_positions, rope_base=rope_base)
+
+        q = self.feature_map_q(q)
+        k = self.feature_map_k(k)
+
+        if self.norm_q:
+            q = q / (q.sum(-1, True) + 1e-4)
+        if self.norm_k:
+            k = k / (k.sum(-1, True) + 1e-4)
+
+        recurrent_state = last_state["recurrent_state"] if last_state is not None else None
+        if mode == "chunk":
+            o, final_state = linear_attn_layer.chunk_linear_attn(
+                q=q,
+                k=k,
+                v=v,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                normalize=self.do_feature_map_norm,
+            )
+        elif mode == "fused_chunk":
+            o, final_state = linear_attn_layer.fused_chunk_linear_attn(
+                q=q,
+                k=k,
+                v=v,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                normalize=self.do_feature_map_norm,
+            )
+        elif mode == "fused_recurrent":
+            o, final_state = linear_attn_layer.fused_recurrent_linear_attn(
+                q=q,
+                k=k,
+                v=v,
+                initial_state=recurrent_state,
+                output_final_state=use_cache,
+                normalize=self.do_feature_map_norm,
+            )
+        else:
+            raise NotImplementedError
+
+        linear_attn_layer.update_layer_cache(
+            self,
+            past_key_values,
+            recurrent_state=final_state,
+            offset=q.shape[1],
+        )
+        o = self.norm(o)
+        o = linear_attn_layer.rearrange(o, "... h d -> ... (h d)")
+        o = self.o_proj(o)
+        return o, None, past_key_values
+
+    linear_attn_layer.LinearAttention.forward = _forward_with_rope
+    try:
+        yield
+    finally:
+        linear_attn_layer.LinearAttention.forward = original_forward
 
 
 @contextmanager

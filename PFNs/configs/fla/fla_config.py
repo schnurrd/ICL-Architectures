@@ -220,6 +220,8 @@ def get_config(
     mimetic_init_mode: MimeticInitMode = "gate_only",
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None,
     use_short_conv: bool | None = None,
+    linear_attn_use_rope: bool | None = None,
+    linear_attn_rope_base: float = 128_000.0,
     interleaved_pair_positional_embedding: str = "none",
     interleaved_pair_position_base: float = 128_000.0,
     feature_positional_embedding: str | None = None,
@@ -229,6 +231,10 @@ def get_config(
     # Resolve inputs and training profile.
     feature_positional_embedding = normalize_optional_none_string(
         feature_positional_embedding
+    )
+    interleaved_pair_positional_embedding = (
+        normalize_optional_none_string(interleaved_pair_positional_embedding)
+        or "none"
     )
     model_type = _normalize_model_type(model_type)
     sequence_mode = resolve_sequence_mode(sequence_mode)
@@ -349,6 +355,11 @@ def get_config(
         "mimetic_init_mode": mimetic_init_mode,
         "mimetic_init_layer_indices": mimetic_init_layer_indices,
     }
+    if model_type == "linear_attn":
+        backbone_kwargs["linear_attn_use_rope"] = (
+            True if linear_attn_use_rope is None else bool(linear_attn_use_rope)
+        )
+        backbone_kwargs["linear_attn_rope_base"] = float(linear_attn_rope_base)
     if cache_chunk_size is not None:
         backbone_kwargs["cache_chunk_size"] = cache_chunk_size
 
@@ -409,6 +420,12 @@ def get_config(
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
+        (
+            f"rope_{linear_attn_rope_base:g}"
+            if model_type == "linear_attn"
+            and (True if linear_attn_use_rope is None else bool(linear_attn_use_rope))
+            else None
+        ),
         f"mimetic_{mimetic_init_mode}" if mimetic_init else None,
         f"fpe_{feature_positional_embedding}",
         (

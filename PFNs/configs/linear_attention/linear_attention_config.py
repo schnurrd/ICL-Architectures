@@ -108,6 +108,8 @@ def get_config(
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
+    interleaved_pair_positional_embedding: str = "none",
+    interleaved_pair_position_base: float = 128_000.0,
     feature_positional_embedding: str | None = None,
     sequence_mode: str | None = None,
     **kwargs,
@@ -119,6 +121,10 @@ def get_config(
 
     feature_positional_embedding = normalize_optional_none_string(
         feature_positional_embedding
+    )
+    interleaved_pair_positional_embedding = (
+        normalize_optional_none_string(interleaved_pair_positional_embedding)
+        or "none"
     )
     resolved_sequence_mode, layer_kwargs = _resolve_linear_attention_mode(
         sequence_mode, kwargs
@@ -211,6 +217,8 @@ def get_config(
         attention_between_features=False,
         feature_positional_embedding=feature_positional_embedding,
         interleave_x_y_pairs=interleave_x_y_pairs,
+        interleaved_pair_positional_embedding=interleaved_pair_positional_embedding,
+        interleaved_pair_position_base=float(interleaved_pair_position_base),
     )
 
     optimizer = OptimizerConfig(
@@ -238,6 +246,8 @@ def get_config(
         wandb_extras.append(f"agg{resolved_aggregate_k}")
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
+        if interleaved_pair_positional_embedding != "none":
+            wandb_extras.append(f"pair_{interleaved_pair_positional_embedding}")
     if resolved_sequence_mode is not None:
         wandb_extras.append(resolved_sequence_mode)
     wandb_extras.append(f"fpe_{feature_positional_embedding}")

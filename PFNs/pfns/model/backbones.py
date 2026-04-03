@@ -26,6 +26,7 @@ from fla.models import LinearAttentionConfig, LinearAttentionModel
 from pfns import base_config
 from pfns.model.fla_mimetic_init import MimeticInitMode, apply_mimetic_fla_init
 from pfns.model.fla_patches import (
+    _maybe_patch_linear_attn_with_rope,
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
@@ -343,6 +344,8 @@ class FLABackboneConfig(BackboneConfig):
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_init_mode: MimeticInitMode = "gate_only"
+    linear_attn_use_rope: bool = False
+    linear_attn_rope_base: float = 128_000.0
 
     def __post_init__(self):
         if self.model_type not in FLA_MODEL_REGISTRY:
@@ -356,6 +359,10 @@ class FLABackboneConfig(BackboneConfig):
         )
         if not 0.0 <= self.state_passing_dropout <= 1.0:
             raise ValueError("state_passing_dropout must be in [0, 1].")
+        if self.linear_attn_use_rope and self.model_type != "linear_attn":
+            raise ValueError(
+                "linear_attn_use_rope is currently only supported for model_type='linear_attn'."
+            )
 
     def create_backbone(self, ninp: int, attention_between_features: bool, **kwargs: tp.Any) -> "Backbone":
         ConfigClass, ModelClass = FLA_MODEL_REGISTRY[self.model_type]
@@ -387,6 +394,8 @@ class FLABackboneConfig(BackboneConfig):
             cache_chunk_size=self.cache_chunk_size,
             state_passing=self.state_passing,
             state_passing_dropout=self.state_passing_dropout,
+            linear_attn_use_rope=self.linear_attn_use_rope,
+            linear_attn_rope_base=self.linear_attn_rope_base,
         )
 
 
@@ -409,6 +418,8 @@ class FLABackbone(Backbone):
         cache_chunk_size: int | None = None,
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
+        linear_attn_use_rope: bool = False,
+        linear_attn_rope_base: float = 128_000.0,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
@@ -422,6 +433,8 @@ class FLABackbone(Backbone):
             if state_passing
             else None
         )
+        self.linear_attn_use_rope = bool(linear_attn_use_rope)
+        self.linear_attn_rope_base = float(linear_attn_rope_base)
 
     @staticmethod
     def _summarize_cache(cache_params: tp.Any) -> str:
@@ -592,6 +605,7 @@ class FLABackbone(Backbone):
         train_x: torch.Tensor,
         *,
         initial_cache_params: tp.Any | None = None,
+        rope_pairwise_positions: bool = False,
         **kwargs: tp.Any,
     ) -> tuple[torch.Tensor, tp.Any]:
         """Run the FLA model on the training context and return cached state.
@@ -605,6 +619,7 @@ class FLABackbone(Backbone):
             x_batched,
             cache_params=initial_cache_params,
             return_cache=True,
+            rope_pairwise_positions=rope_pairwise_positions,
         )
         cached_state = {"cache_params": cache_params}
         out = self._unprepare_fla_output(train_out, shape_info)
@@ -614,6 +629,7 @@ class FLABackbone(Backbone):
         self,
         test_x: torch.Tensor,
         cached_state: tp.Any,
+        rope_pairwise_positions: bool = False,
         **kwargs: tp.Any,
     ) -> torch.Tensor:
         """Run the FLA model on test inputs using cached past key values in parallel."""
@@ -624,6 +640,7 @@ class FLABackbone(Backbone):
         output = self._run_test_with_cache(
             x_batched,
             cache_params,
+            rope_pairwise_positions=rope_pairwise_positions,
         )
         return self._unprepare_fla_output(output, shape_info)
 
@@ -635,6 +652,8 @@ class FLABackbone(Backbone):
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
+        rope_pairwise_positions: bool = False,
+        freeze_query_positions_after_cache: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
         use_cache = return_cache or (
             cache_params is not None and isinstance(self.fla, Mamba2Model)
@@ -650,6 +669,8 @@ class FLABackbone(Backbone):
                 for ctx in self._patch_contexts(
                     use_custom_recurrent=use_custom_recurrent,
                     use_custom_shortconv=use_custom_shortconv,
+                    rope_pairwise_positions=rope_pairwise_positions,
+                    freeze_query_positions_after_cache=freeze_query_positions_after_cache,
                 ):
                     stack.enter_context(ctx)
                 out = self.fla(**kwargs)
@@ -677,6 +698,8 @@ class FLABackbone(Backbone):
         self, 
         use_custom_recurrent: bool,
         use_custom_shortconv : bool = False,
+        rope_pairwise_positions: bool = False,
+        freeze_query_positions_after_cache: bool = False,
     ) -> tp.Iterable[tp.ContextManager[tp.Any]]:
         """
         Get context managers for patching FLA model behavior. 
@@ -685,6 +708,15 @@ class FLABackbone(Backbone):
         model = self.fla
         contexts: list[tp.ContextManager[tp.Any]] = []
         contexts.append(_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv or use_custom_recurrent))
+        contexts.append(
+            _maybe_patch_linear_attn_with_rope(
+                self.linear_attn_use_rope
+                and rope_pairwise_positions
+                and isinstance(model, LinearAttentionModel),
+                rope_base=self.linear_attn_rope_base,
+                freeze_queries_after_cache=freeze_query_positions_after_cache,
+            )
+        )
 
         patch_registry: tuple[
             tuple[
@@ -714,6 +746,7 @@ class FLABackbone(Backbone):
         cache_params: tp.Any,
         use_custom_recurrent: bool = True,
         use_custom_shortconv: bool = True,
+        rope_pairwise_positions: bool = False,
     ) -> torch.Tensor:
         """
         Run the FLA model on test inputs using cached past key values in parallel.
@@ -739,6 +772,8 @@ class FLABackbone(Backbone):
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
+                rope_pairwise_positions=rope_pairwise_positions,
+                freeze_query_positions_after_cache=True,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
@@ -759,6 +794,7 @@ class FLABackbone(Backbone):
         cache_params: tp.Any | None,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
+        rope_pairwise_positions: bool = False,
     ) -> torch.Tensor:
         """
         Sequentially processes the test sequence one token at a time.
@@ -777,6 +813,8 @@ class FLABackbone(Backbone):
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
+                rope_pairwise_positions=rope_pairwise_positions,
+                freeze_query_positions_after_cache=True,
             )
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)
@@ -809,6 +847,7 @@ class FLABackbone(Backbone):
             "cache_trainset_representation not supported in FLA backbone"
         )
         assert single_eval_pos is not None, "single_eval_pos must be provided for FLA backbone"
+        rope_pairwise_positions = bool(kwargs.pop("rope_pairwise_positions", False))
 
         batch_size, seq_len, num_tokens, embed_dim = x.shape
         # Input x is usually [Batch, SeqLen, NumTokens, EmSize]
@@ -836,8 +875,13 @@ class FLABackbone(Backbone):
             train_out, state = self.incontext_fit(
                 train_x,
                 initial_cache_params=initial_cache_params,
+                rope_pairwise_positions=rope_pairwise_positions,
             )
-            test_out = self.incontext_predict(test_x, state)
+            test_out = self.incontext_predict(
+                test_x,
+                state,
+                rope_pairwise_positions=rope_pairwise_positions,
+            )
             if state_passing is not None:
                 state_passing.remember(state["cache_params"])
             attn_out = torch.cat([train_out, test_out], dim=1)
@@ -846,6 +890,7 @@ class FLABackbone(Backbone):
                 x_batched,
                 cache_params=initial_cache_params,
                 return_cache=self.state_passing is not None,
+                rope_pairwise_positions=rope_pairwise_positions,
             )
             if state_passing is not None:
                 state_passing.remember(cache_params)

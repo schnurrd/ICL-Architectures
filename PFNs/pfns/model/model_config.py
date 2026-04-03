@@ -28,7 +28,9 @@ class ModelConfig(base_config.BaseConfig):
     features_per_group: int = 1 # number of features grouped together as one token
     attention_between_features: bool = True
     interleave_x_y_pairs: bool = False
-    interleaved_pair_positional_embedding: tp.Literal["none", "sinusoidal"] = "none"
+    interleaved_pair_positional_embedding: tp.Literal[
+        "none", "sinusoidal", "shared_random_pair"
+    ] = "none"
     interleaved_pair_position_base: float = 128_000.0
     feature_positional_embedding: (
         tp.Literal[
