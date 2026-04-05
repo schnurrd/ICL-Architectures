@@ -39,6 +39,7 @@ from pfns.model.fla_state_passing import (
     prepare_deltanet_cache_for_fla,
 )
 from pfns.model.layer import PerFeatureLayer
+from pfns.model.batch_delta_layer import BatchDeltaLayer
 from pfns.model.linear_attention import LinearAttention
 from pfns.model.mode_normalization import (
     CANONICAL_SEQUENCE_MODES,
@@ -61,6 +62,66 @@ FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 
 def _resolve_fla_sequence_mode(sequence_mode: str) -> str:
     return resolve_sequence_mode(sequence_mode)
+
+
+def _build_hybrid_lower_layers(
+    *,
+    ninp: int,
+    nhead: int,
+    mlp_hidden_dim: int,
+    dropout: float,
+    activation: str,
+    lower_nlayers: int,
+    linear_layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None,
+) -> nn.ModuleList:
+    return nn.ModuleList(
+        [
+            LinearAttention(
+                d_model=ninp,
+                num_heads=nhead,
+                dim_mlp_hidden=mlp_hidden_dim,
+                dropout=dropout,
+                activation=activation,
+                attention_between_features=False,
+                **(linear_layer_kwargs or {}),
+            )
+            for _ in range(lower_nlayers)
+        ]
+    )
+
+
+def _create_hybrid_linear_solver_backbone(
+    *,
+    ninp: int,
+    attention_between_features: bool,
+    lower_nlayers: int,
+    nhead: int,
+    mlp_hidden_dim: int,
+    dropout: float,
+    activation: str,
+    recompute_layer: bool,
+    recompute_every_n_layers: int,
+    linear_layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None,
+    upper_layer_builder: tp.Callable[[], nn.ModuleList],
+) -> "HybridLinearBatchDeltaBackbone":
+    if attention_between_features:
+        raise ValueError(
+            "Hybrid linear solver backbones do not support attention between features."
+        )
+    return HybridLinearBatchDeltaBackbone(
+        lower_layers=_build_hybrid_lower_layers(
+            ninp=ninp,
+            nhead=nhead,
+            mlp_hidden_dim=mlp_hidden_dim,
+            dropout=dropout,
+            activation=activation,
+            lower_nlayers=lower_nlayers,
+            linear_layer_kwargs=linear_layer_kwargs,
+        ),
+        upper_layers=upper_layer_builder(),
+        recompute_each_lower_layer=recompute_layer,
+        recompute_every_n_lower_layers=recompute_every_n_layers,
+    )
 
 
 class Backbone(nn.Module, ABC):
@@ -164,9 +225,34 @@ class TransformerBackboneConfig(BackboneConfig):
     nlayers: int = 6
     nhead: int = 2
     activation: tp.Literal["gelu", "relu"] = "gelu"
+    layer_type: tp.Literal["per_feature"] = "per_feature"
+    layer_types: list[tp.Literal["per_feature"]] | tuple[
+        tp.Literal["per_feature"],
+        ...,
+    ] | None = None
     recompute_layer: bool = False
     min_num_layers_layer_dropout: tp.Optional[int] = None
     layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
+    layer_kwargs_per_layer: list[
+        tp.Dict[str, base_config.BaseTypes] | None
+    ] | tuple[
+        tp.Dict[str, base_config.BaseTypes] | None,
+        ...,
+    ] | None = None
+
+    def __post_init__(self) -> None:
+        if self.layer_types is not None and not isinstance(self.layer_types, list):
+            object.__setattr__(self, "layer_types", list(self.layer_types))
+        if (
+            self.layer_kwargs_per_layer is not None
+            and not isinstance(self.layer_kwargs_per_layer, list)
+        ):
+            object.__setattr__(
+                self,
+                "layer_kwargs_per_layer",
+                list(self.layer_kwargs_per_layer),
+            )
+        super().__post_init__()
 
     def create_backbone(
         self,
@@ -184,25 +270,64 @@ class TransformerBackboneConfig(BackboneConfig):
         Returns:
             A TransformerBackbone wrapping LayerStack
         """
-        
-        def layer_creator():
-            return PerFeatureLayer(
-                d_model=ninp,
-                nhead=self.nhead,
-                dim_feedforward=self.nhid,
-                activation=self.activation,
-                zero_init=True,
-                precomputed_kv=None,
-                attention_between_features=attention_between_features,
-                **(self.layer_kwargs or {}),
+        if self.layer_types is not None and len(self.layer_types) != self.nlayers:
+            raise ValueError(
+                "TransformerBackboneConfig.layer_types must have length nlayers."
+            )
+        if (
+            self.layer_kwargs_per_layer is not None
+            and len(self.layer_kwargs_per_layer) != self.nlayers
+        ):
+            raise ValueError(
+                "TransformerBackboneConfig.layer_kwargs_per_layer must have length nlayers."
             )
 
-        layer_stack = LayerStack(
-            layer_creator=layer_creator,
-            num_layers=self.nlayers,
-            recompute_each_layer=self.recompute_layer,
-            min_num_layers_layer_dropout=self.min_num_layers_layer_dropout,
-        )
+        def build_layer(
+            layer_type: str,
+            layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None,
+        ) -> nn.Module:
+            if layer_type == "per_feature":
+                return PerFeatureLayer(
+                    d_model=ninp,
+                    nhead=self.nhead,
+                    dim_feedforward=self.nhid,
+                    activation=self.activation,
+                    zero_init=True,
+                    precomputed_kv=None,
+                    attention_between_features=attention_between_features,
+                    **(layer_kwargs or {}),
+                )
+
+            if attention_between_features:
+                raise ValueError(
+                    f"Custom layer type {layer_type!r} requires attention_between_features=False."
+                )
+            raise ValueError(f"Unknown transformer layer_type {layer_type!r}.")
+
+        if self.layer_types is None:
+            layer_stack = LayerStack(
+                layer_creator=lambda: build_layer(self.layer_type, self.layer_kwargs),
+                num_layers=self.nlayers,
+                recompute_each_layer=self.recompute_layer,
+                min_num_layers_layer_dropout=self.min_num_layers_layer_dropout,
+            )
+        else:
+            layers = [
+                build_layer(
+                    layer_type,
+                    (
+                        self.layer_kwargs_per_layer[layer_idx]
+                        if self.layer_kwargs_per_layer is not None
+                        else self.layer_kwargs
+                    ),
+                )
+                for layer_idx, layer_type in enumerate(self.layer_types)
+            ]
+            layer_stack = LayerStack(
+                layers=layers,
+                recompute_each_layer=self.recompute_layer,
+                min_num_layers_layer_dropout=self.min_num_layers_layer_dropout,
+            )
         
         return TransformerBackbone(layer_stack)
 
@@ -247,17 +372,24 @@ class TransformerBackbone(Backbone):
 
     @staticmethod
     def _extract_item_attention_cache(layers: tp.Iterable[nn.Module]) -> dict[str, tp.Any]:
-        cache_layers: list[dict[str, torch.Tensor | None]] = []
+        cache_layers: list[dict[str, tp.Any]] = []
         for layer in layers:
             attn = getattr(layer, "self_attn_between_items", None)
+            layer_cache_getter = getattr(layer, "get_trainset_representation_cache", None)
+            extra_layer_cache = (
+                layer_cache_getter() if callable(layer_cache_getter) else None
+            )
             if attn is None:
-                cache_layers.append({"k": None, "v": None, "kv": None})
+                cache_layers.append(
+                    {"k": None, "v": None, "kv": None, "layer_cache": extra_layer_cache}
+                )
                 continue
             cache_layers.append(
                 {
                     "k": getattr(attn, "_k_cache", None), # None
                     "v": getattr(attn, "_v_cache", None), # None
                     "kv": getattr(attn, "_kv_cache", None), # only one used
+                    "layer_cache": extra_layer_cache,
                 }
             )
         return {"layers": cache_layers}
@@ -283,11 +415,13 @@ class TransformerBackbone(Backbone):
         layer_states = cache_state.get("layers", [])
         for layer, state in zip(layers, layer_states):
             attn = getattr(layer, "self_attn_between_items", None)
-            if attn is None:
-                continue
-            attn._k_cache = state.get("k")
-            attn._v_cache = state.get("v")
-            attn._kv_cache = state.get("kv")
+            if attn is not None:
+                attn._k_cache = state.get("k")
+                attn._v_cache = state.get("v")
+                attn._kv_cache = state.get("kv")
+            layer_cache_loader = getattr(layer, "load_trainset_representation_cache", None)
+            if callable(layer_cache_loader):
+                layer_cache_loader(state.get("layer_cache") or {})
 
     def incontext_fit(
         self,
@@ -999,6 +1133,186 @@ class LinearAttentionBackbone(Backbone):
             layer_states = cached_state.get("layer_states", [])
         for layer, state in zip(self.layers, layer_states):
             out = layer.incontext_predict(out, state)
+        return out
+
+
+@dataclass(frozen=True)
+class HybridLinearBatchDeltaBackboneConfig(BackboneConfig):
+    """Hybrid backbone with lower LinearAttention layers and upper BatchDelta layers."""
+
+    lower_nlayers: int = 10
+    upper_nlayers: int = 4
+    nhead: int = 4
+    mlp_hidden_dim: int = 640
+    batch_delta_state_dim: int = 64
+    dropout: float = 0.0
+    activation: tp.Literal["gelu", "relu", "swish", "silu"] = "silu"
+    recompute_layer: bool = False
+    recompute_every_n_layers: int = 1
+    linear_layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
+    batch_delta_layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
+
+    def create_backbone(
+        self,
+        ninp: int,
+        attention_between_features: bool,
+        **kwargs: tp.Any,
+    ) -> Backbone:
+        return _create_hybrid_linear_solver_backbone(
+            ninp=ninp,
+            attention_between_features=attention_between_features,
+            lower_nlayers=self.lower_nlayers,
+            nhead=self.nhead,
+            mlp_hidden_dim=self.mlp_hidden_dim,
+            dropout=self.dropout,
+            activation=self.activation,
+            recompute_layer=self.recompute_layer,
+            recompute_every_n_layers=self.recompute_every_n_layers,
+            linear_layer_kwargs=self.linear_layer_kwargs,
+            upper_layer_builder=lambda: nn.ModuleList(
+                [
+                    BatchDeltaLayer(
+                        d_model=ninp,
+                        n_heads=self.nhead,
+                        d_state=self.batch_delta_state_dim,
+                        **(self.batch_delta_layer_kwargs or {}),
+                    )
+                    for _ in range(self.upper_nlayers)
+                ]
+            ),
+        )
+
+
+class HybridLinearBatchDeltaBackbone(Backbone):
+    """Lower LinearAttention mixer stack followed by upper BatchDelta solver layers."""
+
+    def __init__(
+        self,
+        *,
+        lower_layers: nn.ModuleList,
+        upper_layers: nn.ModuleList,
+        recompute_each_lower_layer: bool = False,
+        recompute_every_n_lower_layers: int | None = 1,
+    ) -> None:
+        super().__init__()
+        self.lower_layers = lower_layers
+        self.upper_layers = upper_layers
+        self.recompute_each_lower_layer = bool(recompute_each_lower_layer)
+        self.recompute_every_n_lower_layers = (
+            None
+            if recompute_every_n_lower_layers is None
+            else int(recompute_every_n_lower_layers)
+        )
+        if (
+            self.recompute_every_n_lower_layers is not None
+            and self.recompute_every_n_lower_layers <= 0
+        ):
+            raise ValueError("recompute_every_n_lower_layers must be >= 1")
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        single_eval_pos: int | None = None,
+        half_layers: bool = False,
+        cache_trainset_representation: bool = False,
+        support_label_embeddings: torch.Tensor | None = None,
+        **kwargs: tp.Any,
+    ) -> torch.Tensor:
+        assert half_layers is False, (
+            "half_layers not supported in HybridLinearBatchDeltaBackbone"
+        )
+        assert cache_trainset_representation is False, (
+            "cache_trainset_representation not supported in full forward for "
+            "HybridLinearBatchDeltaBackbone"
+        )
+        assert single_eval_pos is not None, (
+            "single_eval_pos must be provided for HybridLinearBatchDeltaBackbone"
+        )
+        out = x
+        for idx, layer in enumerate(self.lower_layers):
+            should_recompute = (
+                self.recompute_each_lower_layer
+                and out.requires_grad
+                and self.recompute_every_n_lower_layers is not None
+                and (idx % self.recompute_every_n_lower_layers == 0)
+            )
+            if should_recompute:
+                out = checkpoint(
+                    layer,
+                    out,
+                    single_eval_pos=single_eval_pos,
+                    use_reentrant=False,
+                    **kwargs,
+                )
+            else:
+                out = layer(out, single_eval_pos=single_eval_pos, **kwargs)
+
+        for layer in self.upper_layers:
+            out = layer(
+                out,
+                single_eval_pos=single_eval_pos,
+                cache_trainset_representation=False,
+                support_label_embeddings=support_label_embeddings,
+                **kwargs,
+            )
+        return out
+
+    def incontext_fit(
+        self,
+        x: torch.Tensor,
+        *,
+        support_label_embeddings: torch.Tensor | None = None,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, tp.Any]:
+        if support_label_embeddings is None:
+            raise ValueError(
+                "support_label_embeddings must be provided for incontext_fit."
+            )
+        out = x
+        lower_layer_states: list[dict[str, torch.Tensor]] = []
+        for layer in self.lower_layers:
+            out, state = layer.incontext_fit(out)
+            lower_layer_states.append(state)
+
+        upper_layer_states: list[dict[str, torch.Tensor | None]] = []
+        support_len = out.shape[1]
+        for layer in self.upper_layers:
+            out = layer(
+                out,
+                single_eval_pos=support_len,
+                cache_trainset_representation=True,
+                support_label_embeddings=support_label_embeddings,
+                **kwargs,
+            )
+            upper_layer_states.append(layer.get_trainset_representation_cache())
+
+        return out, {
+            "lower_layer_states": lower_layer_states,
+            "upper_layer_states": upper_layer_states,
+        }
+
+    def incontext_predict(
+        self,
+        x: torch.Tensor,
+        cached_state: tp.Any,
+        **kwargs: tp.Any,
+    ) -> torch.Tensor:
+        out = x
+        lower_layer_states = cached_state.get("lower_layer_states", [])
+        upper_layer_states = cached_state.get("upper_layer_states", [])
+
+        for layer, state in zip(self.lower_layers, lower_layer_states):
+            out = layer.incontext_predict(out, state)
+
+        for layer, state in zip(self.upper_layers, upper_layer_states):
+            layer.load_trainset_representation_cache(state)
+            out = layer(
+                out,
+                single_eval_pos=0,
+                cache_trainset_representation=True,
+                **kwargs,
+            )
         return out
 
 

@@ -310,6 +310,13 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+LINEAR_BATCH_DELTA_MODELS: dict[str, dict[str, Any]] = {
+    "Linear_Batch_Delta": {
+        "display_name": "Linear Batch\nDelta",
+        "wandb_run_id": "transformer_custom_layers/runs/nu5ij3r7",
+    },
+}
+
 BASED_MODELS: dict[str, dict[str, Any]] = {
     # "Rebased_feat_dim_32": {
     #     "display_name": "Rebased $\\phi$ with 32-dim features", # todo retrain and delete rerun
@@ -738,6 +745,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "gated_deltanet_seq_len_changes": GATED_DELTANET_MODELS_SEQ_LEN_CHANGES,
     "mamba2": MAMBA2_MODELS,
     "linear_attention": LINEAR_ATTENTION_MODELS,
+    "linear_batch_delta": LINEAR_BATCH_DELTA_MODELS,
     "based": BASED_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
     "transformer_masked": TRANSFORMER_MASKED_MODELS,

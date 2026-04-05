@@ -2,6 +2,7 @@ import pytest
 import torch
 
 from pfns.model.backbones import (
+    HybridLinearBatchDeltaBackboneConfig,
     LinearAttentionBackboneConfig,
     RebasedBackboneConfig,
     TransformerBackboneConfig,
@@ -105,6 +106,30 @@ def _assert_incontext_fit_predict_matches_forward(
             id="transformer_rope",
         ),
         pytest.param(
+            "hybrid_linear_batch_delta",
+            HybridLinearBatchDeltaBackboneConfig(
+                lower_nlayers=2,
+                upper_nlayers=2,
+                nhead=2,
+                mlp_hidden_dim=64,
+                batch_delta_state_dim=16,
+                dropout=0.0,
+                activation="silu",
+                linear_layer_kwargs={
+                    "feature_attention_softmax": False,
+                    "causal": False,
+                    "causal_train_only": False,
+                },
+                batch_delta_layer_kwargs={
+                    "num_solver_steps": 2,
+                    "target_bilinear_rank": 8,
+                },
+            ),
+            False,
+            32,
+            id="hybrid_linear_batch_delta",
+        ),
+        pytest.param(
             "linear_attention",
             LinearAttentionBackboneConfig(
                 nlayers=2,
@@ -146,6 +171,7 @@ def _assert_incontext_fit_predict_matches_forward(
 def test_incontext_fit_predict_matches_forward_non_fla(
     case_name: str,
     backbone_cfg: TransformerBackboneConfig
+    | HybridLinearBatchDeltaBackboneConfig
     | LinearAttentionBackboneConfig
     | RebasedBackboneConfig,
     attention_between_features: bool,

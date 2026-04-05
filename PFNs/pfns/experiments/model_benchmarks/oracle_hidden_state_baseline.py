@@ -196,7 +196,13 @@ class OracleHiddenStateBaseline(nn.Module):
         with torch.no_grad():
             query_x_bf, _, _ = self.base_model._prepare_batch_first_inputs(query_x, None, None)
             assert query_x_bf is not None
-            embedded_input, current_context_len, should_interleave, int_mt_mode = self.base_model._build_embedded_input(
+            (
+                embedded_input,
+                current_context_len,
+                should_interleave,
+                int_mt_mode,
+                support_label_embeddings,
+            ) = self.base_model._build_embedded_input(
                 query_x_bf,
                 None,
                 single_eval_pos=None,
@@ -208,6 +214,7 @@ class OracleHiddenStateBaseline(nn.Module):
         encoder_out = self.base_model.backbone.incontext_predict(
             embedded_input,
             backbone_state,
+            support_label_embeddings=support_label_embeddings,
             rope_pairwise_positions=should_interleave,
         )
         logits = self.base_model._decode_from_encoder_out(

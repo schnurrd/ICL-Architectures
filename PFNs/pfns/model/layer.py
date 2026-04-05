@@ -295,6 +295,7 @@ class PerFeatureLayer(Module):
         cache_trainset_representation: bool = False,
         att_src: Tensor | None = None,
         rope_pairwise_positions: bool = False,
+        **_: Any,
     ) -> Tensor:
         """Pass the input through the encoder layer.
 

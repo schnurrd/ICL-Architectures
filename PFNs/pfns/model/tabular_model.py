@@ -10,6 +10,7 @@ from typing import Any, Literal
 import einops
 import torch
 
+from pfns.training_utils import compute_losses
 from pfns.model.encoders import (
     get_linear_x_encoder,
     get_linear_y_encoder,
@@ -295,6 +296,178 @@ class TabularModel(nn.Module):
             return all(isinstance(layer, PerFeatureLayer) for layer in layers)
         return False
 
+    def _candidate_batch_delta_backbone_state(
+        self,
+        backbone_state: dict[str, Any],
+        optimized_upper_w_stars: list[list[torch.Tensor]],
+    ) -> dict[str, Any]:
+        candidate_state = dict(backbone_state)
+        candidate_state["lower_layer_states"] = backbone_state.get(
+            "lower_layer_states", []
+        )
+        original_upper_states = backbone_state.get("upper_layer_states", [])
+        candidate_state["upper_layer_states"] = []
+        for original_state, optimized_w_stars in zip(
+            original_upper_states,
+            optimized_upper_w_stars,
+            strict=True,
+        ):
+            state_copy = dict(original_state)
+            state_copy["w_stars"] = optimized_w_stars
+            candidate_state["upper_layer_states"].append(state_copy)
+        return candidate_state
+
+    def _batch_delta_support_loss(
+        self,
+        *,
+        backbone_state: dict[str, Any],
+        query_x: torch.Tensor,
+        query_y: torch.Tensor,
+        style: torch.Tensor | None,
+        y_style: torch.Tensor | None,
+        categorical_inds: list[int] | None,
+    ) -> torch.Tensor:
+        (
+            embedded_input,
+            current_context_len,
+            should_interleave,
+            int_mt_mode,
+            support_label_embeddings,
+        ) = self._build_embedded_input(
+            query_x,
+            None,
+            single_eval_pos=None,
+            style=style,
+            y_style=y_style,
+            categorical_inds=categorical_inds,
+            cache_trainset_representation=True,
+        )
+        encoder_out = self.transformer_layers.incontext_predict(
+            embedded_input,
+            backbone_state,
+            support_label_embeddings=support_label_embeddings,
+            rope_pairwise_positions=should_interleave,
+        )
+        logits = self._decode_from_encoder_out(
+            encoder_out,
+            current_context_len,
+            should_interleave,
+            int_mt_mode,
+        )["standard"]
+        return compute_losses(
+            logits,
+            query_y.to(logits.device),
+            self.criterion,
+            1,
+        ).mean()
+
+    def _maybe_optimize_batch_delta_fast_weights(
+        self,
+        *,
+        backbone_state: dict[str, Any],
+        x_bf: torch.Tensor,
+        y_bf: torch.Tensor,
+        style: torch.Tensor | None,
+        y_style: torch.Tensor | None,
+        categorical_inds: list[int] | None,
+    ) -> dict[str, Any]:
+        upper_layers = getattr(self.transformer_layers, "upper_layers", None)
+        upper_states = backbone_state.get("upper_layer_states")
+        if not isinstance(upper_layers, nn.ModuleList) or not isinstance(upper_states, list):
+            return backbone_state
+
+        layer_entries: list[tuple[nn.Module, list[torch.Tensor], list[nn.Parameter]]] = []
+        for layer, layer_state in zip(upper_layers, upper_states, strict=True):
+            cached_w_stars = layer_state.get("w_stars")
+            if not isinstance(cached_w_stars, list) or not cached_w_stars:
+                layer_entries.append((layer, [], []))
+                continue
+            if not hasattr(layer, "supports_incontext_fast_weight_optimization"):
+                layer_entries.append((layer, list(cached_w_stars), []))
+                continue
+            if not layer.supports_incontext_fast_weight_optimization():
+                layer_entries.append((layer, list(cached_w_stars), []))
+                continue
+            coefficients = layer.init_incontext_fast_weight_coefficients(
+                batch_size=x_bf.shape[0],
+                num_cached_steps=len(cached_w_stars),
+                device=x_bf.device,
+                dtype=cached_w_stars[0].dtype,
+            )
+            layer_entries.append((layer, list(cached_w_stars), coefficients))
+
+        parameters = [
+            coefficient
+            for _, _, coefficients in layer_entries
+            for coefficient in coefficients
+        ]
+        if not parameters:
+            return backbone_state
+
+        optimizing_layers = [
+            layer
+            for layer, _, coefficients in layer_entries
+            if coefficients
+        ]
+        inner_lr = min(layer.incontext_opt_lr for layer in optimizing_layers)
+        inner_weight_decay = max(
+            layer.incontext_opt_weight_decay for layer in optimizing_layers
+        )
+        optimizer = torch.optim.AdamW(
+            parameters,
+            lr=inner_lr,
+            weight_decay=inner_weight_decay,
+        )
+
+        def current_upper_w_stars() -> list[list[torch.Tensor]]:
+            optimized_groups: list[list[torch.Tensor]] = []
+            for layer, cached_w_stars, coefficients in layer_entries:
+                if not cached_w_stars:
+                    optimized_groups.append([])
+                    continue
+                if not coefficients:
+                    optimized_groups.append(list(cached_w_stars))
+                    continue
+                optimized_groups.append(
+                    [
+                        layer.compose_incontext_fast_weight(cached_w_star, coefficient)
+                        for cached_w_star, coefficient in zip(
+                            cached_w_stars,
+                            coefficients,
+                            strict=True,
+                        )
+                    ]
+                )
+            return optimized_groups
+
+        max_steps = max(layer.incontext_opt_steps for layer in optimizing_layers)
+        with torch.enable_grad():
+            for _ in range(max_steps):
+                candidate_state = self._candidate_batch_delta_backbone_state(
+                    backbone_state,
+                    current_upper_w_stars(),
+                )
+                loss = self._batch_delta_support_loss(
+                    backbone_state=candidate_state,
+                    query_x=x_bf,
+                    query_y=y_bf,
+                    style=style,
+                    y_style=y_style,
+                    categorical_inds=categorical_inds,
+                )
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
+
+        optimized_upper_w_stars = [
+            [w_star.detach() for w_star in group]
+            for group in current_upper_w_stars()
+        ]
+        return self._candidate_batch_delta_backbone_state(
+            backbone_state,
+            optimized_upper_w_stars,
+        )
+
     def incontext_fit(
         self,
         x: torch.Tensor,
@@ -313,7 +486,7 @@ class TabularModel(nn.Module):
         assert x_bf is not None and y_bf is not None
         single_eval_pos = y_bf.shape[1]
 
-        embedded_input, _, should_interleave, _ = self._build_embedded_input(
+        embedded_input, _, should_interleave, _, support_label_embeddings = self._build_embedded_input(
             x_bf,
             y_bf,
             single_eval_pos=single_eval_pos,
@@ -327,8 +500,18 @@ class TabularModel(nn.Module):
 
         _, backbone_state = self.transformer_layers.incontext_fit(
             embedded_input,
+            support_label_embeddings=support_label_embeddings,
             rope_pairwise_positions=should_interleave,
         )
+        if isinstance(backbone_state, dict):
+            backbone_state = self._maybe_optimize_batch_delta_fast_weights(
+                backbone_state=backbone_state,
+                x_bf=x_bf,
+                y_bf=y_bf,
+                style=style,
+                y_style=y_style,
+                categorical_inds=categorical_inds,
+            )
         return InContextState(backbone_state=backbone_state)
 
     def incontext_predict(
@@ -350,7 +533,7 @@ class TabularModel(nn.Module):
         x_bf, _, _ = self._prepare_batch_first_inputs(test_x, None, None)
         assert x_bf is not None
 
-        embedded_input, current_context_len, should_interleave, Int_MT_mode = self._build_embedded_input(
+        embedded_input, current_context_len, should_interleave, Int_MT_mode, support_label_embeddings = self._build_embedded_input(
             x_bf,
             None,
             # single_eval_pos=None signals pure test-time transform while
@@ -365,6 +548,7 @@ class TabularModel(nn.Module):
         encoder_out = self.transformer_layers.incontext_predict(
             embedded_input,
             state.backbone_state,
+            support_label_embeddings=support_label_embeddings,
             rope_pairwise_positions=should_interleave,
         )
 
@@ -479,7 +663,7 @@ class TabularModel(nn.Module):
         y_style: torch.Tensor | None,
         categorical_inds: list[int] | None,
         cache_trainset_representation: bool,
-    ) -> tuple[torch.Tensor, int, bool, bool]:
+    ) -> tuple[torch.Tensor, int, bool, bool, torch.Tensor]:
         current_context_len = single_eval_pos or 0
 
         if isinstance(x, dict):
@@ -696,6 +880,8 @@ class TabularModel(nn.Module):
         )
         should_interleave = Int_MT_mode or self.interleave_x_y_pairs
 
+        layer_support_label_embeddings = embedded_y
+
         if should_interleave and self.attention_between_features:
             raise ValueError(
                 "Teacher forcing or interleaved x/y pairs requires attention_between_features=False."
@@ -792,7 +978,13 @@ class TabularModel(nn.Module):
             )
         del embedded_y, embedded_x
 
-        return embedded_input, current_context_len, should_interleave, Int_MT_mode
+        return (
+            embedded_input,
+            current_context_len,
+            should_interleave,
+            Int_MT_mode,
+            layer_support_label_embeddings,
+        )
 
     def _decode_from_encoder_out(
         self,
@@ -868,7 +1060,7 @@ class TabularModel(nn.Module):
                 single_eval_pos is not None
             ), "_forward expects single_eval_pos if not caching for pure inference or during training"
 
-        embedded_input, current_context_len, should_interleave, Int_MT_mode = self._build_embedded_input(
+        embedded_input, current_context_len, should_interleave, Int_MT_mode, support_label_embeddings = self._build_embedded_input(
             x,
             y,
             single_eval_pos=single_eval_pos,
@@ -883,6 +1075,7 @@ class TabularModel(nn.Module):
             single_eval_pos=current_context_len,
             half_layers=half_layers,
             cache_trainset_representation=self.cache_trainset_representation,
+            support_label_embeddings=support_label_embeddings,
             rope_pairwise_positions=should_interleave,
         )  # b s (num_groups+1_for_y) e -> b s (num_groups+1_for_y) e
 
@@ -1013,8 +1206,9 @@ class LayerStack(nn.Module):
     def __init__(
         self,
         *,
-        layer_creator: Callable[[], nn.Module],
-        num_layers: int,
+        layer_creator: Callable[[], nn.Module] | None = None,
+        num_layers: int | None = None,
+        layers: list[nn.Module] | None = None,
         recompute_each_layer: bool = False,
         min_num_layers_layer_dropout: int | None = None,
     ):
@@ -1022,18 +1216,28 @@ class LayerStack(nn.Module):
         Args:
             layer_creator: A function that returns the layer as a nn.Module.
             num_layers: The number of layers to stack.
+            layers: Optional pre-instantiated layer list. If provided, it takes
+                precedence over `layer_creator`/`num_layers`.
             recompute_each_layer: If True, the layers will be recomputed on each
                 forward pass in training. This is useful to save memory.
             min_num_layers_layer_dropout: If this is set, it enables to drop the last
                 layers randomly during training up to this number.
         """
         super().__init__()
-        self.layers = nn.ModuleList([layer_creator() for _ in range(num_layers)])
-        self.num_layers = num_layers
+        if layers is not None:
+            self.layers = nn.ModuleList(layers)
+            self.num_layers = len(layers)
+        else:
+            if layer_creator is None or num_layers is None:
+                raise ValueError(
+                    "Provide either layers or both layer_creator and num_layers."
+                )
+            self.layers = nn.ModuleList([layer_creator() for _ in range(num_layers)])
+            self.num_layers = num_layers
         self.min_num_layers_layer_dropout = (
             min_num_layers_layer_dropout
             if min_num_layers_layer_dropout is not None
-            else num_layers
+            else self.num_layers
         )
         self.recompute_each_layer = recompute_each_layer
 

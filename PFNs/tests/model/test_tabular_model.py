@@ -5,7 +5,11 @@ import torch.optim as optim
 
 from pfns.model import encoders, tabular_model
 from pfns.model.tabular_model import isolate_torch_rng, TabularModel
-from pfns.model.backbones import TransformerBackboneConfig
+from pfns.model.backbones import (
+    HybridLinearBatchDeltaBackboneConfig,
+    TransformerBackboneConfig,
+)
+from pfns.model.batch_delta_layer import BatchDeltaLayer
 from torch.nn import CrossEntropyLoss
 
 
@@ -243,6 +247,93 @@ def test_feature_positional_embeddings(sample_data):
                 sample_data["batch_size"],
                 1,
             )
+
+
+def test_hybrid_linear_batch_delta_forward(sample_data):
+    model_batch_first = sample_data["batch_first"]
+    backbone = HybridLinearBatchDeltaBackboneConfig(
+        lower_nlayers=2,
+        upper_nlayers=2,
+        nhead=2,
+        mlp_hidden_dim=64,
+        batch_delta_state_dim=16,
+        dropout=0.0,
+        activation="silu",
+        linear_layer_kwargs={
+            "feature_attention_softmax": False,
+            "causal": False,
+            "causal_train_only": False,
+        },
+        batch_delta_layer_kwargs={
+            "num_solver_steps": 2,
+            "target_bilinear_rank": 8,
+        },
+    ).create_backbone(ninp=32, attention_between_features=False)
+    transformer_model = TabularModel(
+        transformer_layers=backbone,
+        ninp=32,
+        nhid=64,
+        attention_between_features=False,
+        features_per_group=sample_data["num_features"],
+        batch_first=model_batch_first,
+    )
+
+    output = transformer_model(
+        x=sample_data["train_x"],
+        y=sample_data["train_y"],
+        test_x=sample_data["test_x"],
+    )
+
+    assert isinstance(output, torch.Tensor)
+    if model_batch_first:
+        assert output.shape == (
+            sample_data["batch_size"],
+            sample_data["seq_len_test"],
+            1,
+        )
+    else:
+        assert output.shape == (
+            sample_data["seq_len_test"],
+            sample_data["batch_size"],
+            1,
+        )
+
+
+def test_batch_delta_layer_multistep_cache_matches_full_forward() -> None:
+    layer = BatchDeltaLayer(
+        d_model=32,
+        n_heads=2,
+        d_state=16,
+        num_solver_steps=2,
+        target_bilinear_rank=8,
+    ).eval()
+    state = torch.randn(2, 7, 1, 32)
+    support_label_embeddings = torch.randn(2, 7, 32)
+    single_eval_pos = 4
+
+    with torch.no_grad():
+        full_out = layer(
+            state,
+            single_eval_pos=single_eval_pos,
+            cache_trainset_representation=True,
+            support_label_embeddings=support_label_embeddings,
+        )
+        assert layer._cached_w_stars is not None
+        assert len(layer._cached_w_stars) == 2
+
+        query_only = state[:, single_eval_pos:]
+        cached_out = layer(
+            query_only,
+            single_eval_pos=0,
+            cache_trainset_representation=True,
+        )
+
+    torch.testing.assert_close(
+        cached_out,
+        full_out[:, single_eval_pos:],
+        rtol=1e-5,
+        atol=1e-5,
+    )
 
 
 def test_features_per_group(sample_data):
