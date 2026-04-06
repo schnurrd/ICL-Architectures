@@ -13,6 +13,26 @@ from tests.model.fla_test_utils import (
     fla_tolerances,
 )
 
+def _run_repeated_cache_reference(
+    backbone,
+    test_x: torch.Tensor,
+    past,
+    *,
+    use_custom_recurrent: bool,
+    use_custom_shortconv: bool,
+) -> torch.Tensor:
+    batch_size, test_len, embed_dim = test_x.shape
+    repeated_cache = backbone._repeat_cache(past, test_len)
+    test_x_flat = test_x.contiguous().view(batch_size * test_len, 1, embed_dim)
+    out_ref, _ = backbone._run_fla(
+        test_x_flat,
+        cache_params=repeated_cache,
+        return_cache=False,
+        use_custom_recurrent=use_custom_recurrent,
+        use_custom_shortconv=use_custom_shortconv,
+    )
+    return out_ref.view(batch_size, test_len, embed_dim)
+
 
 def test_fla_linear_attn_matches_gla_without_gating():
     if not torch.cuda.is_available():
@@ -80,6 +100,7 @@ def test_fla_test_cache_matches_naive(model_type: str):
     test_x = x_batched[:, train_len:]
     test_len = test_x.size(1)
     assert test_len > 1
+    use_custom_reference = model_type == "mesanet"
 
     with torch.no_grad():
         out_full, _ = backbone._run_fla(x_batched)
@@ -87,7 +108,12 @@ def test_fla_test_cache_matches_naive(model_type: str):
 
         _, past_1 = backbone._run_fla(train_x)
         assert past_1 is not None
-        out_naive = backbone._run_test_with_cache_naive(test_x, past_1, use_custom_recurrent=False)
+        out_naive = backbone._run_test_with_cache_naive(
+            test_x,
+            past_1,
+            use_custom_recurrent=use_custom_reference,
+            use_custom_shortconv=use_custom_reference,
+        )
 
         _, past_2 = backbone._run_fla(train_x)
         assert past_2 is not None
@@ -110,7 +136,13 @@ def test_fla_test_cache_matches_naive(model_type: str):
         
         _, past_5 = backbone._run_fla(train_x)
         assert past_5 is not None
-        out_cached_repeat = backbone._run_test_with_cache(test_x, past_5, use_custom_recurrent=False)
+        out_cached_repeat = _run_repeated_cache_reference(
+            backbone,
+            test_x,
+            past_5,
+            use_custom_recurrent=use_custom_reference,
+            use_custom_shortconv=use_custom_reference,
+        )
     
     rtol, atol = fla_cache_equivalence_tolerances(model_type)
     
@@ -152,7 +184,7 @@ def test_fla_cache_allows_train_gradients(model_type: str):
     _, past_naive = backbone_naive._run_fla(train_x_naive)
     assert past_naive is not None
     # For mamba2, native FLA doesn't support gradients through cache, so use custom recurrent
-    use_custom_for_naive = model_type == "mamba2"
+    use_custom_for_naive = model_type in {"mamba2", "mesanet"}
     out_naive = backbone_naive._run_test_with_cache_naive(
         test_x, past_naive, use_custom_recurrent=use_custom_for_naive, use_custom_shortconv=True # to allow gradients through shortconv cache
     )
@@ -200,14 +232,25 @@ def test_fla_cache_chunking_matches_gradients(model_type: str):
     test_x_full = test_x_base.clone().requires_grad_(True)
     _, past_full = backbone_full._run_fla(train_x_full)
     assert past_full is not None
-    out_full = backbone_full._run_test_with_cache(test_x_full, past_full, use_custom_recurrent=False)
+    use_custom_recurrent = model_type == "mesanet"
+    out_full = backbone_full._run_test_with_cache(
+        test_x_full,
+        past_full,
+        use_custom_recurrent=use_custom_recurrent,
+        use_custom_shortconv=use_custom_recurrent,
+    )
     out_full.sum().backward()
 
     train_x_chunked = train_x_base.clone().requires_grad_(True)
     test_x_chunked = test_x_base.clone().requires_grad_(True)
     _, past_chunked = backbone_chunked._run_fla(train_x_chunked)
     assert past_chunked is not None
-    out_chunked = backbone_chunked._run_test_with_cache(test_x_chunked, past_chunked, use_custom_recurrent=False)
+    out_chunked = backbone_chunked._run_test_with_cache(
+        test_x_chunked,
+        past_chunked,
+        use_custom_recurrent=use_custom_recurrent,
+        use_custom_shortconv=use_custom_recurrent,
+    )
     out_chunked.sum().backward()
 
     torch.testing.assert_close(train_x_chunked.grad, train_x_full.grad, rtol=1e-4, atol=1e-4)
@@ -261,17 +304,14 @@ def test_stateless_matches_repeated_cache_outputs_and_grads(model_type: str):
     _, past_ref = backbone_reference._run_fla(train_x_ref)
     assert past_ref is not None
 
-    repeated_cache = backbone_reference._repeat_cache(past_ref, test_len)
-    test_x_flat = test_x_ref.contiguous().view(batch_size * num_tokens * test_len, 1, embed_dim)
-
-    out_ref, _ = backbone_reference._run_fla(
-        test_x_flat,
-        cache_params=repeated_cache,
-        return_cache=False,
-        use_custom_recurrent=False,
+    use_custom_reference = model_type == "mesanet"
+    out_ref = _run_repeated_cache_reference(
+        backbone_reference,
+        test_x_ref,
+        past_ref,
+        use_custom_recurrent=use_custom_reference,
         use_custom_shortconv=True,
     )
-    out_ref = out_ref.view(batch_size * num_tokens, test_len, embed_dim)
     
     out_ref.sum().backward()
 
@@ -305,7 +345,13 @@ def test_edge_cases(model_type: str, batch_size: int, test_len: int, size: str):
     with torch.no_grad():
         _, past = backbone._run_fla(train_x)
         out_fast = backbone._run_test_with_cache(test_x, past)
-        out_naive = backbone._run_test_with_cache_naive(test_x, backbone._copy_cache(past), use_custom_recurrent=False)
+        use_custom_reference = model_type == "mesanet"
+        out_naive = backbone._run_test_with_cache_naive(
+            test_x,
+            backbone._copy_cache(past),
+            use_custom_recurrent=use_custom_reference,
+            use_custom_shortconv=use_custom_reference,
+        )
 
     rtol, atol = fla_tolerances(model_type)
     torch.testing.assert_close(out_fast, out_naive, rtol=rtol, atol=atol)
@@ -336,7 +382,7 @@ def test_model_parameter_gradients(model_type: str):
     train_x_naive = train_x.detach().clone().requires_grad_(True)
     _, past_naive = backbone_naive._run_fla(train_x_naive)
     # mamba2 & gated_deltanet: native kernels don't support correct gradients through cache for model parameters
-    use_custom = model_type in {"mamba2", "gated_deltanet"}
+    use_custom = model_type in {"mamba2", "gated_deltanet", "mesanet"}
     out_naive = backbone_naive._run_test_with_cache_naive(
         test_x, past_naive, use_custom_recurrent=use_custom, use_custom_shortconv=True
     )
@@ -430,7 +476,13 @@ def test_long_training_context(model_type: str, train_len: int):
         _, past = backbone._run_fla(train_x)
         assert past is not None
         out_fast = backbone._run_test_with_cache(test_x, past)
-        out_naive = backbone._run_test_with_cache_naive(test_x, backbone._copy_cache(past), use_custom_recurrent=False)
+        use_custom_reference = model_type == "mesanet"
+        out_naive = backbone._run_test_with_cache_naive(
+            test_x,
+            backbone._copy_cache(past),
+            use_custom_recurrent=use_custom_reference,
+            use_custom_shortconv=use_custom_reference,
+        )
 
     rtol, atol = fla_tolerances(model_type)
     if use_bf16:

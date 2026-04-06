@@ -16,7 +16,7 @@ def _filter_model_types(model_types: tuple[str, ...]) -> tuple[str, ...]:
 
 
 FLA_MODEL_TYPES = _filter_model_types(
-    ("gla", "kda", "deltanet", "gated_deltanet", "mamba2", "linear_attn")
+    ("gla", "kda", "deltanet", "gated_deltanet", "mamba2", "linear_attn", "mesanet")
 )
 
 
@@ -116,6 +116,20 @@ def fla_model_config_kwargs(
             "norm_eps": 1e-5,
             "use_cache": True,
         }
+    if model_type == "mesanet":
+        return {
+            "attn_mode": "chunk",
+            "hidden_size": hidden_size,
+            "num_hidden_layers": num_layers,
+            "num_heads": num_heads,
+            "head_dim": hidden_size // num_heads,
+            "intermediate_size": intermediate_size,
+            "hidden_act": "swish",
+            "norm_eps": 1e-5,
+            "use_output_gate": False,
+            "use_short_conv": True,
+            "use_cache": True,
+        }
     raise ValueError(f"Unsupported model_type: {model_type}")
 
 
@@ -126,13 +140,13 @@ def fla_tolerances(
 ) -> tuple[float, float]:
     if model_type in {"deltanet", "mamba2"}:
         return 1e-3, 1e-3
-    if model_type in {"kda", "gated_deltanet"}:
+    if model_type in {"kda", "gated_deltanet", "mesanet"}:
         return 1e-4, 1e-4
     return default
 
 
 def fla_cache_equivalence_tolerances(model_type: str) -> tuple[float, float]:
-    if model_type in {"kda", "deltanet", "gated_deltanet", "mamba2"}:
+    if model_type in {"kda", "deltanet", "gated_deltanet", "mamba2", "mesanet"}:
         return 1e-4, 1e-4
     return 1e-6, 1e-6
 

@@ -240,6 +240,8 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+MESANET_MODELS: dict[str, dict[str, Any]] = {}
+
 
 # LINEAR_ATTENTION_DEBUG_MODELS: dict[str, dict[str, Any]] = {
 #     "Linear_Attention_Non_Causal_Cat_Norm_Full_Norm": {
@@ -737,6 +739,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "gated_deltanet": GATED_DELTANET_MODELS,
     "gated_deltanet_seq_len_changes": GATED_DELTANET_MODELS_SEQ_LEN_CHANGES,
     "mamba2": MAMBA2_MODELS,
+    "mesanet": MESANET_MODELS,
     "linear_attention": LINEAR_ATTENTION_MODELS,
     "based": BASED_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
@@ -754,6 +757,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
         **DELTANET_MODELS,
         **GATED_DELTANET_MODELS,
         **MAMBA2_MODELS,
+        **MESANET_MODELS,
         #**GATED_DELTANET_MODELS_SEQ_LEN_CHANGES,
         #**DELTANET_MODELS_SIZE_CHANGES,
     },

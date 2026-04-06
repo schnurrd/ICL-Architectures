@@ -179,6 +179,24 @@ MODEL_SETTINGS = {
             "vocab_size": 1, # dummy value, not used default 32000
         },
     },
+    # MesaNet Config: https://github.com/fla-org/flash-linear-attention/blob/main/fla/models/mesa_net/configuration_mesa_net.py
+    "mesanet": {
+        "emsize": 320,
+        "config_kwargs": {
+            "attn_mode": "chunk",
+            "hidden_size": 320,
+            "num_hidden_layers": 12,
+            "num_heads": 4,
+            "head_dim": 80,
+            "intermediate_size": 320 * 2,
+            "hidden_act": "swish",
+            "norm_eps": 1e-6,
+            "use_output_gate": False,
+            "use_short_conv": False,
+            "use_cache": True,
+            "vocab_size": 1, # dummy value, not used default 32000
+        },
+    },
 }
 
 def _normalize_model_type(model_type: str) -> str:
@@ -191,6 +209,8 @@ def _normalize_model_type(model_type: str) -> str:
         return "gated_deltanet"
     if model_type in {"linear_attention", "linearattn"}:
         return "linear_attn"
+    if model_type in {"mesa", "mesa_net"}:
+        return "mesanet"
     return model_type
 
 
