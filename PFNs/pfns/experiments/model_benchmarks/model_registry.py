@@ -674,17 +674,45 @@ BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
     #     "display_name": "Bidirectional 1 (GLA)",
     #     "wandb_run_id": "fla_models/runs/8huzh1z4",
     # },
-     "Bidirectional_GLA_Comb_ST": {
-        "display_name": "Bidirectional (GLA)",
-        "wandb_run_id": "fla_models/runs/s5rtc3kk",
+    # "Bidirectional_GLA_Comb_ST": {
+    #     "display_name": "Bidirectional (GLA)",
+    #     "wandb_run_id": "fla_models/runs/s5rtc3kk",
+    # },
+    # "GLA_Comb_ST_Reference_bidirectional": {
+    #     "display_name": "Reference GLA",
+    #     "wandb_run_id": "fla_models/runs/2v2xw7d2",
+    # },
+    # "Bidirectional_DeltaNet_Comb_ST": {
+    #     "display_name": "Bidirectional (DeltaNet)",
+    #     "wandb_run_id": "icl_arch/fla_models/x9876ypz",
+    # },
+    "Bidirectional_DeltaNet_Comb_ST_linear_output_mean_cache": {
+        "display_name": "Bidirectional Linear Output Mean Cache (DeltaNet)",
+        "wandb_run_id": "icl_arch/fla_models/dgdxmimw",
     },
-    "GLA_Comb_ST_Reference_bidirectional": {
-        "display_name": "Reference GLA",
-        "wandb_run_id": "fla_models/runs/2v2xw7d2",
+    "Bidirectional_DeltaNet_Comb_ST_linear_output_two_cache": {
+        "display_name": "Bidirectional Linear Output Two Cache (DeltaNet)",
+        "wandb_run_id": "icl_arch/fla_models/5htl7smo",
     },
-    "Bidirectional_DeltaNet_Comb_ST": {
-        "display_name": "Bidirectional (DeltaNet)",
-        "wandb_run_id": "icl_arch/fla_models/x9876ypz",
+    "Bidirectional_DeltaNet_Comb_ST_mean_output_mean_cache": {
+        "display_name": "Bidirectional Mean Output Mean Cache (DeltaNet)",
+        "wandb_run_id": "icl_arch/fla_models/vn8w3gjo",
+    },
+    "Bidirectional_DeltaNet_Comb_ST_mean_output_two_cache": {
+        "display_name": "Bidirectional Mean Output Two Cache (DeltaNet)",
+        "wandb_run_id": "icl_arch/fla_models/hv2uv8nq",
+    },
+    "Bidirectional_DeltaNet_Comb_ST_mean_output_two_cache_separate_weights": {
+        "display_name": "Bidirectional Mean Output Two Cache Separate Weights (DeltaNet)",
+        "wandb_run_id": "icl_arch/fla_models/6lby3bdm",
+    },
+    "Bidirectional_Linear_Attention_Comb_ST_mean_output_mean_cache": {
+        "display_name": "Bidirectional Mean Output Mean Cache (Linear Attention)",
+        "wandb_run_id": "icl_arch/fla_models/3j9jgdvx",
+    },
+    "Bidirectional_GLA_Comb_ST_mean_output_mean_cache": {
+        "display_name": "Bidirectional Mean Output Mean Cache (GLA)",
+        "wandb_run_id": "icl_arch/fla_models/iw22mtux",
     },
     "DeltaNet_Comb_ST_Reference_New": {
         "display_name": "DeltaNet Comb ST (Reference)",
