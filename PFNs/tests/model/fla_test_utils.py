@@ -108,7 +108,7 @@ def fla_model_config_kwargs(
             "num_hidden_layers": num_layers,
             "num_heads": num_heads,
             "intermediate_size": intermediate_size,
-            "feature_map": "identity",
+            "feature_map": "elu",
             "norm_q": False,
             "norm_k": False,
             "norm_feature_map": False,

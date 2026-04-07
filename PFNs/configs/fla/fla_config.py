@@ -169,7 +169,7 @@ MODEL_SETTINGS = {
             "num_hidden_layers": 12,
             "num_heads": 4,
             "intermediate_size": 320 * 2,
-            "feature_map": "identity",
+            "feature_map": "elu",
             "norm_q": False,
             "norm_k": False,
             "norm_feature_map": False,
