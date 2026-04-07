@@ -37,6 +37,23 @@ def _raw_noncausal_kv_state(layer: LinearAttention, x: torch.Tensor) -> torch.Te
     return torch.einsum("bsnhf,bsnhd->bnhfd", k, v)
 
 
+def _raw_split_train_kv_state(
+    layer: LinearAttention,
+    x: torch.Tensor,
+    *,
+    single_eval_pos: int,
+) -> torch.Tensor:
+    x, norm_idx = layer._apply_feature_attention_block(x, 0)
+    q_all, k_all, v_all = layer._project_item_qkv(x, norm_idx)
+    _, kv_state_train, _ = layer._compute_train_attention_and_state(
+        q_all[:, :single_eval_pos],
+        k_all[:, :single_eval_pos],
+        v_all[:, :single_eval_pos],
+        causal_train=layer.causal_train_only or (layer.causal and not layer.training),
+    )
+    return kv_state_train
+
+
 def test_clip_hidden_state_matrix_frobenius_norm_caps_batched_states() -> None:
     torch.manual_seed(0)
     kv_state = torch.randn(2, 5, 3, 4, 6, 7) * 100.0
@@ -72,6 +89,32 @@ def test_linear_attention_incontext_fit_only_clips_cached_state() -> None:
 
     assert torch.any(_frobenius_norms(raw_kv_state) > STATE_NORM_MAX * 10.0)
     assert torch.all(_frobenius_norms(state["kv_state"]) <= STATE_NORM_MAX * 1.001)
+
+
+@pytest.mark.parametrize("causal", [False, True])
+def test_linear_attention_incontext_fit_only_clips_forward_train_state_for_test_tokens(
+    causal: bool,
+) -> None:
+    torch.manual_seed(0)
+    layer = _build_layer(
+        causal=causal,
+        hidden_state_frobenius_norm_apply="incontext_fit_only",
+    )
+    layer.train(not causal)
+    x = torch.randn(2, 11, 1, 8) * 100.0
+    single_eval_pos = 7
+
+    raw_kv_state = _raw_split_train_kv_state(layer, x, single_eval_pos=single_eval_pos)
+    _, clipped_kv_state, _ = layer._compute_train_attention_and_state(
+        layer._project_item_qkv(layer._apply_feature_attention_block(x, 0)[0], 0)[0][:, :single_eval_pos],
+        layer._project_item_qkv(layer._apply_feature_attention_block(x, 0)[0], 0)[1][:, :single_eval_pos],
+        layer._project_item_qkv(layer._apply_feature_attention_block(x, 0)[0], 0)[2][:, :single_eval_pos],
+        causal_train=layer.causal_train_only or (layer.causal and not layer.training),
+    )
+    clipped_kv_state = layer._clip_hidden_state_matrix_after_incontext_fit(clipped_kv_state)
+
+    assert torch.any(_frobenius_norms(raw_kv_state) > STATE_NORM_MAX * 10.0)
+    assert torch.all(_frobenius_norms(clipped_kv_state) <= STATE_NORM_MAX * 1.001)
 
 
 @pytest.mark.parametrize("causal", [False, True])

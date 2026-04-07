@@ -326,6 +326,9 @@ class LinearAttention(nn.Module):
             v_train,
             causal_train=use_causal_train_only,
         )
+        kv_state_train = self._clip_hidden_state_matrix_after_incontext_fit(
+            kv_state_train
+        )
         q_test = self._feature_map(q_test)
         attn_test = apply_state_to_query_5d(
             q_test,
