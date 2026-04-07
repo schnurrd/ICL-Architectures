@@ -5,14 +5,14 @@ import torch.nn.functional as F
 from pfns.model.attention_utils import (
     apply_state_to_query_5d,
     build_mlp,
-    clip_hidden_state_matrix_spectral_norm,
+    clip_hidden_state_matrix_frobenius_norm,
     compute_kv_state_5d,
 )
 
 
 class LinearAttention(nn.Module):
     AUTO_CAUSAL_EVAL_CHUNK_SIZE = 2000
-    HIDDEN_STATE_SPECTRAL_NORM_APPLY_MODES = {
+    HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES = {
         "state_update",
         "incontext_fit_only",
     }
@@ -41,8 +41,8 @@ class LinearAttention(nn.Module):
         causal_chunk_size: int | None = None,
         feature_attention_softmax: bool = False,
         feature_dim: int | None = None,
-        hidden_state_spectral_norm_max: float | None = None,
-        hidden_state_spectral_norm_apply: str = "state_update",
+        hidden_state_frobenius_norm_max: float | None = None,
+        hidden_state_frobenius_norm_apply: str = "state_update",
         eps: float = 1e-6,
     ):
         """Initialize projections, norms, and masking flags."""
@@ -70,24 +70,24 @@ class LinearAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.eps = eps
         if (
-            hidden_state_spectral_norm_max is not None
-            and hidden_state_spectral_norm_max <= 0.0
+            hidden_state_frobenius_norm_max is not None
+            and hidden_state_frobenius_norm_max <= 0.0
         ):
-            raise ValueError("hidden_state_spectral_norm_max must be > 0.")
-        self.hidden_state_spectral_norm_max = hidden_state_spectral_norm_max
-        hidden_state_spectral_norm_apply = (
-            hidden_state_spectral_norm_apply.strip().lower().replace("-", "_")
+            raise ValueError("hidden_state_frobenius_norm_max must be > 0.")
+        self.hidden_state_frobenius_norm_max = hidden_state_frobenius_norm_max
+        hidden_state_frobenius_norm_apply = (
+            hidden_state_frobenius_norm_apply.strip().lower().replace("-", "_")
         )
         if (
-            hidden_state_spectral_norm_apply
-            not in self.HIDDEN_STATE_SPECTRAL_NORM_APPLY_MODES
+            hidden_state_frobenius_norm_apply
+            not in self.HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES
         ):
             raise ValueError(
-                "hidden_state_spectral_norm_apply must be one of "
-                f"{sorted(self.HIDDEN_STATE_SPECTRAL_NORM_APPLY_MODES)}, got "
-                f"{hidden_state_spectral_norm_apply!r}."
+                "hidden_state_frobenius_norm_apply must be one of "
+                f"{sorted(self.HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES)}, got "
+                f"{hidden_state_frobenius_norm_apply!r}."
             )
-        self.hidden_state_spectral_norm_apply = hidden_state_spectral_norm_apply
+        self.hidden_state_frobenius_norm_apply = hidden_state_frobenius_norm_apply
 
         if attention_between_features:
             self.q_proj_feat = nn.Linear(d_model, d_model)
@@ -106,16 +106,16 @@ class LinearAttention(nn.Module):
         self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
 
     def _clip_hidden_state_matrix(self, kv_state: torch.Tensor) -> torch.Tensor:
-        return clip_hidden_state_matrix_spectral_norm(
+        return clip_hidden_state_matrix_frobenius_norm(
             kv_state,
-            self.hidden_state_spectral_norm_max,
+            self.hidden_state_frobenius_norm_max,
         )
 
     def _clip_hidden_state_matrix_on_update(
         self,
         kv_state: torch.Tensor,
     ) -> torch.Tensor:
-        if self.hidden_state_spectral_norm_apply == "state_update":
+        if self.hidden_state_frobenius_norm_apply == "state_update":
             return self._clip_hidden_state_matrix(kv_state)
         return kv_state
 
@@ -123,7 +123,7 @@ class LinearAttention(nn.Module):
         self,
         kv_state: torch.Tensor,
     ) -> torch.Tensor:
-        if self.hidden_state_spectral_norm_apply == "incontext_fit_only":
+        if self.hidden_state_frobenius_norm_apply == "incontext_fit_only":
             return self._clip_hidden_state_matrix(kv_state)
         return kv_state
 

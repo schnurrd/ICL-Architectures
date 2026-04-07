@@ -34,26 +34,29 @@ def build_mlp(
     )
 
 
-def clip_hidden_state_matrix_spectral_norm(
+def clip_hidden_state_matrix_frobenius_norm(
     kv_state: torch.Tensor,
-    max_spectral_norm: float | None,
+    max_frobenius_norm: float | None,
 ) -> torch.Tensor:
-    """Clip batched hidden-state matrices so each spectral norm stays bounded."""
-    if max_spectral_norm is None or kv_state.numel() == 0:
+    """Clip batched hidden-state matrices so each Frobenius norm stays bounded."""
+    if max_frobenius_norm is None or kv_state.numel() == 0:
         return kv_state
 
-    max_spectral_norm = float(max_spectral_norm)
-    if max_spectral_norm <= 0.0:
-        raise ValueError("max_spectral_norm must be > 0.")
+    max_frobenius_norm = float(max_frobenius_norm)
+    if max_frobenius_norm <= 0.0:
+        raise ValueError("max_frobenius_norm must be > 0.")
 
     norm_input = (
         kv_state
         if kv_state.dtype in {torch.float32, torch.float64}
         else kv_state.float()
     )
-    spectral_norm = torch.linalg.matrix_norm(norm_input, ord=2, dim=(-2, -1))
+    frobenius_norm = norm_input.square().sum(dim=(-2, -1)).sqrt()
     min_norm = torch.finfo(norm_input.dtype).tiny
-    scale = torch.clamp(max_spectral_norm / spectral_norm.clamp_min(min_norm), max=1.0)
+    scale = torch.clamp(
+        max_frobenius_norm / frobenius_norm.clamp_min(min_norm),
+        max=1.0,
+    )
     return kv_state * scale.to(dtype=kv_state.dtype).unsqueeze(-1).unsqueeze(-1)
 
 

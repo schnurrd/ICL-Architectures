@@ -109,8 +109,8 @@ def get_config(
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = None,
-    hidden_state_spectral_norm_max: float | None = None,
-    hidden_state_spectral_norm_apply: str = "state_update",
+    hidden_state_frobenius_norm_max: float | None = None,
+    hidden_state_frobenius_norm_apply: str = "state_update",
     sequence_mode: str | None = None,
     **kwargs,
 ) -> MainConfig:
@@ -206,8 +206,8 @@ def get_config(
             layer_kwargs={
                 "feature_attention_softmax": False,
                 **layer_kwargs,
-                "hidden_state_spectral_norm_max": hidden_state_spectral_norm_max,
-                "hidden_state_spectral_norm_apply": hidden_state_spectral_norm_apply,
+                "hidden_state_frobenius_norm_max": hidden_state_frobenius_norm_max,
+                "hidden_state_frobenius_norm_apply": hidden_state_frobenius_norm_apply,
                 #"feature_dim": 64,
             },
         ),
