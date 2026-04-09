@@ -55,6 +55,67 @@ def test_fla_linear_attn_matches_gla_without_gating():
     torch.testing.assert_close(final_state_linear, final_state_gla, rtol=0.0, atol=0.0)
 
 
+def test_fla_linear_attn_rope_cache_matches_naive():
+    if not torch.cuda.is_available():
+        pytest.skip("FLA backend requires CUDA/Triton for this test.")
+
+    torch.manual_seed(0)
+    backbone = build_fla_backbone(
+        "linear_attn",
+        train=True,
+        linear_attn_use_rope=True,
+    )
+    device = torch.device("cuda")
+    backbone = backbone.to(device)
+
+    batch_size = 2
+    seq_len = 20
+    num_tokens = 1
+    embed_dim = fla_hidden_size("linear_attn")
+    train_len = 12
+    assert 0 < train_len < seq_len
+
+    x = torch.randn(batch_size, seq_len, num_tokens, embed_dim, device=device)
+    x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
+    train_x = x_batched[:, :train_len]
+    test_x = x_batched[:, train_len:]
+    test_len = test_x.size(1)
+    assert test_len > 1
+
+    with torch.no_grad():
+        _, past_1 = backbone._run_fla(train_x, rope_pairwise_positions=True)
+        assert past_1 is not None
+        out_naive = backbone._run_test_with_cache_naive(
+            test_x,
+            past_1,
+            use_custom_recurrent=False,
+            rope_pairwise_positions=True,
+        )
+
+        _, past_2 = backbone._run_fla(train_x, rope_pairwise_positions=True)
+        assert past_2 is not None
+        out_fast = backbone._run_test_with_cache(
+            test_x,
+            past_2,
+            rope_pairwise_positions=True,
+        )
+
+        _, past_3 = backbone._run_fla(train_x, rope_pairwise_positions=True)
+        assert past_3 is not None
+        perm = torch.randperm(test_len, device=device)
+        test_x_swapped = test_x[:, perm, :]
+        out_swapped = backbone._run_test_with_cache(
+            test_x_swapped,
+            past_3,
+            rope_pairwise_positions=True,
+        )
+        inv_perm = torch.argsort(perm)
+        out_swapped = out_swapped[:, inv_perm, :]
+
+    torch.testing.assert_close(out_fast, out_naive, rtol=1e-6, atol=1e-6)
+    torch.testing.assert_close(out_fast, out_swapped, rtol=1e-6, atol=1e-6)
+
+
 @pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
 def test_fla_test_cache_matches_naive(model_type: str):
     if not torch.cuda.is_available():

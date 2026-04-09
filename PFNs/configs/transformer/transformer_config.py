@@ -8,6 +8,7 @@ from __future__ import annotations
 import torch
 
 from configs.config_utils import (
+    normalize_optional_none_string,
     resolve_batch_size_stages,
     resolve_eval_pos_split_pct,
     resolve_prior_device,
@@ -141,6 +142,8 @@ def get_config(
     seq_len_stages: list[tuple[int | float | str, ...]] | tuple[tuple[int | float | str, ...], ...] | None = None,
     task_variant: str = "tabular_prior",
     interleave_x_y_pairs: bool = False,
+    interleaved_pair_positional_embedding: str = "none",
+    interleaved_pair_position_base: float = 128_000.0,
     item_attention_use_rope: bool = False,
     item_attention_rope_base: float = 128_000.0,
     item_attention_rope_pairwise_positions: bool = False,
@@ -151,6 +154,10 @@ def get_config(
     """
 
     training_setup = training_setup.strip().lower()
+    interleaved_pair_positional_embedding = (
+        normalize_optional_none_string(interleaved_pair_positional_embedding)
+        or "none"
+    )
     training_setup, is_associative_recall = resolve_training_setup_for_task(
         training_setup=training_setup,
         task_variant=task_variant,
@@ -235,6 +242,8 @@ def get_config(
             "subspace" if profile["attention_between_features"] else None
         ),
         interleave_x_y_pairs=interleave_x_y_pairs,
+        interleaved_pair_positional_embedding=interleaved_pair_positional_embedding,
+        interleaved_pair_position_base=float(interleaved_pair_position_base),
     )
 
     optimizer = OptimizerConfig(
@@ -246,6 +255,8 @@ def get_config(
     wandb_name = f"transformer_1_gpu_v4{profile['wandb_suffix']}_{config_index}_matched"
     if interleave_x_y_pairs:
         wandb_name += "_interleaved"
+        if interleaved_pair_positional_embedding != "none":
+            wandb_name += f"_{interleaved_pair_positional_embedding}"
     if max_seq_len is not None:
         wandb_name += f"_seq{resolved_max_seq_len}"
     if resolved_batch_size_stages:

@@ -28,6 +28,10 @@ class ModelConfig(base_config.BaseConfig):
     features_per_group: int = 1 # number of features grouped together as one token
     attention_between_features: bool = True
     interleave_x_y_pairs: bool = False
+    interleaved_pair_positional_embedding: tp.Literal[
+        "none", "sinusoidal", "shared_random_pair"
+    ] = "none"
+    interleaved_pair_position_base: float = 128_000.0
     feature_positional_embedding: (
         tp.Literal[
             "normal_rand_vec",
@@ -114,6 +118,8 @@ class ModelConfig(base_config.BaseConfig):
             feature_positional_embedding=self.feature_positional_embedding,
             seed=self.seed,  # Seed is important for reproducibility of feature positional embeddings
             interleave_x_y_pairs=self.interleave_x_y_pairs,
+            interleaved_pair_positional_embedding=self.interleaved_pair_positional_embedding,
+            interleaved_pair_position_base=self.interleaved_pair_position_base,
             **(self.model_extra_args or {}),
         )
         model.criterion = criterion

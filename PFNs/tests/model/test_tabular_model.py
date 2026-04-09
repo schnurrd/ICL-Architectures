@@ -6,6 +6,9 @@ import torch.optim as optim
 from pfns.model import encoders, tabular_model
 from pfns.model.tabular_model import isolate_torch_rng, TabularModel
 from pfns.model.backbones import TransformerBackboneConfig
+from pfns.model.positional_embeddings import (
+    apply_interleaved_pair_and_role_embeddings,
+)
 from torch.nn import CrossEntropyLoss
 
 
@@ -243,6 +246,77 @@ def test_feature_positional_embeddings(sample_data):
                 sample_data["batch_size"],
                 1,
             )
+
+
+def test_shared_random_pair_embeddings_are_deterministic_and_pair_shared():
+    embedded_x = torch.zeros(2, 4, 1, 8)
+    embedded_y = torch.zeros(2, 4, 8)
+    role_embeddings = torch.zeros(2, 8)
+
+    x_out_1, y_out_1 = apply_interleaved_pair_and_role_embeddings(
+        embedded_x,
+        embedded_y,
+        embedding_type="shared_random_pair",
+        role_embeddings=role_embeddings,
+        position_offset=0,
+        eval_pos=4,
+        use_cached_positions=False,
+        mask_name="Int_ST",
+        is_training=True,
+        seed=42,
+    )
+    x_out_2, y_out_2 = apply_interleaved_pair_and_role_embeddings(
+        embedded_x,
+        embedded_y,
+        embedding_type="shared_random_pair",
+        role_embeddings=role_embeddings,
+        position_offset=0,
+        eval_pos=4,
+        use_cached_positions=False,
+        mask_name="Int_ST",
+        is_training=True,
+        seed=42,
+    )
+    x_out_3, y_out_3 = apply_interleaved_pair_and_role_embeddings(
+        embedded_x,
+        embedded_y,
+        embedding_type="shared_random_pair",
+        role_embeddings=role_embeddings,
+        position_offset=0,
+        eval_pos=4,
+        use_cached_positions=False,
+        mask_name="Int_ST",
+        is_training=True,
+        seed=43,
+    )
+
+    torch.testing.assert_close(x_out_1, x_out_2)
+    torch.testing.assert_close(y_out_1, y_out_2)
+    torch.testing.assert_close(x_out_1.squeeze(2), y_out_1)
+    assert not torch.allclose(x_out_1, x_out_3)
+    assert not torch.allclose(y_out_1, y_out_3)
+
+
+def test_shared_random_pair_embeddings_freeze_cached_test_positions():
+    embedded_x = torch.zeros(1, 2, 1, 8)
+    embedded_y = torch.zeros(1, 2, 8)
+    role_embeddings = torch.zeros(2, 8)
+
+    x_out, y_out = apply_interleaved_pair_and_role_embeddings(
+        embedded_x,
+        embedded_y,
+        embedding_type="shared_random_pair",
+        role_embeddings=role_embeddings,
+        position_offset=5,
+        eval_pos=5,
+        use_cached_positions=True,
+        mask_name="Int_ST",
+        is_training=False,
+        seed=7,
+    )
+
+    torch.testing.assert_close(x_out[:, 0], x_out[:, 1])
+    torch.testing.assert_close(y_out[:, 0], y_out[:, 1])
 
 
 def test_features_per_group(sample_data):

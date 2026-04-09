@@ -5,6 +5,9 @@ from functools import partial
 
 import torch
 
+from pfns.model.positional_embeddings import apply_rope as apply_rope_tensor
+from pfns.model.positional_embeddings import build_rope_inv_freq
+from pfns.model.positional_embeddings import build_rope_positions
 from pfns.model.save_peak_memory import support_save_peak_mem_factor
 from torch.utils.checkpoint import checkpoint
 from typing_extensions import override
@@ -229,18 +232,10 @@ class MultiHeadAttention(torch.nn.Module):
                 raise ValueError(
                     f"RoPE requires even d_k, got d_k={self._d_k}."
                 )
-            inv_freq = 1.0 / (
-                self._rope_base
-                ** (
-                    torch.arange(
-                        0,
-                        self._d_k,
-                        2,
-                        device=device,
-                        dtype=torch.float32,
-                    )
-                    / self._d_k
-                )
+            inv_freq = build_rope_inv_freq(
+                self._d_k,
+                rope_base=self._rope_base,
+                device=device,
             )
             self.register_buffer("inv_freq", inv_freq, persistent=False)
 
@@ -656,42 +651,21 @@ class MultiHeadAttention(torch.nn.Module):
         eval_pos: int | None = None,
         use_cached_kv: bool = False,
     ) -> torch.Tensor:
-        if x.shape[-1] % 2 != 0:
-            raise ValueError(
-                f"RoPE requires even hidden dimension, got {x.shape[-1]}."
-            )
-        seq_len = x.shape[-3]
-        half_dim = x.shape[-1] // 2
-        t = torch.arange(
-            position_offset,
-            position_offset + seq_len,
+        positions = build_rope_positions(
+            x.shape[-3], # seq_len
             device=x.device,
-            dtype=torch.long,
+            position_offset=position_offset,
+            rope_pairwise_positions=rope_pairwise_positions,
+            mask_name=mask_name,
+            eval_pos=eval_pos,
+            use_cached_kv=use_cached_kv,
+            is_training=self.training,
         )
-        if mask_name is None or mask_name not in {"Comb_MT", "Int_MT", "causal_all"}:
-            freeze_after = int(eval_pos) if eval_pos is not None and eval_pos > 0 else None
-            if freeze_after is None and use_cached_kv:
-                freeze_after = int(position_offset) if position_offset > 0 else None
-            if freeze_after is not None:
-                frozen = t >= freeze_after
-                if frozen.any():
-                    t[frozen] = freeze_after
-        if rope_pairwise_positions:
-            t = torch.div(t, 2, rounding_mode="floor")
-        t = t.to(dtype=self.inv_freq.dtype)
-        freqs = torch.outer(t, self.inv_freq)
-        cos = freqs.cos().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
-        sin = freqs.sin().to(dtype=x.dtype).view(1, seq_len, 1, half_dim)
-
-        x_even = x[..., ::2]
-        x_odd = x[..., 1::2]
-        return torch.stack(
-            (
-                x_even * cos - x_odd * sin,
-                x_even * sin + x_odd * cos,
-            ),
-            dim=-1,
-        ).flatten(-2)
+        return apply_rope_tensor(
+            x,
+            inv_freq=self.inv_freq,
+            positions=positions,
+        )
 
     @staticmethod
     def broadcast_kv_across_heads(
