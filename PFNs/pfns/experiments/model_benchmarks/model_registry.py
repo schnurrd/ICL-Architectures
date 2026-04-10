@@ -735,6 +735,9 @@ CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Causal_Comb_ST_small_16l": {
         "wandb_run_id": "linear_attention/runs/79032l1a",
     },
+    "Linear_Attention_Causal_Comb_ST_mid_8l": {
+        "wandb_run_id": "linear_attention/runs/mqgoa9bm",
+    },
 }
 
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
