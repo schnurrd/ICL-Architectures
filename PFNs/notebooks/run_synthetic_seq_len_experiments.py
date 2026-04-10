@@ -60,6 +60,20 @@ WANDB = {
 }
 
 
+def _parse_seqlen_value(raw_value: str) -> int:
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Invalid sequence length value {raw_value!r}. Expected an integer."
+        ) from exc
+    if value < 2:
+        raise argparse.ArgumentTypeError(
+            f"Sequence lengths must be >= 2. Got {value}."
+        )
+    return value
+
+
 def parse_cli_args():
     parser = argparse.ArgumentParser(
         description="Run sequence length benchmark experiments."
@@ -81,6 +95,16 @@ def parse_cli_args():
         help=(
             "Number of repetitions used for evaluation "
             f"(default: {EXPERIMENT['num_repetitions']})."
+        ),
+    )
+    parser.add_argument(
+        "--seqlen-list",
+        nargs="+",
+        type=_parse_seqlen_value,
+        default=None,
+        help=(
+            "Optional sequence lengths to evaluate. "
+            "Example: --seqlen-list 250 500 1000 2000"
         ),
     )
     parser.add_argument(
@@ -109,6 +133,8 @@ def parse_cli_args():
 
 CLI_ARGS = parse_cli_args()
 EXPERIMENT["num_repetitions"] = CLI_ARGS.num_repetitions
+if CLI_ARGS.seqlen_list is not None:
+    EXPERIMENT["seqlen_list"] = CLI_ARGS.seqlen_list
 
 OUTPUT_ROOT = build_repo_output_root(__file__, "seq_len")
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -116,6 +142,7 @@ OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 print(f"Results are stored in: {OUTPUT_ROOT}")
 print(f"Available model families: {list(MODEL_FAMILIES)}")
 print(f"Configured repetitions: {EXPERIMENT['num_repetitions']}")
+print(f"Configured sequence lengths: {EXPERIMENT['seqlen_list']}")
 print(
     f"Sharding config: num_runs={CLI_ARGS.num_runs}, run_index={CLI_ARGS.run_index}"
 )
