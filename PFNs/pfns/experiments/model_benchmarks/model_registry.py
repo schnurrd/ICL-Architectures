@@ -240,7 +240,12 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
-MESANET_MODELS: dict[str, dict[str, Any]] = {}
+MESANET_MODELS: dict[str, dict[str, Any]] = {
+    "MesaNet_Int_MT": {
+        "display_name": "MesaNet Interleaved Multi Target",
+        "wandb_run_id": "fla_models/runs/bd9rtoku",
+    }
+}
 
 
 # LINEAR_ATTENTION_DEBUG_MODELS: dict[str, dict[str, Any]] = {
