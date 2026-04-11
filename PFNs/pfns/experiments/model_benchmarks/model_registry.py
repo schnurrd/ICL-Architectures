@@ -735,19 +735,23 @@ CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Causal_Comb_ST_small_8l": {
         "wandb_run_id": "linear_attention/runs/uo3uos24",
     },
-    # "Linear_Attention_Causal_Comb_ST_small_16l": {
-    #     "wandb_run_id": "linear_attention/runs/79032l1a",
-    # },
-    # "Linear_Attention_Causal_Comb_ST_mid_8l": {
-    #     "wandb_run_id": "linear_attention/runs/mqgoa9bm",
-    # },
-    # "Linear_Attention_Causal_Comb_ST_mid_8l": {
-    #     "wandb_run_id": "linear_attention/runs/mqgoa9bm",
-    # },
-    # "Linear_Attention_Causal_Comb_ST_high_8l": {
-    #     "wandb_run_id": "linear_attention/runs/qcmexzis",
-    #     "note": "Epoch 56/200"
-    # },
+    
+    "Linear_Attention_Causal_Comb_ST_high_1l": {
+        "wandb_run_id": "linear_attention/runs/hh407jv1",
+    },
+    "Linear_Attention_Causal_Comb_ST_high_2l": {
+        "wandb_run_id": "linear_attention/runs/lwt3i9xh",
+        "note": "Epoch 124/200"
+    },
+    "Linear_Attention_Causal_Comb_ST_high_4l": {
+        "wandb_run_id": "linear_attention/runs/uurehyuk",
+        "note": "Epoch 86/200"
+    },
+    "Linear_Attention_Causal_Comb_ST_high_8l": {
+        "wandb_run_id": "linear_attention/runs/3pi6hz5",
+        "note": "Epoch 57/200"
+    },
+    
     
     # "Linear_Attention_Non_Causal_Comb_ST_small_2l": {
     #     "wandb_run_id": "linear_attention/runs/djan9ch8",

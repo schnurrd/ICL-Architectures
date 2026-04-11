@@ -88,6 +88,7 @@ def parse_cli_args():
         ),
     )
     parser.add_argument(
+        "--num-repetitions",
         "--num-repeats",
         dest="num_repetitions",
         type=int,
