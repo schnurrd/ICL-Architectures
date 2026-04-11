@@ -20,6 +20,7 @@ from pfns.prior_defaults import (
     build_prior_for_task,
     resolve_training_setup_for_task,
 )
+from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
 from pfns.model.backbones import FLABackboneConfig
 from pfns.model.mode_normalization import (
     CANONICAL_SEQUENCE_MODES,
@@ -240,6 +241,7 @@ def get_config(
     mimetic_init_mode: MimeticInitMode = "gate_only",
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None,
     use_short_conv: bool | None = None,
+    use_categorical_features: bool = True,
     feature_positional_embedding: str | None = None,
     config_kwargs_override: dict[str, object] | None = None,
 ) -> MainConfig:
@@ -306,6 +308,13 @@ def get_config(
         max_num_classes=MAX_NUM_CLASSES,
         max_num_features=MAX_NUM_FEATURES,
     )
+    if not use_categorical_features and isinstance(prior, TabPFNPriorConfig):
+        prior = TabPFNPriorConfig(
+            **{
+                **prior.__dict__,
+                "return_categorical_mask": False,
+            }
+        )
 
     batch_shape = BatchShapeSamplerConfig(
         batch_size=resolved_batch_size,
@@ -375,7 +384,7 @@ def get_config(
         encoder=EncoderConfig(
             variable_num_features_normalization=True,
             nan_handling=True,
-            use_categorical_encoder=True,
+            use_categorical_encoder=use_categorical_features,
             train_normalization=True,
         ),
         y_encoder=EncoderConfig(
@@ -425,6 +434,7 @@ def get_config(
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
+        "nocat" if not use_categorical_features else None,
         f"mimetic_{mimetic_init_mode}" if mimetic_init else None,
         f"fpe_{feature_positional_embedding}",
     ]
