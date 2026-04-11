@@ -14,7 +14,7 @@ class LinearAttention(nn.Module):
     AUTO_CAUSAL_EVAL_CHUNK_SIZE = 2000
     HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES = {
         "state_update",
-        "incontext_fit_only",
+        "incontext_predict_only",
     }
 
     """
@@ -119,11 +119,11 @@ class LinearAttention(nn.Module):
             return self._clip_hidden_state_matrix(kv_state)
         return kv_state
 
-    def _clip_hidden_state_matrix_after_incontext_fit(
+    def _clip_hidden_state_matrix_before_prediction(
         self,
         kv_state: torch.Tensor,
     ) -> torch.Tensor:
-        if self.hidden_state_frobenius_norm_apply == "incontext_fit_only":
+        if self.hidden_state_frobenius_norm_apply == "incontext_predict_only":
             return self._clip_hidden_state_matrix(kv_state)
         return kv_state
 
@@ -312,6 +312,8 @@ class LinearAttention(nn.Module):
         k_train: torch.Tensor,
         v_train: torch.Tensor,
         q_test: torch.Tensor,
+        k_test: torch.Tensor,
+        v_test: torch.Tensor,
     ) -> torch.Tensor:
         """Apply the split train/test attention path.
 
@@ -326,14 +328,23 @@ class LinearAttention(nn.Module):
             v_train,
             causal_train=use_causal_train_only,
         )
-        kv_state_train = self._clip_hidden_state_matrix_after_incontext_fit(
-            kv_state_train
-        )
         q_test = self._feature_map(q_test)
+        prediction_kv_state = kv_state_train
+        prediction_k_sum = k_sum_train
+        if self.hidden_state_frobenius_norm_apply == "incontext_predict_only" and (
+            self.causal_train_only or not self.causal
+        ):
+            k_test = self._feature_map(k_test)
+            kv_state_test, k_sum_test = compute_kv_state_5d(k_test, v_test)
+            prediction_kv_state = prediction_kv_state + kv_state_test
+            prediction_k_sum = prediction_k_sum + k_sum_test
+            prediction_kv_state = self._clip_hidden_state_matrix_before_prediction(
+                prediction_kv_state
+            )
         attn_test = apply_state_to_query_5d(
             q_test,
-            kv_state_train,
-            k_sum_train,
+            prediction_kv_state,
+            prediction_k_sum,
             eps=self.eps,
         )
         return torch.cat([attn_train, attn_test], dim=1)
@@ -382,11 +393,15 @@ class LinearAttention(nn.Module):
         k_train = k_all[:, :single_eval_pos]
         v_train = v_all[:, :single_eval_pos]
         q_test = q_all[:, single_eval_pos:]
+        k_test = k_all[:, single_eval_pos:]
+        v_test = v_all[:, single_eval_pos:]
         attn_all = self._apply_split_item_attention(
             q_train,
             k_train,
             v_train,
             q_test,
+            k_test,
+            v_test,
         )
         return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
 
@@ -413,7 +428,6 @@ class LinearAttention(nn.Module):
             kv_state, k_sum = compute_kv_state_5d(k, v)
             kv_state = self._clip_hidden_state_matrix_on_update(kv_state)
             attn = apply_state_to_query_5d(q, kv_state, k_sum, eps=self.eps)
-        kv_state = self._clip_hidden_state_matrix_after_incontext_fit(kv_state)
         x = self._apply_item_output_and_mlp(x, attn, norm_idx)
         return x, {"kv_state": kv_state, "k_sum": k_sum}
 
@@ -445,6 +459,15 @@ class LinearAttention(nn.Module):
                 k_sum_prefix=k_sum,
             )
         else:
+            if self.hidden_state_frobenius_norm_apply == "incontext_predict_only" and (
+                self.causal_train_only or not self.causal
+            ):
+                k = self._feature_map(k)
+                kv_state_test, k_sum_test = compute_kv_state_5d(k, v)
+                kv_state = self._clip_hidden_state_matrix_before_prediction(
+                    kv_state + kv_state_test
+                )
+                k_sum = k_sum + k_sum_test
             attn = apply_state_to_query_5d(
                 q,
                 kv_state,

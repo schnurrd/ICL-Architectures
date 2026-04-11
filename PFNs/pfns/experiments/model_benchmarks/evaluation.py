@@ -415,30 +415,34 @@ def evaluate_models_over_seqlens(
                                     result[metric_name],
                                 )
 
+    metadata = {
+        "seqlen_list": list(seqlen_list),
+        "num_features": num_features,
+        "num_classes": num_classes,
+        "number_of_test_samples": number_of_test_samples,
+        "number_of_repetitions": number_of_repetitions,
+        "device": resolved_device,
+        "forward_models": sorted(forward_models_set),
+        "data_generation_seed": (
+            int(data_generation_seed) if data_generation_seed is not None else None
+        ),
+        "subsample_dataset_size": (
+            int(subsample_dataset_size)
+            if subsample_dataset_size is not None
+            else None
+        ),
+        "task_variant": task_variant,
+        "task_kwargs": resolved_task_kwargs,
+        "precomputed_batches": bool(precomputed_batches is not None),
+    }
+    if resolved_task_kwargs.get("only_numerical_features", False):
+        metadata["only_numerical_features"] = True
+
     return {
         "schema_version": SCHEMA_VERSION,
         "metric_table": tables.metric_table,
         "timing_table": tables.timing_table,
         "memory_table": tables.memory_table,
         "oom_errors": {k: sorted(v) for k, v in tables.oom_errors.items()},
-        "metadata": {
-            "seqlen_list": list(seqlen_list),
-            "num_features": num_features,
-            "num_classes": num_classes,
-            "number_of_test_samples": number_of_test_samples,
-            "number_of_repetitions": number_of_repetitions,
-            "device": resolved_device,
-            "forward_models": sorted(forward_models_set),
-            "data_generation_seed": (
-                int(data_generation_seed) if data_generation_seed is not None else None
-            ),
-            "subsample_dataset_size": (
-                int(subsample_dataset_size)
-                if subsample_dataset_size is not None
-                else None
-            ),
-            "task_variant": task_variant,
-            "task_kwargs": resolved_task_kwargs,
-            "precomputed_batches": bool(precomputed_batches is not None),
-        },
+        "metadata": metadata,
     }

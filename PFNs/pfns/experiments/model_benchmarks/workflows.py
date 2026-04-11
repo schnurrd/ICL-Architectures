@@ -61,10 +61,21 @@ def seq_len_bundle_is_compatible(
         model_name in bundle.get("metric_table", {})
         and model_name in bundle.get("timing_table", {})
     )
+    bundle_metadata = bundle.get("metadata", {})
+    bundle_only_numerical = bool(
+        bundle_metadata.get(
+            "only_numerical_features",
+            bundle_metadata.get("task_kwargs", {}).get("only_numerical_features", False),
+        )
+    )
+    expected_only_numerical = bool(expected_metadata.get("only_numerical_features", False))
+    if bundle_only_numerical != expected_only_numerical:
+        return False
+
     metadata_ok = run_metadata_matches(
-        bundle.get("metadata", {}),
+        bundle_metadata,
         expected=expected_metadata,
-        keys=tuple(expected_metadata.keys()),
+        keys=tuple(k for k in expected_metadata if k != "only_numerical_features"),
     )
     return bool(has_model and metadata_ok)
 
