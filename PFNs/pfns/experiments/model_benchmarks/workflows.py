@@ -15,7 +15,7 @@ def build_seq_len_run_metadata(
     device: str,
 ) -> dict[str, Any]:
     """Canonical seq-len metadata used for cache compatibility checks."""
-    return {
+    metadata = {
         "seqlen_list": list(experiment["seqlen_list"]),
         "num_features": experiment["num_features"],
         "num_classes": experiment["num_classes"],
@@ -24,6 +24,9 @@ def build_seq_len_run_metadata(
         "device": device,
         "data_generation_seed": experiment["data_generation_seed"],
     }
+    if experiment.get("only_numerical_features", False):
+        metadata["only_numerical_features"] = True
+    return metadata
 
 
 def build_real_world_run_metadata(

@@ -33,6 +33,17 @@ class BenchmarkBatch:
     y_style: torch.Tensor | None = None
 
 
+def _resolve_tabular_prior_task_kwargs(
+    task_kwargs: dict[str, Any] | None,
+) -> dict[str, Any]:
+    options = dict(task_kwargs or {})
+    if options.pop("only_numerical_features", False):
+        options.setdefault("prior_overrides", {}).setdefault(
+            "prior_config", {}
+        )["categorical_feature_p"] = 0.0
+    return options
+
+
 class ClassCoverageBatchGenerator:
     """Iterably sample batches that contain all classes in train and eval slices."""
 
@@ -250,6 +261,7 @@ def create_seq_len_batch_generator(
 ):
     options = dict(task_kwargs or {})
     if task_variant == "tabular_prior":
+        options = _resolve_tabular_prior_task_kwargs(options)
         generator_cls = ClassCoverageBatchGenerator
         options.setdefault("prior_device", default_device)
     elif task_variant == "associative_recall":

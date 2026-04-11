@@ -99,6 +99,18 @@ def parse_cli_args():
         ),
     )
     parser.add_argument(
+        "--only-numerical-features",
+        "--disable-categorical-features",
+        "--numerical-only",
+        dest="only_numerical_features",
+        action="store_true",
+        default=False,
+        help=(
+            "Force the tabular data-generation prior to emit only numerical "
+            "features by disabling categorical feature generation."
+        ),
+    )
+    parser.add_argument(
         "--seqlen-list",
         nargs="+",
         type=_parse_seqlen_value,
@@ -136,6 +148,14 @@ CLI_ARGS = parse_cli_args()
 EXPERIMENT["num_repetitions"] = CLI_ARGS.num_repetitions
 if CLI_ARGS.seqlen_list is not None:
     EXPERIMENT["seqlen_list"] = CLI_ARGS.seqlen_list
+if CLI_ARGS.only_numerical_features:
+    EXPERIMENT["only_numerical_features"] = True
+
+TASK_KWARGS = (
+    {"only_numerical_features": True}
+    if CLI_ARGS.only_numerical_features
+    else {}
+)
 
 OUTPUT_ROOT = build_repo_output_root(__file__, "seq_len")
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -143,6 +163,10 @@ OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 print(f"Results are stored in: {OUTPUT_ROOT}")
 print(f"Available model families: {list(MODEL_FAMILIES)}")
 print(f"Configured repetitions: {EXPERIMENT['num_repetitions']}")
+print(
+    "Configured data generation: "
+    f"only_numerical_features={EXPERIMENT.get('only_numerical_features', False)}"
+)
 print(f"Configured sequence lengths: {EXPERIMENT['seqlen_list']}")
 print(
     f"Sharding config: num_runs={CLI_ARGS.num_runs}, run_index={CLI_ARGS.run_index}"
@@ -182,6 +206,7 @@ precomputed_batches = resolve_fixed_batches(
     output_root=OUTPUT_ROOT,
     default_device=device,
     wandb=WANDB,
+    task_kwargs=TASK_KWARGS,
 )
 print(f"Using {len(precomputed_batches)} fixed batches for this experiment.")
 
@@ -267,6 +292,7 @@ for model_name, model_config in models_to_compare.items():
         subsample_dataset_size=model_config.get("subsample_dataset_size"),
         progress_desc=f"{model_name} progress",
         forward_models=get_forward_models_from_registry({model_name: model_config}),
+        task_kwargs=TASK_KWARGS,
         precomputed_batches=precomputed_batches,
     )
     results_by_model[model_name] = model_results
