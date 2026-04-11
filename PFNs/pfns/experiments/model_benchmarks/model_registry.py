@@ -748,7 +748,7 @@ CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
         "note": "Epoch 86/200"
     },
     "Linear_Attention_Causal_Comb_ST_high_8l": {
-        "wandb_run_id": "linear_attention/runs/3pi6hz5",
+        "wandb_run_id": "linear_attention/runs/23pi6hz5",
         "note": "Epoch 57/200"
     },
     
