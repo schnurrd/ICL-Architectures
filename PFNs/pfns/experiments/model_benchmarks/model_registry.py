@@ -723,18 +723,18 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
 }
 
 CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
-    "Linear_Attention_Causal_Comb_ST_small_1l": {
-        "wandb_run_id": "linear_attention/runs/cz4o41ap",
-    },
-    "Linear_Attention_Causal_Comb_ST_small_2l": {
-        "wandb_run_id": "linear_attention/runs/q95rrgsf",
-    },
-    "Linear_Attention_Causal_Comb_ST_small_4l": {
-        "wandb_run_id": "linear_attention/runs/0xl6owda",
-    },
-    "Linear_Attention_Causal_Comb_ST_small_8l": {
-        "wandb_run_id": "linear_attention/runs/uo3uos24",
-    },
+    # "Linear_Attention_Causal_Comb_ST_small_1l": {
+    #     "wandb_run_id": "linear_attention/runs/cz4o41ap",
+    # },
+    # "Linear_Attention_Causal_Comb_ST_small_2l": {
+    #     "wandb_run_id": "linear_attention/runs/q95rrgsf",
+    # },
+    # "Linear_Attention_Causal_Comb_ST_small_4l": {
+    #     "wandb_run_id": "linear_attention/runs/0xl6owda",
+    # },
+    # "Linear_Attention_Causal_Comb_ST_small_8l": {
+    #     "wandb_run_id": "linear_attention/runs/uo3uos24",
+    # },
     
     "Linear_Attention_Causal_Comb_ST_high_1l": {
         "wandb_run_id": "linear_attention/runs/hh407jv1",
@@ -745,11 +745,11 @@ CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
     },
     "Linear_Attention_Causal_Comb_ST_high_4l": {
         "wandb_run_id": "linear_attention/runs/uurehyuk",
-        "note": "Epoch 86/200"
+        "note": "Epoch 180/200"
     },
     "Linear_Attention_Causal_Comb_ST_high_8l": {
         "wandb_run_id": "linear_attention/runs/23pi6hz5",
-        "note": "Epoch 57/200"
+        "note": "Epoch 113/200"
     },
     
     
