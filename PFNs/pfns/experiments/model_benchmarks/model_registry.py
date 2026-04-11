@@ -731,10 +731,10 @@ CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
     },
     "Linear_Attention_Causal_Comb_ST_small_4l": {
         "wandb_run_id": "linear_attention/runs/0xl6owda",
-    },    
-    # "Linear_Attention_Causal_Comb_ST_small_8l": {
-    #     "wandb_run_id": "linear_attention/runs/167zifq4",
-    # },
+    },
+    "Linear_Attention_Causal_Comb_ST_small_8l": {
+        "wandb_run_id": "linear_attention/runs/uo3uos24",
+    },
     # "Linear_Attention_Causal_Comb_ST_small_16l": {
     #     "wandb_run_id": "linear_attention/runs/79032l1a",
     # },
