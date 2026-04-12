@@ -34,30 +34,132 @@ def build_mlp(
     )
 
 
-def clip_hidden_state_matrix_frobenius_norm(
+def clip_linear_attention_state_frobenius_norm(
     kv_state: torch.Tensor,
+    k_sum: torch.Tensor,
     max_frobenius_norm: float | None,
-) -> torch.Tensor:
-    """Clip batched hidden-state matrices so each Frobenius norm stays bounded."""
+    *,
+    target: str = "joint",
+    length_normalization: str = "none",
+    state_length: int | float | torch.Tensor | None = None,
+    min_length: int | float | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Clip batched linear-attention states using one shared scale per state."""
     if max_frobenius_norm is None or kv_state.numel() == 0:
-        return kv_state
+        return kv_state, k_sum
 
-    max_frobenius_norm = float(max_frobenius_norm)
     if max_frobenius_norm <= 0.0:
         raise ValueError("max_frobenius_norm must be > 0.")
+    if target not in {"joint", "kv_state", "k_sum", "kv_over_ksum_ratio"}:
+        raise ValueError(
+            "target must be one of {'joint', 'kv_state', 'k_sum', 'kv_over_ksum_ratio'}."
+        )
+    if length_normalization not in {"none", "sqrt_length", "length"}:
+        raise ValueError(
+            "length_normalization must be one of {'none', 'sqrt_length', 'length'}."
+        )
 
-    norm_input = (
-        kv_state
-        if kv_state.dtype in {torch.float32, torch.float64}
-        else kv_state.float()
-    )
-    frobenius_norm = norm_input.square().sum(dim=(-2, -1)).sqrt()
-    min_norm = torch.finfo(norm_input.dtype).tiny
-    scale = torch.clamp(
-        max_frobenius_norm / frobenius_norm.clamp_min(min_norm),
-        max=1.0,
-    )
-    return kv_state * scale.to(dtype=kv_state.dtype).unsqueeze(-1).unsqueeze(-1)
+    kv_norm_input = kv_state.float()
+    k_norm_input = k_sum.float()
+    kv_norm = kv_norm_input.square().sum(dim=(-2, -1)).sqrt()
+    k_norm = k_norm_input.square().sum(dim=-1).sqrt()
+    tiny = torch.finfo(kv_norm_input.dtype).tiny
+
+    state_length_tensor = None
+    if state_length is None or length_normalization == "none":
+        length_scale = 1.0
+    else:
+        state_length_tensor = torch.as_tensor(
+            state_length,
+            device=kv_norm_input.device,
+            dtype=kv_norm_input.dtype,
+        ).clamp_min(1.0)
+        length_scale = state_length_tensor
+        if length_normalization == "sqrt_length":
+            length_scale = length_scale.sqrt()
+
+    clip_limit = float(max_frobenius_norm) * length_scale
+    if min_length is not None and state_length is not None:
+        if state_length_tensor is None:
+            state_length_tensor = torch.as_tensor(
+                state_length,
+                device=kv_norm_input.device,
+                dtype=kv_norm_input.dtype,
+            )
+        clip_limit = torch.where(
+            state_length_tensor >= float(min_length),
+            torch.as_tensor(clip_limit, device=kv_norm_input.device, dtype=kv_norm_input.dtype),
+            torch.full_like(state_length_tensor, float("inf")),
+        )
+    if target == "joint":
+        state_norm = (kv_norm.square() + k_norm.square()).sqrt()
+        scale = torch.clamp(clip_limit / state_norm.clamp_min(tiny), max=1.0)
+        return (
+            kv_state * scale.to(kv_state.dtype).unsqueeze(-1).unsqueeze(-1),
+            k_sum * scale.to(k_sum.dtype).unsqueeze(-1),
+        )
+    if target == "kv_state":
+        scale = torch.clamp(clip_limit / kv_norm.clamp_min(tiny), max=1.0)
+        return kv_state * scale.to(kv_state.dtype).unsqueeze(-1).unsqueeze(-1), k_sum
+    if target == "k_sum":
+        scale = torch.clamp(clip_limit / k_norm.clamp_min(tiny), max=1.0)
+        return kv_state, k_sum * scale.to(k_sum.dtype).unsqueeze(-1)
+
+    ratio = kv_norm / k_norm.clamp_min(tiny)
+    scale = torch.clamp(clip_limit / ratio.clamp_min(tiny), max=1.0)
+    return kv_state * scale.to(kv_state.dtype).unsqueeze(-1).unsqueeze(-1), k_sum
+
+
+def clip_linear_attention_output_norm(
+    attn: torch.Tensor,
+    max_output_norm: float | None,
+    *,
+    length_normalization: str = "none",
+    state_length: int | float | torch.Tensor | None = None,
+    min_length: int | float | None = None,
+) -> torch.Tensor:
+    """Clip raw linear-attention outputs before output projection."""
+    if max_output_norm is None or attn.numel() == 0:
+        return attn
+
+    if max_output_norm <= 0.0:
+        raise ValueError("max_output_norm must be > 0.")
+    if length_normalization not in {"none", "sqrt_length", "length"}:
+        raise ValueError(
+            "length_normalization must be one of {'none', 'sqrt_length', 'length'}."
+        )
+
+    attn_norm_input = attn.float()
+    attn_norm = attn_norm_input.square().sum(dim=-1).sqrt()
+    tiny = torch.finfo(attn_norm_input.dtype).tiny
+    state_length_tensor = None
+    if state_length is None or length_normalization == "none":
+        length_scale = 1.0
+    else:
+        state_length_tensor = torch.as_tensor(
+            state_length,
+            device=attn_norm_input.device,
+            dtype=attn_norm_input.dtype,
+        ).clamp_min(1.0)
+        length_scale = state_length_tensor
+        if length_normalization == "sqrt_length":
+            length_scale = length_scale.sqrt()
+
+    clip_limit = float(max_output_norm) * length_scale
+    if min_length is not None and state_length is not None:
+        if state_length_tensor is None:
+            state_length_tensor = torch.as_tensor(
+                state_length,
+                device=attn_norm_input.device,
+                dtype=attn_norm_input.dtype,
+            )
+        clip_limit = torch.where(
+            state_length_tensor >= float(min_length),
+            torch.as_tensor(clip_limit, device=attn_norm_input.device, dtype=attn_norm_input.dtype),
+            torch.full_like(state_length_tensor, float("inf")),
+        )
+    scale = torch.clamp(clip_limit / attn_norm.clamp_min(tiny), max=1.0)
+    return attn * scale.to(attn.dtype).unsqueeze(-1)
 
 
 def compute_kv_state_4d(

@@ -959,14 +959,20 @@ class LinearAttentionBackbone(Backbone):
     def _unpack_recurrent_state(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         recurrent_state = state["recurrent_state"]
         if "k_sum" in state:
-            return {
+            unpacked = {
                 "kv_state": recurrent_state,
                 "k_sum": state["k_sum"],
             }
-        return {
+            if "state_length" in state:
+                unpacked["state_length"] = state["state_length"]
+            return unpacked
+        unpacked = {
             "kv_state": recurrent_state[..., :-1],
             "k_sum": recurrent_state[..., -1],
         }
+        if "state_length" in state:
+            unpacked["state_length"] = state["state_length"]
+        return unpacked
 
     def forward(
         self,
@@ -1019,6 +1025,7 @@ class LinearAttentionBackbone(Backbone):
                         state={
                             "recurrent_state": state["kv_state"],
                             "k_sum": state["k_sum"],
+                            "state_length": state["state_length"],
                         }
                     )
                     for state in layer_states

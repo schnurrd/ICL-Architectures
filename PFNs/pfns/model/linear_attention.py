@@ -5,7 +5,8 @@ import torch.nn.functional as F
 from pfns.model.attention_utils import (
     apply_state_to_query_5d,
     build_mlp,
-    clip_hidden_state_matrix_frobenius_norm,
+    clip_linear_attention_output_norm,
+    clip_linear_attention_state_frobenius_norm,
     compute_kv_state_5d,
 )
 
@@ -13,9 +14,16 @@ from pfns.model.attention_utils import (
 class LinearAttention(nn.Module):
     AUTO_CAUSAL_EVAL_CHUNK_SIZE = 2000
     HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES = {
-        "state_update",
-        "incontext_predict_only",
+        "pre_attention",
+        "pre_prediction",
     }
+    HIDDEN_STATE_FROBENIUS_NORM_TARGETS = {
+        "joint",
+        "kv_state",
+        "k_sum",
+        "kv_over_ksum_ratio",
+    }
+    LENGTH_NORMALIZATION_MODES = {"none", "sqrt_length", "length"}
 
     """
     Linear attention layer with optional attention between feature blocks,
@@ -42,7 +50,13 @@ class LinearAttention(nn.Module):
         feature_attention_softmax: bool = False,
         feature_dim: int | None = None,
         hidden_state_frobenius_norm_max: float | None = None,
-        hidden_state_frobenius_norm_apply: str = "state_update",
+        hidden_state_frobenius_norm_apply: str = "pre_prediction",
+        hidden_state_frobenius_norm_target: str = "joint",
+        hidden_state_frobenius_norm_length_normalization: str = "none",
+        hidden_state_frobenius_norm_min_length: int | None = None,
+        attention_output_norm_max: float | None = None,
+        attention_output_norm_length_normalization: str = "none",
+        attention_output_norm_min_length: int | None = None,
         eps: float = 1e-6,
     ):
         """Initialize projections, norms, and masking flags."""
@@ -88,6 +102,48 @@ class LinearAttention(nn.Module):
                 f"{hidden_state_frobenius_norm_apply!r}."
             )
         self.hidden_state_frobenius_norm_apply = hidden_state_frobenius_norm_apply
+        hidden_state_frobenius_norm_target = (
+            hidden_state_frobenius_norm_target.strip().lower().replace("-", "_")
+        )
+        if hidden_state_frobenius_norm_target not in self.HIDDEN_STATE_FROBENIUS_NORM_TARGETS:
+            raise ValueError(
+                "hidden_state_frobenius_norm_target must be one of "
+                f"{sorted(self.HIDDEN_STATE_FROBENIUS_NORM_TARGETS)}, got "
+                f"{hidden_state_frobenius_norm_target!r}."
+            )
+        self.hidden_state_frobenius_norm_target = hidden_state_frobenius_norm_target
+        hidden_state_frobenius_norm_length_normalization = (
+            hidden_state_frobenius_norm_length_normalization.strip().lower().replace("-", "_")
+        )
+        if (
+            hidden_state_frobenius_norm_length_normalization
+            not in self.LENGTH_NORMALIZATION_MODES
+        ):
+            raise ValueError(
+                "hidden_state_frobenius_norm_length_normalization must be one of "
+                f"{sorted(self.LENGTH_NORMALIZATION_MODES)}, got "
+                f"{hidden_state_frobenius_norm_length_normalization!r}."
+            )
+        self.hidden_state_frobenius_norm_length_normalization = (
+            hidden_state_frobenius_norm_length_normalization
+        )
+        self.hidden_state_frobenius_norm_min_length = hidden_state_frobenius_norm_min_length
+        if attention_output_norm_max is not None and attention_output_norm_max <= 0.0:
+            raise ValueError("attention_output_norm_max must be > 0.")
+        attention_output_norm_length_normalization = (
+            attention_output_norm_length_normalization.strip().lower().replace("-", "_")
+        )
+        if attention_output_norm_length_normalization not in self.LENGTH_NORMALIZATION_MODES:
+            raise ValueError(
+                "attention_output_norm_length_normalization must be one of "
+                f"{sorted(self.LENGTH_NORMALIZATION_MODES)}, got "
+                f"{attention_output_norm_length_normalization!r}."
+            )
+        self.attention_output_norm_max = attention_output_norm_max
+        self.attention_output_norm_length_normalization = (
+            attention_output_norm_length_normalization
+        )
+        self.attention_output_norm_min_length = attention_output_norm_min_length
 
         if attention_between_features:
             self.q_proj_feat = nn.Linear(d_model, d_model)
@@ -105,28 +161,61 @@ class LinearAttention(nn.Module):
         self.norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(num_norms)])
         self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
 
-    def _clip_hidden_state_matrix(self, kv_state: torch.Tensor) -> torch.Tensor:
-        return clip_hidden_state_matrix_frobenius_norm(
+    def _clip_hidden_state_for_attention(
+        self,
+        kv_state: torch.Tensor,
+        k_sum: torch.Tensor,
+        *,
+        state_length: int | float | torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.hidden_state_frobenius_norm_apply != "pre_attention":
+            return kv_state, k_sum
+        return clip_linear_attention_state_frobenius_norm(
             kv_state,
+            k_sum,
             self.hidden_state_frobenius_norm_max,
+            target=self.hidden_state_frobenius_norm_target,
+            length_normalization=self.hidden_state_frobenius_norm_length_normalization,
+            state_length=state_length,
+            min_length=self.hidden_state_frobenius_norm_min_length,
         )
 
-    def _clip_hidden_state_matrix_on_update(
+    def _clip_hidden_state_for_prediction(
         self,
         kv_state: torch.Tensor,
-    ) -> torch.Tensor:
-        if self.hidden_state_frobenius_norm_apply == "state_update":
-            return self._clip_hidden_state_matrix(kv_state)
-        return kv_state
+        k_sum: torch.Tensor,
+        *,
+        state_length: int | float | torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.hidden_state_frobenius_norm_apply not in {
+            "pre_attention",
+            "pre_prediction",
+        }:
+            return kv_state, k_sum
+        return clip_linear_attention_state_frobenius_norm(
+            kv_state,
+            k_sum,
+            self.hidden_state_frobenius_norm_max,
+            target=self.hidden_state_frobenius_norm_target,
+            length_normalization=self.hidden_state_frobenius_norm_length_normalization,
+            state_length=state_length,
+            min_length=self.hidden_state_frobenius_norm_min_length,
+        )
 
-    def _clip_hidden_state_matrix_before_prediction(
+    def _clip_attention_output(
         self,
-        kv_state: torch.Tensor,
+        attn: torch.Tensor,
+        *,
+        state_length: int | float | torch.Tensor | None = None,
     ) -> torch.Tensor:
-        if self.hidden_state_frobenius_norm_apply == "incontext_predict_only":
-            return self._clip_hidden_state_matrix(kv_state)
-        return kv_state
-
+        return clip_linear_attention_output_norm(
+            attn,
+            self.attention_output_norm_max,
+            length_normalization=self.attention_output_norm_length_normalization,
+            state_length=state_length,
+            min_length=self.attention_output_norm_min_length,
+        )
+        
     def _feature_map(self, x: torch.Tensor) -> torch.Tensor:
         """phi(x) = ELU(x) + 1."""
         return F.elu(x) + 1.0
@@ -170,6 +259,7 @@ class LinearAttention(nn.Module):
         *,
         kv_state_prefix: torch.Tensor | None = None,
         k_sum_prefix: torch.Tensor | None = None,
+        state_length_prefix: int | float | torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Process one causal chunk exactly, optionally seeded from a cached prefix state."""
         if q.shape[1] == 0:
@@ -182,15 +272,31 @@ class LinearAttention(nn.Module):
             kv_prefix = kv_prefix + kv_state_prefix.unsqueeze(1)
         if k_sum_prefix is not None:
             k_prefix = k_prefix + k_sum_prefix.unsqueeze(1)
-        kv_prefix = self._clip_hidden_state_matrix_on_update(kv_prefix)
+        prefix_length = float(torch.as_tensor(state_length_prefix).item()) if state_length_prefix is not None else 0.0
+        state_lengths = (
+            torch.arange(1, q.shape[1] + 1, device=q.device, dtype=q.dtype).view(1, -1, 1, 1)
+            + prefix_length
+        )
+        kv_prefix_for_attn, k_prefix_for_attn = self._clip_hidden_state_for_attention(
+            kv_prefix,
+            k_prefix,
+            state_length=state_lengths,
+        )
 
-        num = torch.einsum("bsnhf,bsnhfd->bsnhd", q, kv_prefix)
-        denom = torch.einsum("bsnhf,bsnhf->bsnh", q, k_prefix)
+        num = torch.einsum("bsnhf,bsnhfd->bsnhd", q, kv_prefix_for_attn)
+        denom = torch.einsum("bsnhf,bsnhf->bsnh", q, k_prefix_for_attn)
         attn = num / (denom.unsqueeze(-1) + self.eps)
+        attn = self._clip_attention_output(attn, state_length=state_lengths)
         return attn, kv_prefix[:, -1], k_prefix[:, -1]
 
     def _resolved_causal_chunk_size(self, seq_len: int) -> int | None:
         """Resolve the chunk size for causal recurrence."""
+        if (
+            self.causal_train_only
+            and self.hidden_state_frobenius_norm_max is not None
+            and self.hidden_state_frobenius_norm_apply == "pre_attention"
+        ):
+            return None
         if self.causal_chunk_size is not None:
             return self.causal_chunk_size
         if (
@@ -209,6 +315,7 @@ class LinearAttention(nn.Module):
         *,
         kv_state_prefix: torch.Tensor | None = None,
         k_sum_prefix: torch.Tensor | None = None,
+        state_length_prefix: int | float | torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Causal item attention with optional chunking over the sequence dimension."""
         if q.shape[1] == 0:
@@ -218,6 +325,7 @@ class LinearAttention(nn.Module):
                 v,
                 kv_state_prefix=kv_state_prefix,
                 k_sum_prefix=k_sum_prefix,
+                state_length_prefix=state_length_prefix,
             )
 
         chunk_size = self._resolved_causal_chunk_size(q.shape[1])
@@ -228,11 +336,13 @@ class LinearAttention(nn.Module):
                 v,
                 kv_state_prefix=kv_state_prefix,
                 k_sum_prefix=k_sum_prefix,
+                state_length_prefix=state_length_prefix,
             )
 
         outputs = []
         kv_state = kv_state_prefix
         k_sum = k_sum_prefix
+        state_length = int(torch.as_tensor(state_length_prefix).item()) if state_length_prefix is not None else 0
         for chunk_start in range(0, q.shape[1], chunk_size):
             chunk_end = min(chunk_start + chunk_size, q.shape[1])
             attn_chunk, kv_state, k_sum = self._causal_linear_attention_chunk(
@@ -241,8 +351,10 @@ class LinearAttention(nn.Module):
                 v[:, chunk_start:chunk_end],
                 kv_state_prefix=kv_state,
                 k_sum_prefix=k_sum,
+                state_length_prefix=state_length,
             )
             outputs.append(attn_chunk)
+            state_length += chunk_end - chunk_start
 
         return torch.cat(outputs, dim=1), kv_state, k_sum
 
@@ -297,13 +409,19 @@ class LinearAttention(nn.Module):
             return self._causal_linear_attention_items(q_train, k_train, v_train)
 
         kv_state_train, k_sum_train = compute_kv_state_5d(k_train, v_train)
-        kv_state_train = self._clip_hidden_state_matrix_on_update(kv_state_train)
-        attn_train = apply_state_to_query_5d(
-            q_train,
+        state_length = int(q_train.shape[1])
+        kv_state_train_for_attn, k_sum_train_for_attn = self._clip_hidden_state_for_attention(
             kv_state_train,
             k_sum_train,
+            state_length=state_length,
+        )
+        attn_train = apply_state_to_query_5d(
+            q_train,
+            kv_state_train_for_attn,
+            k_sum_train_for_attn,
             eps=self.eps,
         )
+        attn_train = self._clip_attention_output(attn_train, state_length=state_length)
         return attn_train, kv_state_train, k_sum_train
 
     def _apply_split_item_attention(
@@ -312,8 +430,6 @@ class LinearAttention(nn.Module):
         k_train: torch.Tensor,
         v_train: torch.Tensor,
         q_test: torch.Tensor,
-        k_test: torch.Tensor,
-        v_test: torch.Tensor,
     ) -> torch.Tensor:
         """Apply the split train/test attention path.
 
@@ -329,24 +445,19 @@ class LinearAttention(nn.Module):
             causal_train=use_causal_train_only,
         )
         q_test = self._feature_map(q_test)
-        prediction_kv_state = kv_state_train
-        prediction_k_sum = k_sum_train
-        if self.hidden_state_frobenius_norm_apply == "incontext_predict_only" and (
-            self.causal_train_only or not self.causal
-        ):
-            k_test = self._feature_map(k_test)
-            kv_state_test, k_sum_test = compute_kv_state_5d(k_test, v_test)
-            prediction_kv_state = prediction_kv_state + kv_state_test
-            prediction_k_sum = prediction_k_sum + k_sum_test
-            prediction_kv_state = self._clip_hidden_state_matrix_before_prediction(
-                prediction_kv_state
-            )
+        state_length = int(q_train.shape[1])
+        kv_state_train, k_sum_train = self._clip_hidden_state_for_prediction(
+            kv_state_train,
+            k_sum_train,
+            state_length=state_length,
+        )
         attn_test = apply_state_to_query_5d(
             q_test,
-            prediction_kv_state,
-            prediction_k_sum,
+            kv_state_train,
+            k_sum_train,
             eps=self.eps,
         )
+        attn_test = self._clip_attention_output(attn_test, state_length=state_length)
         return torch.cat([attn_train, attn_test], dim=1)
 
     def _apply_item_output_and_mlp(
@@ -393,15 +504,11 @@ class LinearAttention(nn.Module):
         k_train = k_all[:, :single_eval_pos]
         v_train = v_all[:, :single_eval_pos]
         q_test = q_all[:, single_eval_pos:]
-        k_test = k_all[:, single_eval_pos:]
-        v_test = v_all[:, single_eval_pos:]
         attn_all = self._apply_split_item_attention(
             q_train,
             k_train,
             v_train,
             q_test,
-            k_test,
-            v_test,
         )
         return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
 
@@ -426,10 +533,24 @@ class LinearAttention(nn.Module):
             q = self._feature_map(q)
             k = self._feature_map(k)
             kv_state, k_sum = compute_kv_state_5d(k, v)
-            kv_state = self._clip_hidden_state_matrix_on_update(kv_state)
-            attn = apply_state_to_query_5d(q, kv_state, k_sum, eps=self.eps)
+            kv_state_for_attn, k_sum_for_attn = self._clip_hidden_state_for_attention(
+                kv_state,
+                k_sum,
+                state_length=int(q.shape[1]),
+            )
+            attn = apply_state_to_query_5d(
+                q,
+                kv_state_for_attn,
+                k_sum_for_attn,
+                eps=self.eps,
+            )
+            attn = self._clip_attention_output(attn, state_length=int(q.shape[1]))
         x = self._apply_item_output_and_mlp(x, attn, norm_idx)
-        return x, {"kv_state": kv_state, "k_sum": k_sum}
+        return x, {
+            "kv_state": kv_state,
+            "k_sum": k_sum,
+            "state_length": torch.tensor(int(q.shape[1]), device=q.device),
+        }
 
     def incontext_predict(
         self,
@@ -448,6 +569,7 @@ class LinearAttention(nn.Module):
         q, k, v = self._project_item_qkv(x, norm_idx)
         kv_state = state["kv_state"]
         k_sum = state["k_sum"]
+        state_length = state.get("state_length")
         q = self._feature_map(q)
         if self.causal and self.training:
             k = self._feature_map(k)
@@ -457,23 +579,21 @@ class LinearAttention(nn.Module):
                 v,
                 kv_state_prefix=kv_state,
                 k_sum_prefix=k_sum,
+                state_length_prefix=state_length,
             )
         else:
-            if self.hidden_state_frobenius_norm_apply == "incontext_predict_only" and (
-                self.causal_train_only or not self.causal
-            ):
-                k = self._feature_map(k)
-                kv_state_test, k_sum_test = compute_kv_state_5d(k, v)
-                kv_state = self._clip_hidden_state_matrix_before_prediction(
-                    kv_state + kv_state_test
-                )
-                k_sum = k_sum + k_sum_test
+            kv_state, k_sum = self._clip_hidden_state_for_prediction(
+                kv_state,
+                k_sum,
+                state_length=state_length,
+            )
             attn = apply_state_to_query_5d(
                 q,
                 kv_state,
                 k_sum,
                 eps=self.eps,
             )
+            attn = self._clip_attention_output(attn, state_length=state_length)
         return self._apply_item_output_and_mlp(x, attn, norm_idx)
 
     def empty_trainset_representation_cache(self) -> None:
