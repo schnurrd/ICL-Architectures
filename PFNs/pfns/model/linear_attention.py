@@ -53,10 +53,8 @@ class LinearAttention(nn.Module):
         hidden_state_frobenius_norm_apply: str = "pre_prediction",
         hidden_state_frobenius_norm_target: str = "joint",
         hidden_state_frobenius_norm_length_normalization: str = "none",
-        hidden_state_frobenius_norm_min_length: int | None = None,
         attention_output_norm_max: float | None = None,
         attention_output_norm_length_normalization: str = "none",
-        attention_output_norm_min_length: int | None = None,
         eps: float = 1e-6,
     ):
         """Initialize projections, norms, and masking flags."""
@@ -127,7 +125,6 @@ class LinearAttention(nn.Module):
         self.hidden_state_frobenius_norm_length_normalization = (
             hidden_state_frobenius_norm_length_normalization
         )
-        self.hidden_state_frobenius_norm_min_length = hidden_state_frobenius_norm_min_length
         if attention_output_norm_max is not None and attention_output_norm_max <= 0.0:
             raise ValueError("attention_output_norm_max must be > 0.")
         attention_output_norm_length_normalization = (
@@ -143,7 +140,6 @@ class LinearAttention(nn.Module):
         self.attention_output_norm_length_normalization = (
             attention_output_norm_length_normalization
         )
-        self.attention_output_norm_min_length = attention_output_norm_min_length
 
         if attention_between_features:
             self.q_proj_feat = nn.Linear(d_model, d_model)
@@ -177,7 +173,6 @@ class LinearAttention(nn.Module):
             target=self.hidden_state_frobenius_norm_target,
             length_normalization=self.hidden_state_frobenius_norm_length_normalization,
             state_length=state_length,
-            min_length=self.hidden_state_frobenius_norm_min_length,
         )
 
     def _clip_hidden_state_for_prediction(
@@ -199,7 +194,6 @@ class LinearAttention(nn.Module):
             target=self.hidden_state_frobenius_norm_target,
             length_normalization=self.hidden_state_frobenius_norm_length_normalization,
             state_length=state_length,
-            min_length=self.hidden_state_frobenius_norm_min_length,
         )
 
     def _clip_attention_output(
@@ -213,7 +207,6 @@ class LinearAttention(nn.Module):
             self.attention_output_norm_max,
             length_normalization=self.attention_output_norm_length_normalization,
             state_length=state_length,
-            min_length=self.attention_output_norm_min_length,
         )
         
     def _feature_map(self, x: torch.Tensor) -> torch.Tensor:
