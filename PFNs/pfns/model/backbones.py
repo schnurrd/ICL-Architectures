@@ -1022,11 +1022,18 @@ class LinearAttentionBackbone(Backbone):
             "cache_params": SimpleNamespace(
                 layers=[
                     SimpleNamespace(
-                        state={
-                            "recurrent_state": state["kv_state"],
-                            "k_sum": state["k_sum"],
-                            "state_length": state["state_length"],
-                        }
+                        state=(
+                            {
+                                "recurrent_state": state["kv_state"],
+                                "k_sum": state["k_sum"],
+                                "state_length": state["state_length"],
+                            }
+                            if "state_length" in state
+                            else {
+                                "recurrent_state": state["kv_state"],
+                                "k_sum": state["k_sum"],
+                            }
+                        )
                     )
                     for state in layer_states
                 ]
