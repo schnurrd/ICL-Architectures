@@ -776,20 +776,29 @@ def _maybe_patch_mesanet_with_stateless_recurrent(
         beta = beta.reshape(cache_batch, flat_len, self.num_heads)
         g = g.reshape(cache_batch, flat_len, self.num_heads)
 
-        decay = g.exp().unsqueeze(-1).unsqueeze(-1)
+        decay = g.exp()
         k_beta = k * beta.unsqueeze(-1)
-        h_kk = prev_h_kk.unsqueeze(1) * decay + k_beta.unsqueeze(-1) * k.unsqueeze(-2)
-        h_kv = prev_h_kv.unsqueeze(1) * decay + k_beta.unsqueeze(-1) * v.unsqueeze(-2)
+
+        def _apply_h_kk(vec: torch.Tensor) -> torch.Tensor:
+            prev_term = torch.einsum("blhd,bhde->blhe", vec, prev_h_kk)
+            rank1_term = (vec * k_beta).sum(dim=-1, keepdim=True) * k
+            return prev_term * decay.unsqueeze(-1) + rank1_term
+
+        def _apply_h_kv(vec: torch.Tensor) -> torch.Tensor:
+            prev_term = torch.einsum("blhd,bhdv->blhv", vec, prev_h_kv)
+            rank1_term = (vec * k_beta).sum(dim=-1, keepdim=True) * v
+            return prev_term * decay.unsqueeze(-1) + rank1_term
 
         lamb = lamb.view(1, 1, self.num_heads, self.head_k_dim)
-        diag_h = torch.diagonal(h_kk, dim1=-2, dim2=-1)
+        diag_prev_h = torch.diagonal(prev_h_kk, dim1=-2, dim2=-1).unsqueeze(1)
+        diag_h = diag_prev_h * decay.unsqueeze(-1) + k_beta * k
         x = q / (diag_h + lamb)
-        residual = q - (x.unsqueeze(-1) * h_kk).sum(-2) - lamb * x
+        residual = q - _apply_h_kk(x) - lamb * x
         direction = residual.clone()
         delta_old = (residual * residual).sum(-1)
 
         for _ in range(self.max_cg_step_decoding):
-            q_cg = (direction.unsqueeze(-1) * h_kk).sum(-2) + lamb * direction
+            q_cg = _apply_h_kk(direction) + lamb * direction
             alpha = delta_old / ((direction * q_cg).sum(-1) + 1e-5)
             x = x + alpha.unsqueeze(-1) * direction
             residual = residual - alpha.unsqueeze(-1) * q_cg
@@ -798,7 +807,7 @@ def _maybe_patch_mesanet_with_stateless_recurrent(
             direction = residual + beta_cg.unsqueeze(-1) * direction
             delta_old = delta_new
 
-        o = (x.unsqueeze(-1) * h_kv).sum(-2)
+        o = _apply_h_kv(x)
         o = o.reshape(batch_size, 1, self.num_heads, self.head_v_dim).to(dtype)
 
         if self.use_output_gate:
