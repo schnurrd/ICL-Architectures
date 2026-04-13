@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import re
 from typing import Any, Literal, Mapping
 
@@ -11,12 +12,14 @@ import pandas as pd
 import torch
 from tqdm.auto import tqdm
 
+import pfns.experiments.model_benchmarks.linear_attention_inference_clipping as la_clip
 from pfns.experiments.model_benchmarks.benchmark_batch_generators import (
     _set_data_generation_seed,
     create_seq_len_batch_generator,
 )
 from pfns.experiments.model_benchmarks.model_registry import (
     get_autocast_models_from_registry,
+    get_models_from_names,
 )
 from pfns.experiments.model_benchmarks.models import load_models_for_benchmark
 from pfns.experiments.model_benchmarks.plotting import (
@@ -25,6 +28,7 @@ from pfns.experiments.model_benchmarks.plotting import (
     plot_grouped_runs_with_distribution,
     resolve_display_name_map,
 )
+from pfns.model.attention_utils import apply_state_to_query_5d, compute_kv_state_5d
 from pfns.tensor_tree_utils import iter_named_tensors
 from pfns.training_utils import (
     categorical_mask_to_inds,
@@ -42,6 +46,15 @@ _METRIC_DISPLAY_NAMES = {
     "spectral_norm": "Spectral Norm",
     "effective_rank": "Effective Rank",
     "stable_rank": "Stable Rank",
+    "q_dot_k_sum": "q^T k_sum",
+    "kv_state_norm": "KV-State Norm",
+    "k_sum_norm": "K-Sum Norm",
+    "joint_hidden_state_norm": "Joint Hidden-State Norm",
+    "kv_over_ksum_ratio": "KV-over-K-Sum Ratio",
+    "output_norm": "Output Norm",
+    "sigma1_share": "Sigma1 / Sum(Sigma)",
+    "sigma1_over_sigma2": "Sigma1 / Sigma2",
+    "update_alignment": "Update Alignment",
 }
 
 
@@ -157,6 +170,10 @@ def _is_matrix_state(name: str) -> bool:
     return "recurrent_state" in lowered or "kv_state" in lowered
 
 
+def _is_k_sum_state(name: str) -> bool:
+    return "k_sum" in name.lower()
+
+
 def _head_matrices(tensor: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
     arr = tensor.detach().float() # can be (1, 1, num_heads, h_dim, h_dim) or (num_heads, h_dim, h_dim)
     if arr.ndim < 2:
@@ -167,6 +184,29 @@ def _head_matrices(tensor: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
     if arr.ndim > 3:
         arr = arr.reshape(arr.shape[0], -1, arr.shape[-2], arr.shape[-1]).squeeze(1)
     return [(head_idx, arr[head_idx]) for head_idx in range(int(arr.shape[0]))]
+
+
+def _head_vectors(tensor: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
+    arr = tensor.detach().float()  # can be (1, 1, num_heads, h_dim) or (num_heads, h_dim)
+    if arr.ndim == 0:
+        return []
+    if arr.ndim == 1:
+        return [(0, arr)]
+    arr = arr.movedim(arr.ndim - 2, 0)
+    if arr.ndim > 2:
+        arr = arr.reshape(arr.shape[0], -1, arr.shape[-1]).squeeze(1)
+    return [(head_idx, arr[head_idx]) for head_idx in range(int(arr.shape[0]))]
+
+
+def _k_sum_norms_by_layer(state: Any) -> dict[tuple[int, int], float]:
+    out: dict[tuple[int, int], float] = {}
+    for name, tensor in _iter_hidden_tensors(state):
+        if not _is_k_sum_state(name):
+            continue
+        layer_idx = _layer_idx(name)
+        for head_idx, vector in _head_vectors(tensor):
+            out[(int(layer_idx), int(head_idx))] = float(torch.linalg.vector_norm(vector).item())
+    return out
 
 
 def _effective_rank_from_singular_values(singular_values: torch.Tensor) -> float:
@@ -219,10 +259,31 @@ def run_hidden_state_tracking(
     models_to_compare: dict[str, Any],
     device: str,
     tensor_name_patterns: list[str] | tuple[str, ...] | None = None,
+    clip_experiments: Mapping[str, Mapping[str, Any] | None] | None = None,
+    default_reference_seqlen: int = 1000,
 ) -> pd.DataFrame:
     cfg = experiment if isinstance(experiment, HiddenStateTrackingConfig) else HiddenStateTrackingConfig.from_mapping(experiment)
     _set_data_generation_seed(cfg.data_generation_seed)
-    models, autocast_models = _device_runtime(models_to_compare, device)
+    if clip_experiments is None:
+        models, autocast_models = _device_runtime(models_to_compare, device)
+    else:
+        inference_clip_runtime = la_clip.build_inference_clip_model_bundle(
+            models_to_compare,
+            device=device,
+            experiment={
+                "name": cfg.name,
+                "num_classes": cfg.num_classes,
+                "num_features": cfg.num_features,
+                "num_test_samples": cfg.num_test_samples,
+                "num_repetitions": cfg.num_repetitions,
+                "data_generation_seed": cfg.data_generation_seed,
+                "seqlen_list": list(cfg.seqlen_list),
+            },
+            clip_experiments=clip_experiments,
+            default_reference_seqlen=int(default_reference_seqlen),
+        )
+        models = inference_clip_runtime.models
+        autocast_models = inference_clip_runtime.autocast_models
     rows: list[dict[str, Any]] = []
 
     batch_generator = create_seq_len_batch_generator(
@@ -265,11 +326,25 @@ def run_hidden_state_tracking(
                         break
                     raise
                 extra = {"rep": int(rep), "seqlen": int(seqlen)}
+                k_sum_norms = _k_sum_norms_by_layer(state)
                 for name, tensor in _iter_hidden_tensors(state, tensor_name_patterns):
                     if not _is_matrix_state(name):
                         continue
                     for head_idx, matrix in _head_matrices(tensor):
                         metrics = _matrix_metrics(matrix)
+                        layer_idx = _layer_idx(name)
+                        kv_state_norm = float(metrics["frobenius_norm"])
+                        k_sum_norm = k_sum_norms.get((int(layer_idx), int(head_idx)), float("nan"))
+                        joint_hidden_state_norm = (
+                            float((kv_state_norm**2 + k_sum_norm**2) ** 0.5)
+                            if np.isfinite(k_sum_norm)
+                            else float("nan")
+                        )
+                        kv_over_ksum_ratio = (
+                            float(kv_state_norm / max(k_sum_norm, 1e-12))
+                            if np.isfinite(k_sum_norm)
+                            else float("nan")
+                        )
                         rows.append(
                             {
                                 "model": model_name,
@@ -278,7 +353,11 @@ def run_hidden_state_tracking(
                                 "shape": str(metrics["shape"]),
                                 "abs_max": float(metrics["abs_max"]),
                                 **{k: float(metrics[k]) for k in _MATRIX_METRICS},
-                                "layer_idx": _layer_idx(name),
+                                "kv_state_norm": kv_state_norm,
+                                "k_sum_norm": k_sum_norm,
+                                "joint_hidden_state_norm": joint_hidden_state_norm,
+                                "kv_over_ksum_ratio": kv_over_ksum_ratio,
+                                "layer_idx": layer_idx,
                                 "head_idx": int(head_idx),
                             }
                         )
@@ -415,6 +494,10 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
         ("layer_idx", -1),
         ("head_idx", -1),
         *((key, float("nan")) for key in _MATRIX_METRICS),
+        ("kv_state_norm", float("nan")),
+        ("k_sum_norm", float("nan")),
+        ("joint_hidden_state_norm", float("nan")),
+        ("kv_over_ksum_ratio", float("nan")),
     ):
         if col not in df.columns:
             df[col] = default
@@ -423,6 +506,7 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             "model", "tensor_name", "layer_idx", "head_idx", "seqlen",
             "abs_max_mean",
             "frobenius_norm_mean", "spectral_norm_mean", "effective_rank_mean", "stable_rank_mean", "n",
+            "kv_state_norm_mean", "k_sum_norm_mean", "joint_hidden_state_norm_mean", "kv_over_ksum_ratio_mean",
         ]
         return pd.DataFrame(columns=cols)
     group_cols = [c for c in ("model", "tensor_name", "layer_idx", "head_idx", "seqlen") if c in df.columns]
@@ -434,6 +518,10 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             spectral_norm_mean=("spectral_norm", "mean"),
             effective_rank_mean=("effective_rank", "mean"),
             stable_rank_mean=("stable_rank", "mean"),
+            kv_state_norm_mean=("kv_state_norm", "mean"),
+            k_sum_norm_mean=("k_sum_norm", "mean"),
+            joint_hidden_state_norm_mean=("joint_hidden_state_norm", "mean"),
+            kv_over_ksum_ratio_mean=("kv_over_ksum_ratio", "mean"),
             n=("rep", "nunique"),
         )
         .reset_index()
@@ -483,7 +571,7 @@ def plot_hidden_state_metric(
         figsize=(6.4 * len(panel_models), 5),
         sharey=split,
     )
-    palette = list(mcolors.TABLEAU_COLORS.values())
+    palette = [mcolors.to_hex(color) for color in plt.get_cmap("tab20").colors]
     for idx, model_name in enumerate(panel_models):
         ax = axes[idx if split else 0]
         sub = plot_df if not split else plot_df[plot_df["model"] == model_name]
@@ -544,6 +632,7 @@ def _plot_recurrent_metric(
     model: str | None = None,
     training_context_length: int | None = None,
     log_x: bool = True,
+    log_y: bool = False,
     plot_mode: Literal["individual_runs", "violin"] = "individual_runs",
     run_alpha: float = 0.35,
     distribution_alpha: float | None = 0.3,
@@ -562,7 +651,6 @@ def _plot_recurrent_metric(
     display_name_map = resolve_display_name_map(plot_df)
     metric_label = _METRIC_DISPLAY_NAMES.get(metric, metric.replace("_", " ").title())
     split = model is None and len(model_values) > 1
-    palette = list(mcolors.TABLEAU_COLORS.values())
     for group_value, group_df in plot_df.groupby(group_key, observed=True):
         panel_models = model_values if split else [model_values[0]]
         fig, axes = create_panel_figure(
@@ -570,6 +658,26 @@ def _plot_recurrent_metric(
             figsize=(6.4 * len(panel_models), 5),
             sharey=split,
         )
+        visible_axes: list[Any] = []
+        shared_x_left: float | None = None
+        shared_x_right: float | None = None
+        shared_y_limits: tuple[float, float] | None = None
+        if plot_mode == "violin":
+            finite_group_values = group_df[metric].to_numpy(dtype=float, copy=False)
+            finite_group_values = finite_group_values[np.isfinite(finite_group_values)]
+            if log_y:
+                finite_group_values = finite_group_values[finite_group_values > 0.0]
+            if finite_group_values.size > 0:
+                y_min = float(finite_group_values.min())
+                y_max = float(finite_group_values.max())
+                if log_y:
+                    if y_max > y_min:
+                        shared_y_limits = (max(y_min / 1.2, 1e-12), y_max * 1.2)
+                    else:
+                        shared_y_limits = (max(y_min / 1.2, 1e-12), y_max * 1.2)
+                else:
+                    pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
+                    shared_y_limits = (y_min - pad, y_max + pad)
         for idx, model_name in enumerate(panel_models):
             ax = axes[idx if split else 0]
             sub = group_df if not split else group_df[group_df["model"] == model_name]
@@ -584,8 +692,11 @@ def _plot_recurrent_metric(
             if agg.empty:
                 ax.set_visible(False)
                 continue
+            visible_axes.append(ax)
             line_values = agg[line_key].dropna().unique().tolist()
-            colors = {value: palette[i % len(palette)] for i, value in enumerate(line_values)}
+            tab20 = [mcolors.to_hex(color) for color in plt.get_cmap("tab20").colors]
+            tab20_reordered = [tab20[idx] for idx in [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]]
+            colors = {value: tab20_reordered[i % len(tab20_reordered)] for i, value in enumerate(line_values)}
             for line_idx, (line_value, line_df) in enumerate(agg.groupby(line_key, observed=True)):
                 value = int(line_value)
                 label = f"{line_name}[{value}]" if value >= 0 else f"{line_name}[unknown]"
@@ -617,24 +728,13 @@ def _plot_recurrent_metric(
                     distribution_zorder=2,
                     summary_zorder=3,
                 )
-            if plot_mode == "violin" and violin_values:
-                all_violin_values = np.concatenate(
-                    [values.astype(float, copy=False) for values in violin_values if values.size > 0]
-                )
-                finite_violin_values = all_violin_values[np.isfinite(all_violin_values)]
-                if finite_violin_values.size > 0:
-                    y_min = float(finite_violin_values.min())
-                    y_max = float(finite_violin_values.max())
-                    pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
-                    ax.set_ylim(y_min - pad, y_max + pad)
             if log_x:
                 ax.set_xscale("log")
-            if training_context_length is not None:
-                apply_pretraining_split_background(
-                    ax,
-                    boundary=float(training_context_length),
-                    boundary_label="Train context",
-                )
+            if log_y:
+                ax.set_yscale("log")
+            curr_x_left, curr_x_right = ax.get_xlim()
+            shared_x_left = curr_x_left if shared_x_left is None else min(shared_x_left, curr_x_left)
+            shared_x_right = curr_x_right if shared_x_right is None else max(shared_x_right, curr_x_right)
             ax.set_xlabel("Sequence Length")
             ax.set_ylabel(metric_label if idx == 0 else "")
             ax.set_title(
@@ -644,6 +744,17 @@ def _plot_recurrent_metric(
             )
             ax.grid(True, alpha=0.3)
             ax.legend(loc="best", fontsize=8, ncol=2)
+        for ax in visible_axes:
+            if shared_x_left is not None and shared_x_right is not None:
+                ax.set_xlim(shared_x_left, shared_x_right)
+            if shared_y_limits is not None:
+                ax.set_ylim(*shared_y_limits)
+            if training_context_length is not None:
+                apply_pretraining_split_background(
+                    ax,
+                    boundary=float(training_context_length),
+                    boundary_label="Train context",
+                )
         if split:
             fig.suptitle(f"{title_prefix} | {group_name}[{int(group_value)}]")
             fig.tight_layout(rect=(0, 0, 1, 0.95))
@@ -659,6 +770,7 @@ def plot_recurrent_metric_per_head(
     model: str | None = None,
     training_context_length: int | None = None,
     log_x: bool = True,
+    log_y: bool = False,
     plot_mode: Literal["individual_runs", "violin"] = "individual_runs",
     run_alpha: float = 0.35,
     distribution_alpha: float | None = 0.3,
@@ -674,8 +786,10 @@ def plot_recurrent_metric_per_head(
     plot_df = df.copy()
     if model is not None:
         plot_df = plot_df[plot_df["model"] == model]
+    metric_values = pd.to_numeric(plot_df[metric], errors="coerce")
+    plot_df = plot_df[np.isfinite(metric_values)]
     if plot_df.empty:
-        print(f"No matching rows to plot for: {title_prefix}")
+        print(f"No finite rows to plot for: {title_prefix}")
         return
     _plot_recurrent_metric(
         plot_df,
@@ -688,11 +802,102 @@ def plot_recurrent_metric_per_head(
         model=model,
         training_context_length=training_context_length,
         log_x=log_x,
+        log_y=log_y,
         plot_mode=plot_mode,
         run_alpha=run_alpha,
         distribution_alpha=distribution_alpha,
         distribution_width_frac=distribution_width_frac,
     )
+
+
+def plot_avg_metric_per_layer_per_head(
+    df: pd.DataFrame,
+    *,
+    metric: str,
+    title_prefix: str,
+    model: str | None = None,
+) -> None:
+    if df.empty:
+        print(f"No rows to plot for: {title_prefix}")
+        return
+    missing = sorted({"model", "layer_idx", "head_idx", metric} - set(df.columns))
+    if missing:
+        print(f"Skipping {title_prefix}: missing columns {missing}")
+        return
+
+    plot_df = df.copy()
+    if model is not None:
+        plot_df = plot_df[plot_df["model"] == model]
+    plot_df[metric] = pd.to_numeric(plot_df[metric], errors="coerce")
+    plot_df["layer_idx"] = pd.to_numeric(plot_df["layer_idx"], errors="coerce")
+    plot_df["head_idx"] = pd.to_numeric(plot_df["head_idx"], errors="coerce")
+    plot_df = plot_df[
+        np.isfinite(plot_df[metric])
+        & np.isfinite(plot_df["layer_idx"])
+        & np.isfinite(plot_df["head_idx"])
+    ].copy()
+    plot_df = plot_df[(plot_df["layer_idx"] >= 0) & (plot_df["head_idx"] >= 0)].copy()
+    if plot_df.empty:
+        print(f"Skipping {title_prefix}: no finite rows.")
+        return
+
+    avg_metric_df = (
+        plot_df.groupby(["model", "head_idx", "layer_idx"], observed=True)[metric]
+        .mean()
+        .reset_index()
+        .sort_values(["model", "head_idx", "layer_idx"])
+    )
+    if avg_metric_df.empty:
+        print(f"Skipping {title_prefix}: no rows after aggregation.")
+        return
+
+    model_values = sorted(avg_metric_df["model"].astype(str).unique().tolist())
+    display_name_map = resolve_display_name_map(avg_metric_df)
+    split = model is None and len(model_values) > 1
+    panel_models = model_values if split else [model_values[0]]
+    fig, axes = create_panel_figure(
+        panel_count=len(panel_models),
+        figsize=(6.2 * len(panel_models), 4.8),
+        sharey=split,
+    )
+    head_values = sorted(avg_metric_df["head_idx"].astype(int).unique().tolist())
+    tab20 = [mcolors.to_hex(color) for color in plt.get_cmap("tab20").colors]
+    tab20_reordered = [tab20[idx] for idx in [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]]
+    colors = {head_idx: tab20_reordered[i % len(tab20_reordered)] for i, head_idx in enumerate(head_values)}
+    metric_label = _METRIC_DISPLAY_NAMES.get(metric, metric.replace("_", " ").title())
+    ylabel = f"Average {metric_label} Across Seq Len"
+
+    for idx, model_name in enumerate(panel_models):
+        ax = axes[idx if split else 0]
+        sub = avg_metric_df if not split else avg_metric_df[avg_metric_df["model"] == model_name]
+        if sub.empty:
+            ax.set_visible(False)
+            continue
+        for head_idx, head_df in sub.groupby("head_idx", observed=True):
+            ax.plot(
+                head_df["layer_idx"].astype(int),
+                head_df[metric],
+                marker="o",
+                linewidth=1.7,
+                color=colors[int(head_idx)],
+                label=f"head[{int(head_idx)}]",
+            )
+        ax.set_xlabel("Layer")
+        ax.set_ylabel(ylabel if idx == 0 else "")
+        ax.set_title(
+            display_name_map.get(str(model_name), str(model_name))
+            if split
+            else title_prefix
+        )
+        ax.set_xticks(sorted(sub["layer_idx"].astype(int).unique().tolist()))
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best", fontsize=8)
+
+    if split:
+        fig.suptitle(f"{title_prefix} (averaged across sequence lengths)")
+        fig.tight_layout(rect=(0, 0, 1, 0.97))
+    else:
+        fig.tight_layout()
 
 
 def plot_recurrent_metric_per_layer(
@@ -705,6 +910,7 @@ def plot_recurrent_metric_per_layer(
     head_indices: list[int] | tuple[int, ...] | None = None,
     training_context_length: int | None = None,
     log_x: bool = True,
+    log_y: bool = False,
     plot_mode: Literal["individual_runs", "violin"] = "individual_runs",
     run_alpha: float = 0.35,
     distribution_alpha: float | None = 0.3,
@@ -724,8 +930,10 @@ def plot_recurrent_metric_per_layer(
         plot_df = plot_df[plot_df["layer_idx"].isin({int(v) for v in layer_indices})]
     if head_indices is not None:
         plot_df = plot_df[plot_df["head_idx"].isin({int(v) for v in head_indices})]
+    metric_values = pd.to_numeric(plot_df[metric], errors="coerce")
+    plot_df = plot_df[np.isfinite(metric_values)]
     if plot_df.empty:
-        print(f"No matching rows to plot for: {title_prefix}")
+        print(f"No finite rows to plot for: {title_prefix}")
         return
     _plot_recurrent_metric(
         plot_df,
@@ -738,8 +946,367 @@ def plot_recurrent_metric_per_layer(
         model=model,
         training_context_length=training_context_length,
         log_x=log_x,
+        log_y=log_y,
         plot_mode=plot_mode,
         run_alpha=run_alpha,
         distribution_alpha=distribution_alpha,
         distribution_width_frac=distribution_width_frac,
     )
+
+
+def _select_position_diagnostic_layers(num_layers: int, max_layers: int = 3) -> list[int]:
+    if num_layers <= max_layers:
+        return list(range(num_layers))
+    candidate_indices = [0, num_layers // 2, num_layers - 1]
+    return sorted(set(int(idx) for idx in candidate_indices))
+
+
+def _svd_diagnostic_positions(seq_len: int) -> list[int]:
+    positions: set[int] = set()
+    positions.update(range(1, min(seq_len, 64) + 1))
+    positions.update(range(80, min(seq_len, 512) + 1, 16))
+    positions.update(range(640, min(seq_len, 4_096) + 1, 128))
+    positions.update(range(4_608, seq_len + 1, 512))
+    positions.add(int(seq_len))
+    return sorted(pos for pos in positions if 1 <= pos <= seq_len)
+
+
+def _finite_mean_std(values: torch.Tensor) -> tuple[float, float]:
+    values = values.reshape(-1).float()
+    finite = values[torch.isfinite(values)]
+    if finite.numel() == 0:
+        return float("nan"), float("nan")
+    return float(finite.mean().item()), float(finite.std(unbiased=False).item())
+
+
+def _metric_summary(values_by_name: Mapping[str, torch.Tensor]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for name, values in values_by_name.items():
+        mean, std = _finite_mean_std(values)
+        out[name] = mean
+        out[f"{name}_std"] = std
+    return out
+
+
+def _nan_metric_summary(metric_names: tuple[str, ...]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for name in metric_names:
+        out[name] = float("nan")
+        out[f"{name}_std"] = float("nan")
+    return out
+
+
+def _svd_metric_summary(running_kv_state: torch.Tensor) -> dict[str, float]:
+    singular_values = torch.linalg.svdvals(running_kv_state)
+    sigma1 = singular_values[..., 0]
+    sigma_share = sigma1 / singular_values.sum(dim=-1).clamp_min(1e-12)
+    if singular_values.shape[-1] > 1:
+        sigma_ratio = sigma1 / singular_values[..., 1].clamp_min(1e-12)
+    else:
+        sigma_ratio = torch.full_like(sigma1, float("nan"))
+    return _metric_summary({"sigma1_share": sigma_share, "sigma1_over_sigma2": sigma_ratio})
+
+
+def _prepare_position_metric_attention(
+    layer: Any,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+    if layer.causal or layer.causal_train_only:
+        attn, _, _ = layer._causal_linear_attention_items(q, k, v)
+        return attn, None, None, None
+
+    final_kv_state, final_k_sum = compute_kv_state_5d(k, v)
+    state_length = int(q.shape[1])
+    reference_ratio = layer._runtime_kv_over_ksum_reference(k, v)
+    final_kv_state, final_k_sum = layer._clip_hidden_state_for_prediction(
+        final_kv_state,
+        final_k_sum,
+        state_length=state_length,
+        reference_ratio=reference_ratio,
+    )
+    attn = apply_state_to_query_5d(q, final_kv_state, final_k_sum, eps=layer.eps)
+    attn = layer._clip_attention_output(attn, state_length=state_length)
+    final_k_sum = final_k_sum.float()
+    final_kv_norm = torch.linalg.vector_norm(final_kv_state.float().flatten(start_dim=-2), dim=-1)
+    final_k_sum_norm = torch.linalg.vector_norm(final_k_sum, dim=-1)
+    return attn, final_k_sum, final_kv_norm, final_k_sum_norm
+
+
+def _track_linear_attention_layer_position_metrics(
+    *,
+    model_name: str,
+    layer_idx: int,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    attn: torch.Tensor,
+    svd_positions: set[int],
+    final_k_sum: torch.Tensor | None,
+    final_kv_norm: torch.Tensor | None,
+    final_k_sum_norm: torch.Tensor | None,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    running_kv_state = torch.zeros(
+        (k.shape[0], k.shape[2], k.shape[3], k.shape[4], v.shape[4]),
+        device=k.device,
+        dtype=torch.float32,
+    )
+    running_k_sum = torch.zeros(
+        (k.shape[0], k.shape[2], k.shape[3], k.shape[4]),
+        device=k.device,
+        dtype=torch.float32,
+    )
+    for token_idx in range(int(q.shape[1])):
+        position = int(token_idx + 1)
+        q_t = q[:, token_idx].float()
+        k_t = k[:, token_idx].float()
+        v_t = v[:, token_idx].float()
+        delta_kv_t = torch.einsum("bnhf,bnhd->bnhfd", k_t, v_t)
+        prev_flat = running_kv_state.flatten(start_dim=-2)
+        delta_flat = delta_kv_t.flatten(start_dim=-2)
+        prev_norm = torch.linalg.vector_norm(prev_flat, dim=-1)
+        delta_norm = torch.linalg.vector_norm(delta_flat, dim=-1)
+        align_vals = (delta_flat * prev_flat).sum(dim=-1) / (delta_norm * prev_norm).clamp_min(1e-12)
+        align_vals = torch.where(
+            prev_norm > 0.0,
+            align_vals,
+            torch.full_like(align_vals, float("nan")),
+        )
+
+        running_kv_state = running_kv_state + delta_kv_t
+        running_k_sum = running_k_sum + k_t
+        if final_k_sum is None or final_kv_norm is None or final_k_sum_norm is None:
+            q_vals = torch.einsum("bnhf,bnhf->bnh", q_t, running_k_sum)
+            k_vals = torch.linalg.vector_norm(running_k_sum, dim=-1)
+            kv_vals = torch.linalg.vector_norm(running_kv_state.flatten(start_dim=-2), dim=-1)
+        else:
+            q_vals = torch.einsum("bnhf,bnhf->bnh", q_t, final_k_sum)
+            k_vals = final_k_sum_norm
+            kv_vals = final_kv_norm
+
+        stats = _metric_summary(
+            {
+                "q_dot_k_sum": q_vals,
+                "k_sum_norm": k_vals,
+                "kv_state_norm": kv_vals,
+                "kv_over_ksum_ratio": kv_vals / k_vals.clamp_min(1e-12),
+                "output_norm": torch.linalg.vector_norm(attn[:, token_idx].float(), dim=-1),
+                "update_alignment": align_vals,
+            }
+        )
+        if position in svd_positions:
+            stats.update(_svd_metric_summary(running_kv_state))
+        else:
+            stats.update(_nan_metric_summary(("sigma1_share", "sigma1_over_sigma2")))
+        rows.append({"model": model_name, "layer_idx": int(layer_idx), "position": position, **stats})
+    return rows
+
+
+def _track_custom_linear_attention_position_metrics(
+    model: Any,
+    embedded: torch.Tensor,
+    *,
+    model_name: str,
+) -> pd.DataFrame:
+    backbone = getattr(model, "transformer_layers", None)
+    if backbone is None or backbone.__class__.__name__ != "LinearAttentionBackbone":
+        raise TypeError(f"{model_name} is not backed by the custom LinearAttentionBackbone.")
+
+    out = embedded
+    rows: list[dict[str, object]] = []
+    svd_diagnostic_layers = set(_select_position_diagnostic_layers(len(backbone.layers)))
+    for layer_idx, layer in enumerate(backbone.layers):
+        norm_idx = 0
+        x_layer, norm_idx = layer._apply_feature_attention_block(out, norm_idx)
+        q_raw, k_raw, v = layer._project_item_qkv(x_layer, norm_idx)
+        q = layer._feature_map(q_raw)
+        k = layer._feature_map(k_raw)
+        attn, final_k_sum, final_kv_norm, final_k_sum_norm = _prepare_position_metric_attention(layer, q, k, v)
+        rows.extend(
+            _track_linear_attention_layer_position_metrics(
+                model_name=model_name,
+                layer_idx=int(layer_idx),
+                q=q,
+                k=k,
+                v=v,
+                attn=attn,
+                svd_positions=set(_svd_diagnostic_positions(int(q.shape[1]))) if layer_idx in svd_diagnostic_layers else set(),
+                final_k_sum=final_k_sum,
+                final_kv_norm=final_kv_norm,
+                final_k_sum_norm=final_k_sum_norm,
+            )
+        )
+        out = layer._apply_item_output_and_mlp(x_layer, attn, norm_idx)
+        del x_layer, q_raw, k_raw, q, k, v, attn
+        if final_k_sum is not None:
+            del final_k_sum, final_kv_norm, final_k_sum_norm
+    return pd.DataFrame(rows)
+
+
+def run_position_metric_tracking(
+    *,
+    experiment: Mapping[str, Any],
+    device: str,
+    training_context_length: int,
+    partial_cache_path: Path | None = None,
+) -> pd.DataFrame:
+    model_configs = get_models_from_names(list(experiment["model_names"]))
+    inference_clip_runtime = la_clip.build_inference_clip_model_bundle(
+        model_configs,
+        device=device,
+        experiment=dict(experiment),
+        clip_experiments=experiment.get("inference_clip_experiments"),
+        default_reference_seqlen=int(training_context_length),
+    )
+
+    rows: list[dict[str, object]] = []
+    completed_pairs: set[tuple[str, int]] = set()
+    if partial_cache_path is not None and partial_cache_path.exists():
+        partial_df = pd.read_pickle(partial_cache_path)
+        if not partial_df.empty:
+            rows.extend(partial_df.to_dict(orient="records"))
+            completed_pairs = {
+                (str(model_name), int(rep_idx))
+                for model_name, rep_idx in partial_df[["model", "rep"]].drop_duplicates().itertuples(index=False, name=None)
+            }
+            print(f"Loaded partial position_metric_df from cache: {partial_cache_path}")
+
+    seqlen = int(experiment["seqlen"])
+    for rep in tqdm(range(int(experiment["num_repetitions"])), desc="Position-metric tracking"):
+        base_batch = la_clip.materialize_seq_len_batch(
+            experiment=dict(experiment),
+            seqlen=seqlen,
+            rep=rep,
+            device=device,
+        )
+        for raw_name, model in inference_clip_runtime.models.items():
+            model_name = str(raw_name)
+            if (model_name, int(rep)) in completed_pairs:
+                print(f"Skipping cached position metrics for model={model_name}, rep={rep}")
+                continue
+            embedded = la_clip.run_model_autocast(
+                lambda: la_clip.prepare_embedded_train_input(model, base_batch, seqlen=seqlen, device=device),
+                model_name=model_name,
+                autocast_models=inference_clip_runtime.autocast_models,
+                device=device,
+            )
+            metric_df = la_clip.run_model_autocast(
+                lambda: _track_custom_linear_attention_position_metrics(model, embedded, model_name=model_name),
+                model_name=model_name,
+                autocast_models=inference_clip_runtime.autocast_models,
+                device=device,
+            )
+            metric_df["rep"] = int(rep)
+            metric_df["seqlen"] = seqlen
+            rows.extend(metric_df.to_dict(orient="records"))
+            completed_pairs.add((model_name, int(rep)))
+            if partial_cache_path is not None:
+                pd.DataFrame(rows).to_pickle(partial_cache_path)
+            del embedded, metric_df
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+    return pd.DataFrame(rows)
+
+
+def auto_select_position_metric_layers(
+    layer_values: list[int] | tuple[int, ...],
+    *,
+    max_layers: int = 3,
+) -> list[int]:
+    layer_values = sorted(int(v) for v in layer_values)
+    if len(layer_values) <= max_layers:
+        return layer_values
+    candidate_indices = [0, len(layer_values) // 2, len(layer_values) - 1]
+    return [layer_values[idx] for idx in sorted(set(candidate_indices))]
+
+
+def plot_position_metric_per_layer(
+    df: pd.DataFrame,
+    *,
+    metric: str,
+    title_prefix: str,
+    model_order: list[str] | tuple[str, ...] | None = None,
+    layer_indices: list[int] | tuple[int, ...] | None = None,
+    log_x: bool = True,
+    y_scale: Literal["linear", "log", "symlog"] = "linear",
+    y_eps: float = 1e-12,
+    show_std_shading: bool = False,
+    symlog_linthresh: float = 1e-3,
+    seqlen: int | None = None,
+) -> None:
+    if df.empty:
+        print(f"No rows to plot for: {title_prefix}")
+        return
+    metric_std = f"{metric}_std"
+    missing = sorted({"model", "layer_idx", "position", metric, metric_std} - set(df.columns))
+    if missing:
+        print(f"Skipping {title_prefix}: missing columns {missing}")
+        return
+
+    plot_df = df.copy()
+    plot_df[metric] = pd.to_numeric(plot_df[metric], errors="coerce")
+    plot_df[metric_std] = pd.to_numeric(plot_df[metric_std], errors="coerce").fillna(0.0)
+    plot_df["layer_idx"] = pd.to_numeric(plot_df["layer_idx"], errors="coerce")
+    plot_df["position"] = pd.to_numeric(plot_df["position"], errors="coerce")
+    plot_df = plot_df[
+        np.isfinite(plot_df[metric])
+        & np.isfinite(plot_df["layer_idx"])
+        & np.isfinite(plot_df["position"])
+    ].copy()
+    if layer_indices is not None:
+        plot_df = plot_df[plot_df["layer_idx"].isin({int(v) for v in layer_indices})]
+    if plot_df.empty:
+        print(f"No finite rows to plot for: {title_prefix}")
+        return
+
+    panel_models = (
+        sorted(plot_df["model"].astype(str).unique().tolist())
+        if model_order is None
+        else [str(model_name) for model_name in model_order]
+    )
+    display_name_map = resolve_display_name_map(plot_df)
+    fig, axes = create_panel_figure(panel_count=len(panel_models), figsize=(7 * len(panel_models), 4), sharey=False)
+    for idx, model_name in enumerate(panel_models):
+        ax = axes[idx]
+        sub = plot_df[plot_df["model"].astype(str) == str(model_name)].copy()
+        if sub.empty:
+            ax.set_visible(False)
+            continue
+        summary = (
+            sub.groupby(["layer_idx", "position"], observed=True)
+            .agg(mean=(metric, "mean"), std=(metric_std, "mean"))
+            .reset_index()
+            .sort_values(["layer_idx", "position"])
+        )
+        for layer_idx, layer_df in summary.groupby("layer_idx", observed=True):
+            x = layer_df["position"].to_numpy(dtype=float, copy=False)
+            y = layer_df["mean"].to_numpy(dtype=float, copy=False)
+            y_std = layer_df["std"].to_numpy(dtype=float, copy=False)
+            if y_scale == "log":
+                y_line = np.clip(y, y_eps, None)
+                y_lo = np.clip(y - y_std, y_eps, None)
+                y_hi = np.clip(y + y_std, y_eps, None)
+            else:
+                y_line = y
+                y_lo = y - y_std
+                y_hi = y + y_std
+            ax.plot(x, y_line, label=f"L{int(layer_idx)}", linewidth=1.5)
+            if show_std_shading:
+                ax.fill_between(x, y_lo, y_hi, alpha=0.15)
+        if log_x:
+            ax.set_xscale("log")
+        if y_scale == "log":
+            ax.set_yscale("log")
+        elif y_scale == "symlog":
+            ax.set_yscale("symlog", linthresh=symlog_linthresh)
+        ax.set_title(display_name_map.get(str(model_name), str(model_name)), loc="center", x=0.5, pad=12)
+        ax.set_xlabel("Token position")
+        ax.set_ylabel(_METRIC_DISPLAY_NAMES.get(metric, metric.replace("_", " ").title()))
+        ax.grid(True, alpha=0.3, which="both")
+        ax.legend(loc="best", fontsize=8)
+
+    title = f"{title_prefix} (seqlen={int(seqlen)})" if seqlen is not None else title_prefix
+    fig.suptitle(title)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))

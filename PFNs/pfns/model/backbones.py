@@ -791,7 +791,7 @@ class FLABackbone(Backbone):
             and use_custom_recurrent
             and isinstance(self.fla, MesaNetModel)
         ):
-            mesa_chunk_size = 16 if self.training else 64
+            mesa_chunk_size = 32 if self.training else 64
             if seq_len > mesa_chunk_size:
                 effective_cache_chunk_size = mesa_chunk_size
 
@@ -974,6 +974,10 @@ class LinearAttentionBackbone(Backbone):
             }
             if "state_length" in state:
                 unpacked["state_length"] = state["state_length"]
+            if "kv_over_ksum_reference" in state:
+                unpacked["kv_over_ksum_reference"] = state["kv_over_ksum_reference"]
+            if "state_normalized" in state:
+                unpacked["state_normalized"] = state["state_normalized"]
             return unpacked
         unpacked = {
             "kv_state": recurrent_state[..., :-1],
@@ -981,6 +985,10 @@ class LinearAttentionBackbone(Backbone):
         }
         if "state_length" in state:
             unpacked["state_length"] = state["state_length"]
+        if "kv_over_ksum_reference" in state:
+            unpacked["kv_over_ksum_reference"] = state["kv_over_ksum_reference"]
+        if "state_normalized" in state:
+            unpacked["state_normalized"] = state["state_normalized"]
         return unpacked
 
     def forward(
@@ -1036,11 +1044,15 @@ class LinearAttentionBackbone(Backbone):
                                 "recurrent_state": state["kv_state"],
                                 "k_sum": state["k_sum"],
                                 "state_length": state["state_length"],
+                                "kv_over_ksum_reference": state.get("kv_over_ksum_reference"),
+                                "state_normalized": state.get("state_normalized", False),
                             }
                             if "state_length" in state
                             else {
                                 "recurrent_state": state["kv_state"],
                                 "k_sum": state["k_sum"],
+                                "kv_over_ksum_reference": state.get("kv_over_ksum_reference"),
+                                "state_normalized": state.get("state_normalized", False),
                             }
                         )
                     )

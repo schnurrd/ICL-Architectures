@@ -42,6 +42,7 @@ def clip_linear_attention_state_frobenius_norm(
     target: str = "joint",
     length_normalization: str = "none",
     state_length: int | float | torch.Tensor | None = None,
+    constant_after_length: int | float | torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Clip batched linear-attention states using one shared scale per state."""
     if max_frobenius_norm is None or kv_state.numel() == 0:
@@ -57,6 +58,8 @@ def clip_linear_attention_state_frobenius_norm(
         raise ValueError(
             "length_normalization must be one of {'none', 'sqrt_length', 'length'}."
         )
+    if constant_after_length is not None and float(constant_after_length) <= 0.0:
+        raise ValueError("constant_after_length must be > 0.")
 
     kv_norm_input = kv_state.float()
     k_norm_input = k_sum.float()
@@ -72,6 +75,16 @@ def clip_linear_attention_state_frobenius_norm(
             device=kv_norm_input.device,
             dtype=kv_norm_input.dtype,
         ).clamp_min(1.0)
+        if constant_after_length is not None:
+            constant_after_length_tensor = torch.as_tensor(
+                constant_after_length,
+                device=kv_norm_input.device,
+                dtype=kv_norm_input.dtype,
+            ).clamp_min(1.0)
+            state_length_tensor = torch.minimum(
+                state_length_tensor,
+                constant_after_length_tensor,
+            )
         length_scale = state_length_tensor
         if length_normalization == "sqrt_length":
             length_scale = length_scale.sqrt()
@@ -132,6 +145,32 @@ def clip_linear_attention_output_norm(
     clip_limit = float(max_output_norm) * length_scale
     scale = torch.clamp(clip_limit / attn_norm.clamp_min(tiny), max=1.0)
     return attn * scale.to(attn.dtype).unsqueeze(-1)
+
+
+def match_linear_attention_state_kv_over_ksum_ratio(
+    kv_state: torch.Tensor,
+    k_sum: torch.Tensor,
+    reference_ratio: float | torch.Tensor | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Rescale KV so ||KV||_F / ||K_sum||_2 matches a reference ratio."""
+    if reference_ratio is None or kv_state.numel() == 0:
+        return kv_state, k_sum
+
+    kv_norm_input = kv_state.float()
+    k_norm_input = k_sum.float()
+    kv_norm = kv_norm_input.square().sum(dim=(-2, -1)).sqrt()
+    k_norm = k_norm_input.square().sum(dim=-1).sqrt()
+    tiny = torch.finfo(kv_norm_input.dtype).tiny
+    ratio = kv_norm / k_norm.clamp_min(tiny)
+    reference_ratio_tensor = torch.as_tensor(
+        reference_ratio,
+        device=kv_norm_input.device,
+        dtype=kv_norm_input.dtype,
+    )
+    if torch.any(reference_ratio_tensor <= 0):
+        raise ValueError("reference_ratio must be > 0.")
+    scale = reference_ratio_tensor / ratio.clamp_min(tiny)
+    return kv_state * scale.to(kv_state.dtype).unsqueeze(-1).unsqueeze(-1), k_sum
 
 
 def compute_kv_state_4d(
