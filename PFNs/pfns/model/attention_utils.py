@@ -34,6 +34,32 @@ def build_mlp(
     )
 
 
+def clip_hidden_state_matrix_frobenius_norm(
+    kv_state: torch.Tensor,
+    max_frobenius_norm: float | None,
+) -> torch.Tensor:
+    """Clip batched hidden-state matrices so each Frobenius norm stays bounded."""
+    if max_frobenius_norm is None or kv_state.numel() == 0:
+        return kv_state
+
+    max_frobenius_norm = float(max_frobenius_norm)
+    if max_frobenius_norm <= 0.0:
+        raise ValueError("max_frobenius_norm must be > 0.")
+
+    norm_input = (
+        kv_state
+        if kv_state.dtype in {torch.float32, torch.float64}
+        else kv_state.float()
+    )
+    frobenius_norm = norm_input.square().sum(dim=(-2, -1)).sqrt()
+    min_norm = torch.finfo(norm_input.dtype).tiny
+    scale = torch.clamp(
+        max_frobenius_norm / frobenius_norm.clamp_min(min_norm),
+        max=1.0,
+    )
+    return kv_state * scale.to(dtype=kv_state.dtype).unsqueeze(-1).unsqueeze(-1)
+
+
 def compute_kv_state_4d(
     k: torch.Tensor,
     v: torch.Tensor,

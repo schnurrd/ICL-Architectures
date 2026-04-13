@@ -19,6 +19,7 @@ from pfns.prior_defaults import (
     build_prior_for_task,
     resolve_training_setup_for_task,
 )
+from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
 from pfns.model.backbones import LinearAttentionBackboneConfig
 from pfns.model.mode_normalization import resolve_sequence_mode
 from pfns.model.criterions import CrossEntropyConfig
@@ -47,8 +48,14 @@ TRAINING_PROFILES = {
     "low": {
         "lr": 3.0e-5,
         "steps_per_epoch": 500,
-        "epochs": 400,
-        "aggregate_k_gradients": 2,
+        "epochs": 100,
+        "aggregate_k_gradients": 1,
+    },
+    "mid": {
+        "lr": 3.0e-5,
+        "steps_per_epoch": 1000,
+        "epochs": 100,
+        "aggregate_k_gradients": 1,
     },
     "high": {
         "lr": 3.0e-5,
@@ -99,6 +106,7 @@ def get_config(
     config_index: int = 0,
     training_setup: str = "high",
     task_variant: str = "tabular_prior",
+    nlayers: int | None = None,
     batch_size: int | None = None,
     max_seq_len: int | None = None,
     batch_size_stages: list[tuple[int, int]] | tuple[tuple[int, int], ...] | None = None,
@@ -109,6 +117,9 @@ def get_config(
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = None,
+    use_categorical_features: bool = True,
+    hidden_state_frobenius_norm_max: float | None = None,
+    hidden_state_frobenius_norm_apply: str = "state_update",
     sequence_mode: str | None = None,
     **kwargs,
 ) -> MainConfig:
@@ -146,6 +157,9 @@ def get_config(
         resolve_eval_pos_split_pct(eval_pos_split_pct)
     )
     resolved_seq_len_stages = seq_len_stages
+    resolved_nlayers = 15 if nlayers is None else int(nlayers)
+    if resolved_nlayers <= 0:
+        raise ValueError(f"nlayers must be >= 1, got {resolved_nlayers}.")
     resolved_epochs = profile.get("epochs", 200)
     resolved_steps_per_epoch = profile["steps_per_epoch"]
     resolved_aggregate_k = (
@@ -162,6 +176,13 @@ def get_config(
         max_num_classes=MAX_NUM_CLASSES,
         max_num_features=MAX_NUM_FEATURES,
     )
+    if not use_categorical_features and isinstance(prior, TabPFNPriorConfig):
+        prior = TabPFNPriorConfig(
+            **{
+                **prior.__dict__,
+                "return_categorical_mask": False,
+            }
+        )
 
     batch_shape = BatchShapeSamplerConfig(
         batch_size=resolved_batch_size,
@@ -186,7 +207,7 @@ def get_config(
         encoder=EncoderConfig(
             variable_num_features_normalization=True,
             nan_handling=True,
-            use_categorical_encoder=True,
+            use_categorical_encoder=use_categorical_features,
             train_normalization=True,
         ),
         y_encoder=EncoderConfig(
@@ -196,7 +217,7 @@ def get_config(
         ),
         emsize=320,
         backbone=LinearAttentionBackboneConfig(
-            nlayers=15,
+            nlayers=resolved_nlayers,
             nhead=4,
             mlp_hidden_dim=320 * 2,
             dropout=0.0,
@@ -204,6 +225,8 @@ def get_config(
             layer_kwargs={
                 "feature_attention_softmax": False,
                 **layer_kwargs,
+                "hidden_state_frobenius_norm_max": hidden_state_frobenius_norm_max,
+                "hidden_state_frobenius_norm_apply": hidden_state_frobenius_norm_apply,
                 #"feature_dim": 64,
             },
         ),
@@ -240,6 +263,10 @@ def get_config(
         wandb_extras.append("interleaved")
     if resolved_sequence_mode is not None:
         wandb_extras.append(resolved_sequence_mode)
+    if nlayers is not None:
+        wandb_extras.append(f"layers{resolved_nlayers}")
+    if not use_categorical_features:
+        wandb_extras.append("nocat")
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (

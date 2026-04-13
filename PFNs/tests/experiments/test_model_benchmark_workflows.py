@@ -21,6 +21,7 @@ def test_build_seq_len_run_metadata():
         "num_classes": 5,
         "num_test_samples": 100,
         "num_repetitions": 7,
+        "only_numerical_features": True,
         "data_generation_seed": 42,
     }
     metadata = build_seq_len_run_metadata(experiment=experiment, device="cpu")
@@ -30,6 +31,7 @@ def test_build_seq_len_run_metadata():
         "num_classes": 5,
         "number_of_test_samples": 100,
         "number_of_repetitions": 7,
+        "only_numerical_features": True,
         "device": "cpu",
         "data_generation_seed": 42,
     }

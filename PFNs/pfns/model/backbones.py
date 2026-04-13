@@ -23,6 +23,7 @@ from fla.models import KDAConfig, KDAModel
 from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 from fla.models import LinearAttentionConfig, LinearAttentionModel
+from fla.models import MesaNetConfig, MesaNetModel
 
 from pfns import base_config
 from pfns.model.fla_mimetic_init import MimeticInitMode, apply_mimetic_fla_init
@@ -31,6 +32,7 @@ from pfns.model.fla_patches import (
     _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
     _maybe_patch_gated_deltanet_with_stateless_recurrent,
+    _maybe_patch_mesanet_with_stateless_recurrent,
     _maybe_patch_mamba2_with_stateless_recurrent,
     _maybe_patch_linear_attn_with_stateless_recurrent,
     _maybe_patch_shortconv_forward_pytorch,
@@ -55,6 +57,7 @@ FLA_MODEL_REGISTRY = {
     "deltanet": (DeltaNetConfig, DeltaNetModel),
     "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
     "linear_attn": (LinearAttentionConfig, LinearAttentionModel),
+    "mesanet": (MesaNetConfig, MesaNetModel),
 }
 
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
@@ -598,7 +601,7 @@ class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
     model_type: tp.Literal[
-        "gla", "mamba2", "kda", "deltanet", "gated_deltanet", "linear_attn"
+        "gla", "mamba2", "kda", "deltanet", "gated_deltanet", "linear_attn", "mesanet"
     ] = "linear_attn"
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
@@ -704,6 +707,7 @@ class FLABackbone(Backbone):
         GatedDeltaNetModel,
         Mamba2Model,
         LinearAttentionModel,
+        MesaNetModel,
     )
 
     def __init__(
@@ -944,6 +948,17 @@ class FLABackbone(Backbone):
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
     ) -> tuple[torch.Tensor, tp.Any | None]:
+        if (
+            cache_params is not None
+            and isinstance(self.fla, MesaNetModel)
+            and not use_custom_recurrent
+        ):
+            return self._run_mesanet_with_initial_cache(
+                x,
+                cache_params=cache_params,
+                return_cache=return_cache,
+            )
+
         use_cache = return_cache or (
             cache_params is not None and isinstance(self.fla, Mamba2Model)
         )
@@ -981,6 +996,34 @@ class FLABackbone(Backbone):
                 raise RuntimeError("FLA model output does not contain past_key_values or cache_params.")
         return last_hidden_state, cache_params
 
+    def _run_mesanet_with_initial_cache(
+        self,
+        x: torch.Tensor,
+        *,
+        cache_params: tp.Any,
+        return_cache: bool,
+    ) -> tuple[torch.Tensor, tp.Any | None]:
+        if x.numel() == 0:
+            return x, (self._copy_cache(cache_params) if return_cache else None)
+
+        current_cache = self._copy_cache(cache_params)
+        outputs = []
+        for t in range(x.size(1)):
+            step_x = x[:, t : t + 1, :].transpose(0, 1).contiguous()
+            out = self.fla(
+                inputs_embeds=step_x,
+                past_key_values=current_cache,
+                use_cache=True,
+            )
+            if not hasattr(out, "last_hidden_state") or not hasattr(out, "past_key_values"):
+                raise RuntimeError(
+                    "MesaNet output does not contain last_hidden_state and past_key_values."
+                )
+            outputs.append(out.last_hidden_state.transpose(0, 1))
+            current_cache = out.past_key_values
+
+        return torch.cat(outputs, dim=1), (current_cache if return_cache else None)
+
     def _patch_contexts(
         self, 
         use_custom_recurrent: bool,
@@ -1005,6 +1048,7 @@ class FLABackbone(Backbone):
             (KDAModel, _maybe_patch_kda_with_stateless_recurrent),
             (DeltaNetModel, _maybe_patch_deltanet_with_stateless_recurrent),
             (GatedDeltaNetModel, _maybe_patch_gated_deltanet_with_stateless_recurrent),
+            (MesaNetModel, _maybe_patch_mesanet_with_stateless_recurrent),
             (Mamba2Model, _maybe_patch_mamba2_with_stateless_recurrent),
             (LinearAttentionModel, _maybe_patch_linear_attn_with_stateless_recurrent),
         )
@@ -1051,12 +1095,21 @@ class FLABackbone(Backbone):
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
 
-        if self.cache_chunk_size is None or seq_len <= self.cache_chunk_size:
+        effective_cache_chunk_size = self.cache_chunk_size
+        if (
+            effective_cache_chunk_size is None
+            and use_custom_recurrent
+            and isinstance(self.fla, MesaNetModel)
+            and seq_len > 128
+        ):
+            effective_cache_chunk_size = 128
+
+        if effective_cache_chunk_size is None or seq_len <= effective_cache_chunk_size:
             return _run_parallel_chunk(test_x)
 
         outputs = []
-        for chunk_start in range(0, seq_len, self.cache_chunk_size):
-            chunk_end = min(chunk_start + self.cache_chunk_size, seq_len)
+        for chunk_start in range(0, seq_len, effective_cache_chunk_size):
+            chunk_end = min(chunk_start + effective_cache_chunk_size, seq_len)
             chunk_x = test_x[:, chunk_start:chunk_end]
             outputs.append(_run_parallel_chunk(chunk_x))
         return torch.cat(outputs, dim=1)

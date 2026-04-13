@@ -680,6 +680,144 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
 
 
 @contextmanager
+def _maybe_patch_mesanet_with_stateless_recurrent(
+    enabled: bool,
+):
+    if not enabled:
+        yield
+        return
+    import fla.layers.mesa_net as mesa_net_layer
+
+    original_forward = mesa_net_layer.MesaNet.forward
+
+    @torch.compiler.disable
+    def _stateless_forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        past_key_values=None,
+        use_cache: bool | None = False,
+        output_attentions: bool | None = False,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, tp.Any]:
+        del use_cache
+        assert output_attentions in (None, False), (
+            "stateless MesaNet patch does not support output_attentions=True."
+        )
+        assert attention_mask is None, (
+            "stateless MesaNet patch does not support attention_mask."
+        )
+        assert not kwargs, (
+            f"Unsupported extra args for stateless MesaNet patch: {sorted(kwargs)}"
+        )
+
+        last_state = mesa_net_layer.get_layer_cache(self, past_key_values)
+        if last_state is None:
+            return original_forward(
+                self,
+                hidden_states=hidden_states,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=False,
+                output_attentions=output_attentions,
+            )
+
+        batch_size, seq_len, _ = hidden_states.shape
+        assert seq_len == 1, (
+            "stateless MesaNet patch only supports decode-like seq_len=1."
+        )
+
+        conv_state_q, conv_state_k = last_state["conv_state"]
+        q, _ = self.q_conv1d(
+            x=self.q_proj(hidden_states),
+            cache=conv_state_q,
+            output_final_state=False,
+            cu_seqlens=None,
+        )
+        k, _ = self.k_conv1d(
+            x=self.k_proj(hidden_states),
+            cache=conv_state_k,
+            output_final_state=False,
+            cu_seqlens=None,
+        )
+        v = self.v_proj(hidden_states)
+
+        q = q.reshape(batch_size, seq_len, self.num_heads, self.head_k_dim)
+        k = k.reshape(batch_size, seq_len, self.num_heads, self.head_k_dim)
+        v = v.reshape(batch_size, seq_len, self.num_heads, self.head_v_dim)
+        beta = self.b_proj(hidden_states).float().sigmoid()
+        g = F.logsigmoid(self.a_proj(hidden_states).float())
+        lamb = F.softplus(self.lambda_params.float()) + self.lambda_lower_bound
+        lamb = lamb.reshape(self.num_heads, self.head_k_dim)
+
+        prev_h_kk, prev_h_kv = last_state["recurrent_state"]
+        assert prev_h_kk is not None and prev_h_kv is not None, (
+            "stateless MesaNet patch requires recurrent_state in the cache."
+        )
+
+        dtype = q.dtype
+        q = mesa_net_layer.l2_norm(q).float().squeeze(1)
+        k = mesa_net_layer.l2_norm(k).float().squeeze(1)
+        v = v.float().squeeze(1)
+        beta = beta.float().squeeze(1)
+        g = g.float().squeeze(1)
+        prev_h_kk = prev_h_kk.float()
+        prev_h_kv = prev_h_kv.float()
+
+        cache_batch = prev_h_kk.shape[0]
+        assert batch_size % cache_batch == 0, (
+            "MesaNet stateless patch expects batch_size to be divisible by cache batch size."
+        )
+        flat_len = batch_size // cache_batch
+
+        q = q.reshape(cache_batch, flat_len, self.num_heads, self.head_k_dim)
+        k = k.reshape(cache_batch, flat_len, self.num_heads, self.head_k_dim)
+        v = v.reshape(cache_batch, flat_len, self.num_heads, self.head_v_dim)
+        beta = beta.reshape(cache_batch, flat_len, self.num_heads)
+        g = g.reshape(cache_batch, flat_len, self.num_heads)
+
+        decay = g.exp().unsqueeze(-1).unsqueeze(-1)
+        k_beta = k * beta.unsqueeze(-1)
+        h_kk = prev_h_kk.unsqueeze(1) * decay + k_beta.unsqueeze(-1) * k.unsqueeze(-2)
+        h_kv = prev_h_kv.unsqueeze(1) * decay + k_beta.unsqueeze(-1) * v.unsqueeze(-2)
+
+        lamb = lamb.view(1, 1, self.num_heads, self.head_k_dim)
+        diag_h = torch.diagonal(h_kk, dim1=-2, dim2=-1)
+        x = q / (diag_h + lamb)
+        residual = q - (x.unsqueeze(-1) * h_kk).sum(-2) - lamb * x
+        direction = residual.clone()
+        delta_old = (residual * residual).sum(-1)
+
+        for _ in range(self.max_cg_step_decoding):
+            q_cg = (direction.unsqueeze(-1) * h_kk).sum(-2) + lamb * direction
+            alpha = delta_old / ((direction * q_cg).sum(-1) + 1e-5)
+            x = x + alpha.unsqueeze(-1) * direction
+            residual = residual - alpha.unsqueeze(-1) * q_cg
+            delta_new = (residual * residual).sum(-1)
+            beta_cg = delta_new / (delta_old + 1e-5)
+            direction = residual + beta_cg.unsqueeze(-1) * direction
+            delta_old = delta_new
+
+        o = (x.unsqueeze(-1) * h_kv).sum(-2)
+        o = o.reshape(batch_size, 1, self.num_heads, self.head_v_dim).to(dtype)
+
+        if self.use_output_gate:
+            gate = self.g_proj(hidden_states).reshape(batch_size, seq_len, self.num_heads, self.head_v_dim)
+            o = self.o_norm(o, gate)
+        else:
+            o = self.o_norm(o)
+        o = o.reshape(batch_size, seq_len, self.value_dim)
+        o = self.o_proj(o)
+        return o, None, past_key_values
+
+    mesa_net_layer.MesaNet.forward = _stateless_forward
+    try:
+        yield
+    finally:
+        mesa_net_layer.MesaNet.forward = original_forward
+
+
+@contextmanager
 def _maybe_patch_mamba2_with_stateless_recurrent(
     enabled: bool,
 ):

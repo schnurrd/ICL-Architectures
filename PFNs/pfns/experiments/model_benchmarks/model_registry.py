@@ -240,6 +240,13 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+MESANET_MODELS: dict[str, dict[str, Any]] = {
+    "MesaNet_Int_MT": {
+        "display_name": "MesaNet Interleaved Multi Target",
+        "wandb_run_id": "fla_models/runs/bd9rtoku",
+    }
+}
+
 
 # LINEAR_ATTENTION_DEBUG_MODELS: dict[str, dict[str, Any]] = {
 #     "Linear_Attention_Non_Causal_Cat_Norm_Full_Norm": {
@@ -828,6 +835,61 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     # },
 }
 
+CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
+    # "Linear_Attention_Causal_Comb_ST_small_1l": {
+    #     "wandb_run_id": "linear_attention/runs/cz4o41ap",
+    # },
+    # "Linear_Attention_Causal_Comb_ST_small_2l": {
+    #     "wandb_run_id": "linear_attention/runs/q95rrgsf",
+    # },
+    # "Linear_Attention_Causal_Comb_ST_small_4l": {
+    #     "wandb_run_id": "linear_attention/runs/0xl6owda",
+    # },
+    # "Linear_Attention_Causal_Comb_ST_small_8l": {
+    #     "wandb_run_id": "linear_attention/runs/uo3uos24",
+    # },
+    
+    "Linear_Attention_Causal_Comb_ST_high_1l": {
+        "wandb_run_id": "linear_attention/runs/hh407jv1",
+    },
+    "Linear_Attention_Causal_Comb_ST_high_2l": {
+        "wandb_run_id": "linear_attention/runs/lwt3i9xh",
+        "note": "Epoch 124/200"
+    },
+    "Linear_Attention_Causal_Comb_ST_high_4l": {
+        "wandb_run_id": "linear_attention/runs/uurehyuk",
+        "note": "Epoch 180/200"
+    },
+    "Linear_Attention_Causal_Comb_ST_high_8l": {
+        "wandb_run_id": "linear_attention/runs/23pi6hz5",
+        "note": "Epoch 113/200"
+    },
+    
+    
+    # "Linear_Attention_Non_Causal_Comb_ST_small_2l": {
+    #     "wandb_run_id": "linear_attention/runs/djan9ch8",
+    # },
+    # "Linear_Attention_Non_Causal_Comb_ST_small_4l": {
+    #     "wandb_run_id": "linear_attention/runs/icx2zvxg",
+    # },    
+    # "Linear_Attention_Non_Causal_Comb_ST_small_8l": {
+    #     "wandb_run_id": "linear_attention/runs/167zifq4",
+    # },
+    # "Linear_Attention_Non_Causal_Comb_ST_small_16l": {
+    #     "wandb_run_id": "linear_attention/runs/79032l1a",
+    # },
+    # "Linear_Attention_Non_Causal_Comb_ST_mid_8l": {
+    #     "wandb_run_id": "linear_attention/runs/mqgoa9bm",
+    # },
+    # "Linear_Attention_Non_Causal_Comb_ST_mid_8l": {
+    #     "wandb_run_id": "linear_attention/runs/mqgoa9bm",
+    # },
+    # "Linear_Attention_Non_Causal_Comb_ST_high_8l": {
+    #     "wandb_run_id": "linear_attention/runs/qcmexzis",
+    #     "note": "Epoch 56/200"
+    # },
+}
+
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
 
 BASELINE_MODEL_NAMES: tuple[str, ...] = (
@@ -850,6 +912,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "gated_deltanet": GATED_DELTANET_MODELS,
     "gated_deltanet_seq_len_changes": GATED_DELTANET_MODELS_SEQ_LEN_CHANGES,
     "mamba2": MAMBA2_MODELS,
+    "mesanet": MESANET_MODELS,
     "linear_attention": LINEAR_ATTENTION_MODELS,
     "based": BASED_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
@@ -862,12 +925,14 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "bidirectional": BIDIRECTIONAL_MODELS,
     "state_passing": STATE_PASSING_MODELS,
     "mimetic_initialization": MIMETIC_INITIALIZATION_MODELS,
+    "causal_linear_attention_experiments": CAUSAL_LINEAR_ATTENTION_EXPERIMENTS,
     "fla_models": {
         **KDA_MODELS,
         **GLA_MODELS,
         **DELTANET_MODELS,
         **GATED_DELTANET_MODELS,
         **MAMBA2_MODELS,
+        **MESANET_MODELS,
         #**GATED_DELTANET_MODELS_SEQ_LEN_CHANGES,
         #**DELTANET_MODELS_SIZE_CHANGES,
     },
