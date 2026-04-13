@@ -790,9 +790,10 @@ class FLABackbone(Backbone):
             effective_cache_chunk_size is None
             and use_custom_recurrent
             and isinstance(self.fla, MesaNetModel)
-            and seq_len > 128
         ):
-            effective_cache_chunk_size = 128
+            mesa_chunk_size = 16 if self.training else 64
+            if seq_len > mesa_chunk_size:
+                effective_cache_chunk_size = mesa_chunk_size
 
         if effective_cache_chunk_size is None or seq_len <= effective_cache_chunk_size:
             return _run_parallel_chunk(test_x)
