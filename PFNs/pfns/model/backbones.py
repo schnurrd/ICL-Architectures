@@ -641,7 +641,6 @@ class FLABackbone(Backbone):
         if (
             cache_params is not None
             and isinstance(self.fla, MesaNetModel)
-            and x.size(1) > 1
             and not use_custom_recurrent
         ):
             return self._run_mesanet_with_initial_cache(
@@ -786,12 +785,21 @@ class FLABackbone(Backbone):
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
 
-        if self.cache_chunk_size is None or seq_len <= self.cache_chunk_size:
+        effective_cache_chunk_size = self.cache_chunk_size
+        if (
+            effective_cache_chunk_size is None
+            and use_custom_recurrent
+            and isinstance(self.fla, MesaNetModel)
+            and seq_len > 128
+        ):
+            effective_cache_chunk_size = 128
+
+        if effective_cache_chunk_size is None or seq_len <= effective_cache_chunk_size:
             return _run_parallel_chunk(test_x)
 
         outputs = []
-        for chunk_start in range(0, seq_len, self.cache_chunk_size):
-            chunk_end = min(chunk_start + self.cache_chunk_size, seq_len)
+        for chunk_start in range(0, seq_len, effective_cache_chunk_size):
+            chunk_end = min(chunk_start + effective_cache_chunk_size, seq_len)
             chunk_x = test_x[:, chunk_start:chunk_end]
             outputs.append(_run_parallel_chunk(chunk_x))
         return torch.cat(outputs, dim=1)
