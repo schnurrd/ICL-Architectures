@@ -118,8 +118,6 @@ def get_config(
     interleave_x_y_pairs: bool = False,
     feature_positional_embedding: str | None = None,
     use_categorical_features: bool = True,
-    hidden_state_frobenius_norm_max: float | None = None,
-    hidden_state_frobenius_norm_apply: str = "state_update",
     sequence_mode: str | None = None,
     **kwargs,
 ) -> MainConfig:
@@ -225,8 +223,6 @@ def get_config(
             layer_kwargs={
                 "feature_attention_softmax": False,
                 **layer_kwargs,
-                "hidden_state_frobenius_norm_max": hidden_state_frobenius_norm_max,
-                "hidden_state_frobenius_norm_apply": hidden_state_frobenius_norm_apply,
                 #"feature_dim": 64,
             },
         ),
