@@ -6,6 +6,7 @@ from torch import nn
 
 from pfns.model.attention_utils import (
     build_mlp,
+    build_norm,
     renormalize_state_frobenius,
 )
 
@@ -38,10 +39,15 @@ class LinearAttention(nn.Module):
         qk_dim: int | None = None, # per head query/key dim.
         use_attention_norm: bool = True, # if true apply layer norm before attention projection
         use_mlp_norm: bool = True,
+        norm_type: str = "layernorm",
+        use_output_norm: bool = False,
         use_output_projection: bool = True,
-        use_mlp: bool = True,
+        norm_q: bool = False,
+        norm_k: bool = False,
+        scale_readout_by_sqrt_dk: bool = False,
         use_k_sum_normalization: bool = True,
         state_renormalization: str | None = None,
+        learnable_state_renorm_scale: bool = True,
         state_renormalization_target_norm: float | None = None,
         eps: float = 1e-6,
     ):
@@ -66,16 +72,22 @@ class LinearAttention(nn.Module):
         self.causal = causal
         self.causal_train_only = causal_train_only
         self.causal_chunk_size = causal_chunk_size
-        self.use_mlp = use_mlp
+        self.norm_q = norm_q
+        self.norm_k = norm_k
+        self.scale_readout_by_sqrt_dk = scale_readout_by_sqrt_dk
         self.use_k_sum_normalization = use_k_sum_normalization
         self.state_renormalization = state_renormalization
         self.state_renormalization_target_norm = state_renormalization_target_norm
         self.eps = eps
-        self.state_renorm_log_scale = (
-            nn.Parameter(torch.zeros(self.num_heads))
-            if state_renormalization not in {None, "none"}
-            else None
-        )
+        if state_renormalization in {None, "none"}:
+            self.state_renorm_log_scale = None
+        elif learnable_state_renorm_scale:
+            self.state_renorm_log_scale = nn.Parameter(torch.zeros(self.num_heads))
+        else:
+            self.register_buffer(
+                "state_renorm_log_scale",
+                torch.zeros(self.num_heads),
+            )
 
         self.dropout = nn.Dropout(dropout)
         self.q_proj_item = nn.Linear(d_model, self.num_heads * self.qk_dim)
@@ -86,18 +98,30 @@ class LinearAttention(nn.Module):
         )
         self.norms = nn.ModuleList(
             [
-                nn.LayerNorm(d_model) if use_attention_norm else nn.Identity(),
-                nn.LayerNorm(d_model) if use_mlp_norm else nn.Identity(),
+                build_norm(d_model, enabled=use_attention_norm, norm_type=norm_type),
+                build_norm(d_model, enabled=use_mlp_norm, norm_type=norm_type),
             ]
         )
-        self.mlp = (
-            build_mlp(d_model, dim_mlp_hidden, dropout, activation)
-            if use_mlp
-            else nn.Identity()
+        self.output_norm = build_norm(
+            d_model,
+            enabled=use_output_norm,
+            norm_type=norm_type,
         )
+        self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
 
     def _feature_map(self, x: torch.Tensor) -> torch.Tensor:
         return F.elu(x) + 1.0
+
+    def _feature_map_with_sum_normalization(
+        self,
+        x: torch.Tensor,
+        *,
+        normalize_sum: bool,
+    ) -> torch.Tensor:
+        x = self._feature_map(x)
+        if normalize_sum:
+            x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
+        return x
 
     def _project_qkv(
         self,
@@ -105,7 +129,7 @@ class LinearAttention(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x = self.norms[0](x)
         batch_size, seq_len, num_features, _ = x.shape
-        assert num_features == 1, "LinearAttention only supports num_features=1, got {num_features}."
+        assert num_features == 1, f"LinearAttention only supports num_features=1, got {num_features}."
         x_flat = x.transpose(1, 2).reshape(batch_size * num_features, seq_len, self.d_model)
         q = self.q_proj_item(x_flat).view(batch_size * num_features, seq_len, self.num_heads, self.qk_dim)
         k = self.k_proj_item(x_flat).view(batch_size * num_features, seq_len, self.num_heads, self.qk_dim)
@@ -125,6 +149,11 @@ class LinearAttention(nn.Module):
             eps=self.eps,
         )
 
+    def _scale_readout(self, num: torch.Tensor) -> torch.Tensor:
+        if self.scale_readout_by_sqrt_dk:
+            num = num / (self.qk_dim ** 0.5)
+        return num
+
     def _read_from_kv_state(
         self,
         q: torch.Tensor,
@@ -142,7 +171,7 @@ class LinearAttention(nn.Module):
         # kv_state: (batch_times_features, heads, qk_dim, v_dim)
         # k_sum: (batch_times_features, heads, qk_dim)
         kv_state = self._renormalize_state(kv_state)
-        num = torch.einsum("bshf,bhfd->bshd", q, kv_state)
+        num = self._scale_readout(torch.einsum("bshf,bhfd->bshd", q, kv_state))
         if k_sum is None:
             return num
         denom = torch.einsum("bshf,bhf->bsh", q, k_sum)
@@ -154,8 +183,8 @@ class LinearAttention(nn.Module):
         k: torch.Tensor,
         v: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
-        q = self._feature_map(q)
-        k = self._feature_map(k)
+        q = self._feature_map_with_sum_normalization(q, normalize_sum=self.norm_q)
+        k = self._feature_map_with_sum_normalization(k, normalize_sum=self.norm_k)
         # k: (batch_times_features, seq, heads, qk_dim)
         # v: (batch_times_features, seq, heads, v_dim)
         kv_state = torch.einsum("bshf,bshd->bhfd", k, v)
@@ -173,8 +202,8 @@ class LinearAttention(nn.Module):
         kv_state_prefix: torch.Tensor | None = None,
         k_sum_prefix: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
-        q = self._feature_map(q)
-        k = self._feature_map(k)
+        q = self._feature_map_with_sum_normalization(q, normalize_sum=self.norm_q)
+        k = self._feature_map_with_sum_normalization(k, normalize_sum=self.norm_k)
 
         if q.shape[1] == 0:
             return v, kv_state_prefix, k_sum_prefix
@@ -214,7 +243,7 @@ class LinearAttention(nn.Module):
             else:
                 k_chunk_sum = None
 
-            num = torch.einsum("bshf,bshfd->bshd", q_chunk, kv_chunk)
+            num = self._scale_readout(torch.einsum("bshf,bshfd->bshd", q_chunk, kv_chunk))
             if k_chunk_sum is None:
                 outputs.append(num)
             else:
@@ -253,16 +282,18 @@ class LinearAttention(nn.Module):
             v[:, :single_eval_pos],
             causal=self.causal_train_only or self.causal,
         )
-        q_test = self._feature_map(q[:, single_eval_pos:])
+        q_test = self._feature_map_with_sum_normalization(
+            q[:, single_eval_pos:],
+            normalize_sum=self.norm_q,
+        )
         attn_test = self._read_from_kv_state(q_test, kv_state, k_sum)
         return torch.cat([attn_train, attn_test], dim=1)
 
     def _apply_output(self, x: torch.Tensor, attn: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, num_features, _ = x.shape
         attn = attn.reshape(batch_size, num_features, seq_len, self.d_model).transpose(1, 2)
+        attn = self.output_norm(attn)
         x = x + self.dropout(self.out_proj_item(attn))
-        if not self.use_mlp:
-            return x
         return x + self.mlp(self.norms[1](x))
 
     def forward(self, x, *, single_eval_pos: int | None = None, **kwargs):
@@ -313,7 +344,10 @@ class LinearAttention(nn.Module):
             )
         else:
             attn = self._read_from_kv_state(
-                self._feature_map(q),
+                self._feature_map_with_sum_normalization(
+                    q,
+                    normalize_sum=self.norm_q,
+                ),
                 state["kv_state"],
                 state.get("k_sum"),
             )

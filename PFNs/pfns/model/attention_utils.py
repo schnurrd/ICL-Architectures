@@ -34,6 +34,22 @@ def build_mlp(
     )
 
 
+def build_norm(
+    d_model: int,
+    *,
+    enabled: bool,
+    norm_type: str = "layernorm",
+) -> nn.Module:
+    """Build a per-token hidden-state normalization layer."""
+    if not enabled:
+        return nn.Identity()
+    if norm_type == "layernorm":
+        return nn.LayerNorm(d_model)
+    if norm_type in {"rmsnorm", "rms_norm"}:
+        return nn.RMSNorm(d_model)
+    raise ValueError(f"Unsupported normalization type: {norm_type}")
+
+
 def renormalize_state_frobenius(
     state: torch.Tensor,
     *,

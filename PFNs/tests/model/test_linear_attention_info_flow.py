@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 
 from pfns.model.backbones import LinearAttentionBackboneConfig
 from pfns.model.linear_attention import LinearAttention
@@ -161,6 +162,107 @@ def test_linear_attention_backbone_ignores_legacy_layer_kwargs():
     assert len(backbone.layers) == 2
     assert all(layer.causal for layer in backbone.layers)
     assert all(layer.qk_dim == 3 for layer in backbone.layers)
+
+
+def test_linear_attention_supports_rms_norm():
+    layer = LinearAttention(
+        d_model=8,
+        num_heads=2,
+        dim_mlp_hidden=16,
+        dropout=0.0,
+        activation="swish",
+        norm_type="rmsnorm",
+        use_output_norm=True,
+    )
+    layer.eval()
+
+    assert isinstance(layer.norms[0], nn.RMSNorm)
+    assert isinstance(layer.norms[1], nn.RMSNorm)
+    assert isinstance(layer.output_norm, nn.RMSNorm)
+
+    x = torch.randn(2, 9, 1, 8)
+    with torch.no_grad():
+        out = layer(x, single_eval_pos=5)
+
+    assert out.shape == x.shape
+
+
+def test_linear_attention_supports_fixed_state_renorm_scale():
+    layer = LinearAttention(
+        d_model=8,
+        num_heads=2,
+        dim_mlp_hidden=16,
+        dropout=0.0,
+        activation="swish",
+        state_renormalization="sqrt_d_fro",
+        learnable_state_renorm_scale=False,
+    )
+    layer.eval()
+
+    assert "state_renorm_log_scale" not in dict(layer.named_parameters())
+    assert "state_renorm_log_scale" in dict(layer.named_buffers())
+
+    x = torch.randn(2, 9, 1, 8)
+    with torch.no_grad():
+        out = layer(x, single_eval_pos=5)
+
+    assert out.shape == x.shape
+
+
+def test_linear_attention_supports_qk_sum_normalization():
+    layer = LinearAttention(
+        d_model=8,
+        num_heads=2,
+        dim_mlp_hidden=16,
+        dropout=0.0,
+        activation="swish",
+        norm_q=True,
+        norm_k=True,
+    )
+    layer.eval()
+
+    x = torch.randn(2, 9, 1, 8)
+    q, k, _ = layer._project_qkv(x)
+    q = layer._feature_map_with_sum_normalization(q, normalize_sum=layer.norm_q)
+    k = layer._feature_map_with_sum_normalization(k, normalize_sum=layer.norm_k)
+
+    torch.testing.assert_close(q.sum(dim=-1), torch.ones_like(q.sum(dim=-1)), atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(k.sum(dim=-1), torch.ones_like(k.sum(dim=-1)), atol=1e-5, rtol=1e-5)
+
+
+def test_linear_attention_causal_matches_prefix_reads_with_scaled_readout():
+    torch.manual_seed(0)
+    layer = LinearAttention(
+        d_model=8,
+        num_heads=2,
+        dim_mlp_hidden=16,
+        dropout=0.0,
+        activation="swish",
+        causal=True,
+        scale_readout_by_sqrt_dk=True,
+        use_k_sum_normalization=False,
+    )
+    layer.eval()
+
+    x = torch.randn(2, 9, 1, 8)
+    q_raw, k_raw, v = layer._project_qkv(x)
+    q = layer._feature_map_with_sum_normalization(q_raw, normalize_sum=layer.norm_q)
+    k = layer._feature_map_with_sum_normalization(k_raw, normalize_sum=layer.norm_k)
+
+    with torch.no_grad():
+        attn, _, _ = layer._causal_attention(q_raw, k_raw, v)
+
+    expected = []
+    for t in range(q.shape[1]):
+        kv_state = torch.einsum("bshf,bshd->bhfd", k[:, : t + 1], v[:, : t + 1])
+        expected.append(layer._read_from_kv_state(q[:, t : t + 1], kv_state, None))
+
+    torch.testing.assert_close(
+        attn,
+        torch.cat(expected, dim=1),
+        rtol=5e-4,
+        atol=1e-5,
+    )
 
 
 def test_linear_attention_chunked_causal_matches_unchunked_with_state_renormalization():

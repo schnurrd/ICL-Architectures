@@ -119,6 +119,19 @@ def get_config(
     feature_positional_embedding: str | None = None,
     use_categorical_features: bool = True,
     sequence_mode: str | None = None,
+    use_attention_norm: bool = True,
+    use_mlp_norm: bool = True,
+    norm_type: str = "layernorm",
+    use_output_norm: bool = False,
+    use_output_projection: bool = True,
+    norm_q: bool = False,
+    norm_k: bool = False,
+    scale_readout_by_sqrt_dk: bool = False,
+    use_k_sum_normalization: bool = True,
+    state_renormalization: str | None = None,
+    learnable_state_renorm_scale: bool = True,
+    causal_chunk_size: int | None = None,
+    eps: float = 1e-6,
     **kwargs,
 ) -> MainConfig:
     """
@@ -129,9 +142,26 @@ def get_config(
     feature_positional_embedding = normalize_optional_none_string(
         feature_positional_embedding
     )
+    state_renormalization = normalize_optional_none_string(state_renormalization)
     resolved_sequence_mode, layer_kwargs = _resolve_linear_attention_mode(
         sequence_mode, kwargs
     )
+    layer_kwargs = {
+        **layer_kwargs,
+        "use_attention_norm": use_attention_norm,
+        "use_mlp_norm": use_mlp_norm,
+        "norm_type": norm_type,
+        "use_output_norm": use_output_norm,
+        "use_output_projection": use_output_projection,
+        "norm_q": norm_q,
+        "norm_k": norm_k,
+        "scale_readout_by_sqrt_dk": scale_readout_by_sqrt_dk,
+        "use_k_sum_normalization": use_k_sum_normalization,
+        "state_renormalization": state_renormalization,
+        "learnable_state_renorm_scale": learnable_state_renorm_scale,
+        "causal_chunk_size": causal_chunk_size,
+        "eps": eps,
+    }
 
     training_setup = training_setup.strip().lower()
     training_setup, is_associative_recall = resolve_training_setup_for_task(
@@ -220,10 +250,7 @@ def get_config(
             mlp_hidden_dim=320 * 2,
             dropout=0.0,
             activation="relu",
-            layer_kwargs={
-                **layer_kwargs,
-                #"qk_dim": 64,
-            },
+            layer_kwargs=layer_kwargs,
         ),
         features_per_group=20,
         attention_between_features=False,
@@ -262,6 +289,27 @@ def get_config(
         wandb_extras.append(f"layers{resolved_nlayers}")
     if not use_categorical_features:
         wandb_extras.append("nocat")
+    wandb_extras.extend(
+        f"{key}_{value}"
+        for key, value in layer_kwargs.items()
+        if key not in {"causal", "causal_train_only"}
+        and value
+        != {
+            "use_attention_norm": True,
+            "use_mlp_norm": True,
+            "norm_type": "layernorm",
+            "use_output_norm": False,
+            "use_output_projection": True,
+            "norm_q": False,
+            "norm_k": False,
+            "scale_readout_by_sqrt_dk": False,
+            "use_k_sum_normalization": True,
+            "state_renormalization": None,
+            "learnable_state_renorm_scale": True,
+            "causal_chunk_size": None,
+            "eps": 1e-6,
+        }.get(key)
+    )
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
