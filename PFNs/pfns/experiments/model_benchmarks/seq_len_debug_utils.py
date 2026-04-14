@@ -140,44 +140,6 @@ def _run_autocast(
         ):
             return fn()
 
-
-def _materialize_seq_len_batch(
-    *,
-    experiment: HiddenStateTrackingConfig | Mapping[str, Any],
-    seqlen: int,
-    device: str,
-    rep: int = 0,
-) -> Any:
-    if rep < 0:
-        raise ValueError("rep must be >= 0")
-    if isinstance(experiment, HiddenStateTrackingConfig):
-        data_generation_seed = int(experiment.data_generation_seed)
-        num_features = int(experiment.num_features)
-        num_classes = int(experiment.num_classes)
-        num_test_samples = int(experiment.num_test_samples)
-    else:
-        data_generation_seed = int(experiment["data_generation_seed"])
-        num_features = int(experiment["num_features"])
-        num_classes = int(experiment["num_classes"])
-        num_test_samples = int(experiment["num_test_samples"])
-    _set_data_generation_seed(data_generation_seed)
-    generator = create_seq_len_batch_generator(
-        task_variant="tabular_prior",
-        num_batches=rep + 1,
-        smallest_seqlen=int(seqlen),
-        largest_seqlen=int(seqlen),
-        num_features=num_features,
-        num_classes=num_classes,
-        number_of_test_samples=num_test_samples,
-        default_device=device,
-        task_kwargs={},
-    )
-    for current_rep, (batch, _) in enumerate(generator):
-        if current_rep == rep:
-            return batch
-    raise RuntimeError(f"Unable to materialize repetition {rep} for seqlen={seqlen}.")
-
-
 def _prepare_embedded_train_input(
     model: Any,
     batch: Any,
@@ -392,96 +354,6 @@ def run_hidden_state_tracking(
     return pd.DataFrame(rows)
 
 
-def _fla_recurrent_state_trajectory(
-    backbone: Any,
-    embedded: torch.Tensor,
-    *,
-    model_name: str,
-) -> list[dict[str, Any]]:
-    prepared, _ = backbone._prepare_fla_input(embedded)
-    cache = None
-    rows: list[dict[str, Any]] = []
-    for token_idx in tqdm(range(int(prepared.shape[1])), total=int(prepared.shape[1]), desc=f"Recurrent-state trajectory ({model_name})"):
-        token = prepared[:, token_idx : token_idx + 1]
-        _, cache = backbone._run_fla(
-            token,
-            cache_params=cache,
-            cache_position_start=token_idx if cache is not None else None,
-            return_cache=True,
-        )
-        for name, tensor in _iter_hidden_tensors(cache):
-            lowered_name = name.lower()
-            if "recurrent_state" not in lowered_name and "kv_state" not in lowered_name:
-                continue
-            for head_idx, matrix in _head_matrices(tensor):
-                metrics = _matrix_metrics(matrix)
-                rows.append(
-                    {
-                        "model": model_name,
-                        "token_idx": int(token_idx + 1),
-                        "tensor_name": name,
-                        "layer_idx": _layer_idx(name),
-                        "head_idx": int(head_idx),
-                        "abs_max": float(metrics["abs_max"]),
-                        **{k: float(metrics[k]) for k in _MATRIX_METRICS},
-                    }
-                )
-    return rows
-
-
-def run_recurrent_state_trajectory_tracking(
-    *,
-    experiment: HiddenStateTrackingConfig | Mapping[str, Any],
-    models_to_compare: dict[str, Any],
-    device: str,
-    seqlen: int,
-    rep: int = 0,
-) -> pd.DataFrame:
-    cfg = experiment if isinstance(experiment, HiddenStateTrackingConfig) else HiddenStateTrackingConfig.from_mapping(experiment)
-    if seqlen < 1 or rep < 0:
-        raise ValueError("seqlen must be >= 1 and rep must be >= 0")
-    models, autocast_models = _device_runtime(models_to_compare, device)
-    base_batch = _materialize_seq_len_batch(
-        experiment=cfg,
-        seqlen=seqlen,
-        rep=rep,
-        device=device,
-    )
-    rows: list[dict[str, Any]] = []
-    for raw_name, model in models.items():
-        model_name = str(raw_name)
-        if not hasattr(model, "_prepare_batch_first_inputs") or not hasattr(model, "_build_embedded_input"):
-            raise TypeError(
-                "Trajectory tracking requires a TabularModel-like interface with "
-                "_prepare_batch_first_inputs and _build_embedded_input."
-            )
-        backbone = getattr(model, "transformer_layers", None)
-        if backbone is None or not hasattr(backbone, "_run_fla") or not hasattr(backbone, "_prepare_fla_input"):
-            raise TypeError("Trajectory tracking currently supports FLA backbones only.")
-        embedded = _run_autocast(
-            lambda: _prepare_embedded_train_input(model, base_batch, seqlen=seqlen, device=device),
-            model_name=model_name,
-            autocast_models=autocast_models,
-        )
-
-        try:
-            rows.extend(
-                _run_autocast(
-                    lambda: _fla_recurrent_state_trajectory(backbone, embedded, model_name=model_name),
-                    model_name=model_name,
-                    autocast_models=autocast_models,
-                )
-            )
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache()
-            raise
-        except RuntimeError as err:
-            if "out of memory" in str(err).lower():
-                torch.cuda.empty_cache()
-            raise
-    return pd.DataFrame(rows)
-
-
 def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFrame:
     df = hidden_state_df.copy()
     for col, default in (
@@ -522,97 +394,6 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
     )
     order = [c for c in ("model", "layer_idx", "head_idx", "tensor_name", "seqlen") if c in out.columns]
     return out.sort_values(order)
-
-
-def _short_tensor_label(name: str) -> str:
-    for prefix in ("state.backbone_state.", "state."):
-        if name.startswith(prefix):
-            name = name[len(prefix) :]
-            break
-    layer = _layer_idx(name)
-    if match := re.search(r"(?:layers|layer_states)\[\d+\]\.(.+)", name):
-        name = match.group(1)
-    name = name.replace("::", " ").replace("_", " ")
-    return f"L{layer} {name}" if layer >= 0 else name
-
-def plot_hidden_state_metric(
-    df: pd.DataFrame,
-    *,
-    metric: str,
-    title: str,
-    tensor_names: list[str] | None = None,
-    model: str | None = None,
-    log_x: bool = True,
-    run_alpha: float = 0.35,
-) -> None:
-    if df.empty:
-        print(f"No rows to plot for: {title}")
-        return
-    plot_df = df.copy()
-    if model is not None:
-        plot_df = plot_df[plot_df["model"] == model]
-    if tensor_names is not None:
-        plot_df = plot_df[plot_df["tensor_name"].isin(tensor_names)]
-    if plot_df.empty:
-        print(f"No matching rows for: {title}")
-        return
-
-    model_values = sorted(plot_df["model"].astype(str).unique().tolist())
-    split = model is None and len(model_values) > 1
-    panel_models = model_values if split else [model_values[0]]
-    fig, axes = create_panel_figure(
-        panel_count=len(panel_models),
-        figsize=(6.4 * len(panel_models), 5),
-        sharey=split,
-    )
-    palette = [mcolors.to_hex(color) for color in plt.get_cmap("tab20").colors]
-    for idx, model_name in enumerate(panel_models):
-        ax = axes[idx if split else 0]
-        sub = plot_df if not split else plot_df[plot_df["model"] == model_name]
-        agg = sub.groupby(["tensor_name", "seqlen"], observed=True)[metric].mean().reset_index().sort_values(["tensor_name", "seqlen"])
-        names = agg["tensor_name"].astype(str).unique().tolist()
-        base = np.array(mcolors.to_rgb(palette[idx % len(palette)]))
-        shades = np.linspace(0.55, 0.05, num=max(len(names), 1))
-        colors = {name: tuple((1 - a) * base + a * np.ones(3)) for name, a in zip(names, shades, strict=False)}
-        for name, group in agg.groupby("tensor_name", observed=True):
-            color = colors[str(name)]
-            raw_group = sub[sub["tensor_name"] == name]
-            if "rep" in raw_group.columns:
-                for _, rep_df in raw_group.groupby("rep", observed=True, sort=True):
-                    rep_df = rep_df.sort_values("seqlen")
-                    ax.plot(
-                        rep_df["seqlen"],
-                        rep_df[metric],
-                        linewidth=0.55,
-                        color=color,
-                        alpha=run_alpha,
-                        marker=None,
-                        label="_nolegend_",
-                        zorder=2,
-                    )
-            ax.plot(
-                group["seqlen"],
-                group[metric],
-                marker="o",
-                linewidth=1.6,
-                markersize=3.5,
-                color=color,
-                label=_short_tensor_label(str(name)),
-                zorder=3,
-            )
-        if log_x:
-            ax.set_xscale("log")
-        ax.set_xlabel("Sequence length")
-        ax.set_ylabel(metric)
-        ax.set_title(str(model_name) if split else title)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc="best", fontsize=8, ncol=2)
-    if split:
-        fig.suptitle(title)
-        fig.tight_layout(rect=(0, 0, 1, 0.96))
-    else:
-        fig.tight_layout()
-
 
 def _plot_recurrent_metric(
     plot_df: pd.DataFrame,
@@ -1000,7 +781,7 @@ def _track_linear_attention_layer_position_metrics(
         device=k.device,
         dtype=torch.float32,
     )
-    for token_idx in range(int(q.shape[1])):
+    for token_idx in range(int(k.shape[1])):
         position = int(token_idx + 1)
         k_t = k[:, token_idx].float()
         v_t = v[:, token_idx].float()
