@@ -45,15 +45,11 @@ _METRIC_DISPLAY_NAMES = {
     "spectral_norm": "Spectral Norm",
     "effective_rank": "Effective Rank",
     "stable_rank": "Stable Rank",
-    "q_dot_k_sum": "q^T k_sum",
     "kv_state_norm": "KV-State Norm",
     "k_sum_norm": "K-Sum Norm",
     "joint_hidden_state_norm": "Joint Hidden-State Norm",
     "kv_over_ksum_ratio": "KV-over-K-Sum Ratio",
     "output_norm": "Output Norm",
-    "sigma1_share": "Sigma1 / Sum(Sigma)",
-    "sigma1_over_sigma2": "Sigma1 / Sigma2",
-    "update_alignment": "Update Alignment",
 }
 
 
@@ -147,22 +143,32 @@ def _run_autocast(
 
 def _materialize_seq_len_batch(
     *,
-    experiment: Mapping[str, Any],
+    experiment: HiddenStateTrackingConfig | Mapping[str, Any],
     seqlen: int,
     device: str,
     rep: int = 0,
 ) -> Any:
     if rep < 0:
         raise ValueError("rep must be >= 0")
-    _set_data_generation_seed(int(experiment["data_generation_seed"]))
+    if isinstance(experiment, HiddenStateTrackingConfig):
+        data_generation_seed = int(experiment.data_generation_seed)
+        num_features = int(experiment.num_features)
+        num_classes = int(experiment.num_classes)
+        num_test_samples = int(experiment.num_test_samples)
+    else:
+        data_generation_seed = int(experiment["data_generation_seed"])
+        num_features = int(experiment["num_features"])
+        num_classes = int(experiment["num_classes"])
+        num_test_samples = int(experiment["num_test_samples"])
+    _set_data_generation_seed(data_generation_seed)
     generator = create_seq_len_batch_generator(
         task_variant="tabular_prior",
         num_batches=rep + 1,
         smallest_seqlen=int(seqlen),
         largest_seqlen=int(seqlen),
-        num_features=int(experiment["num_features"]),
-        num_classes=int(experiment["num_classes"]),
-        number_of_test_samples=int(experiment["num_test_samples"]),
+        num_features=num_features,
+        num_classes=num_classes,
+        number_of_test_samples=num_test_samples,
         default_device=device,
         task_kwargs={},
     )
@@ -216,15 +222,6 @@ def _layer_idx(name: str) -> int:
     return int(match.group(1)) if (match := _LAYER_PATTERN.search(name)) else -1
 
 
-def _is_matrix_state(name: str) -> bool:
-    lowered = name.lower()
-    return "recurrent_state" in lowered or "kv_state" in lowered
-
-
-def _is_k_sum_state(name: str) -> bool:
-    return "k_sum" in name.lower()
-
-
 def _head_matrices(tensor: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
     arr = tensor.detach().float() # can be (1, 1, num_heads, h_dim, h_dim) or (num_heads, h_dim, h_dim)
     if arr.ndim < 2:
@@ -252,7 +249,7 @@ def _head_vectors(tensor: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
 def _k_sum_norms_by_layer(state: Any) -> dict[tuple[int, int], float]:
     out: dict[tuple[int, int], float] = {}
     for name, tensor in _iter_hidden_tensors(state):
-        if not _is_k_sum_state(name):
+        if "k_sum" not in name.lower():
             continue
         layer_idx = _layer_idx(name)
         for head_idx, vector in _head_vectors(tensor):
@@ -358,7 +355,8 @@ def run_hidden_state_tracking(
                 extra = {"rep": int(rep), "seqlen": int(seqlen)}
                 k_sum_norms = _k_sum_norms_by_layer(state)
                 for name, tensor in _iter_hidden_tensors(state, tensor_name_patterns):
-                    if not _is_matrix_state(name):
+                    lowered_name = name.lower()
+                    if "recurrent_state" not in lowered_name and "kv_state" not in lowered_name:
                         continue
                     for head_idx, matrix in _head_matrices(tensor):
                         metrics = _matrix_metrics(matrix)
@@ -394,27 +392,6 @@ def run_hidden_state_tracking(
     return pd.DataFrame(rows)
 
 
-def _rows_from_cache_trajectory(*, model_name: str, token_idx: int, cache_params: Any) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for name, tensor in _iter_hidden_tensors(cache_params):
-        if not _is_matrix_state(name):
-            continue
-        for head_idx, matrix in _head_matrices(tensor):
-            metrics = _matrix_metrics(matrix)
-            rows.append(
-                {
-                    "model": model_name,
-                    "token_idx": int(token_idx),
-                    "tensor_name": name,
-                    "layer_idx": _layer_idx(name),
-                    "head_idx": int(head_idx),
-                    "abs_max": float(metrics["abs_max"]),
-                    **{k: float(metrics[k]) for k in _MATRIX_METRICS},
-                }
-            )
-    return rows
-
-
 def _fla_recurrent_state_trajectory(
     backbone: Any,
     embedded: torch.Tensor,
@@ -432,7 +409,23 @@ def _fla_recurrent_state_trajectory(
             cache_position_start=token_idx if cache is not None else None,
             return_cache=True,
         )
-        rows.extend(_rows_from_cache_trajectory(model_name=model_name, token_idx=token_idx + 1, cache_params=cache))
+        for name, tensor in _iter_hidden_tensors(cache):
+            lowered_name = name.lower()
+            if "recurrent_state" not in lowered_name and "kv_state" not in lowered_name:
+                continue
+            for head_idx, matrix in _head_matrices(tensor):
+                metrics = _matrix_metrics(matrix)
+                rows.append(
+                    {
+                        "model": model_name,
+                        "token_idx": int(token_idx + 1),
+                        "tensor_name": name,
+                        "layer_idx": _layer_idx(name),
+                        "head_idx": int(head_idx),
+                        "abs_max": float(metrics["abs_max"]),
+                        **{k: float(metrics[k]) for k in _MATRIX_METRICS},
+                    }
+                )
     return rows
 
 
@@ -447,38 +440,16 @@ def run_recurrent_state_trajectory_tracking(
     cfg = experiment if isinstance(experiment, HiddenStateTrackingConfig) else HiddenStateTrackingConfig.from_mapping(experiment)
     if seqlen < 1 or rep < 0:
         raise ValueError("seqlen must be >= 1 and rep must be >= 0")
-    _set_data_generation_seed(cfg.data_generation_seed)
     models, autocast_models = _device_runtime(models_to_compare, device)
-
-    base_batch = None
-    generator = create_seq_len_batch_generator(
-        task_variant="tabular_prior",
-        num_batches=rep + 1,
-        smallest_seqlen=seqlen,
-        largest_seqlen=seqlen,
-        num_features=cfg.num_features,
-        num_classes=cfg.num_classes,
-        number_of_test_samples=cfg.num_test_samples,
-        default_device=device,
-        task_kwargs={},
+    base_batch = _materialize_seq_len_batch(
+        experiment=cfg,
+        seqlen=seqlen,
+        rep=rep,
+        device=device,
     )
-    for current_rep, (candidate, _) in enumerate(generator):
-        if current_rep == rep:
-            base_batch = candidate
-            break
-    if base_batch is None:
-        raise RuntimeError(f"Unable to materialize repetition {rep} for seqlen={seqlen}.")
-
-    categorical_inds = categorical_mask_to_inds(base_batch.categorical_mask)
     rows: list[dict[str, Any]] = []
     for raw_name, model in models.items():
         model_name = str(raw_name)
-        x = base_batch.x[:, :seqlen]
-        y = base_batch.y[:, :seqlen]
-        x_device = x.to(device)
-        y_device = y.to(device)
-        style = move_style_and_check_shape(base_batch.style, x, device)
-        y_style = move_y_style_and_check_shape(base_batch.y_style, y, device)
         if not hasattr(model, "_prepare_batch_first_inputs") or not hasattr(model, "_build_embedded_input"):
             raise TypeError(
                 "Trajectory tracking requires a TabularModel-like interface with "
@@ -487,17 +458,10 @@ def run_recurrent_state_trajectory_tracking(
         backbone = getattr(model, "transformer_layers", None)
         if backbone is None or not hasattr(backbone, "_run_fla") or not hasattr(backbone, "_prepare_fla_input"):
             raise TypeError("Trajectory tracking currently supports FLA backbones only.")
-
-        x_bf, y_bf, _ = model._prepare_batch_first_inputs(x_device, y_device, None)
-        assert x_bf is not None and y_bf is not None
-        embedded, _, _, _ = model._build_embedded_input(
-            x_bf,
-            y_bf,
-            single_eval_pos=int(y_bf.shape[1]),
-            style=style,
-            y_style=y_style,
-            categorical_inds=categorical_inds,
-            cache_trainset_representation=True,
+        embedded = _run_autocast(
+            lambda: _prepare_embedded_train_input(model, base_batch, seqlen=seqlen, device=device),
+            model_name=model_name,
+            autocast_models=autocast_models,
         )
 
         try:
@@ -701,17 +665,13 @@ def _plot_recurrent_metric(
                 y_min = float(finite_group_values.min())
                 y_max = float(finite_group_values.max())
                 if log_y:
-                    if y_max > y_min:
-                        shared_y_limits = (max(y_min / 1.2, 1e-12), y_max * 1.2)
-                    else:
-                        shared_y_limits = (max(y_min / 1.2, 1e-12), y_max * 1.2)
+                    shared_y_limits = (max(y_min / 1.2, 1e-12), y_max * 1.2)
                 else:
                     pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
                     shared_y_limits = (y_min - pad, y_max + pad)
         for idx, model_name in enumerate(panel_models):
             ax = axes[idx if split else 0]
             sub = group_df if not split else group_df[group_df["model"] == model_name]
-            violin_values: list[np.ndarray] = []
             summary_fn = "median" if plot_mode == "violin" else "mean"
             agg = (
                 sub.groupby([line_key, "seqlen"], observed=True)[metric]
@@ -727,13 +687,11 @@ def _plot_recurrent_metric(
             tab20 = [mcolors.to_hex(color) for color in plt.get_cmap("tab20").colors]
             tab20_reordered = [tab20[idx] for idx in [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]]
             colors = {value: tab20_reordered[i % len(tab20_reordered)] for i, value in enumerate(line_values)}
-            for line_idx, (line_value, line_df) in enumerate(agg.groupby(line_key, observed=True)):
+            for line_idx, line_value in enumerate(line_values):
                 value = int(line_value)
                 label = f"{line_name}[{value}]" if value >= 0 else f"{line_name}[unknown]"
                 color = colors[line_value]
                 raw_line_df = sub[sub[line_key] == line_value]
-                if plot_mode == "violin":
-                    violin_values.append(raw_line_df[metric].to_numpy(dtype=float, copy=False))
                 plot_grouped_runs_with_distribution(
                     ax=ax,
                     sub=raw_line_df,
@@ -983,30 +941,14 @@ def plot_recurrent_metric_per_layer(
         distribution_width_frac=distribution_width_frac,
     )
 
-
-def _select_position_diagnostic_layers(num_layers: int, max_layers: int = 3) -> list[int]:
-    if num_layers <= max_layers:
-        return list(range(num_layers))
-    candidate_indices = [0, num_layers // 2, num_layers - 1]
-    return sorted(set(int(idx) for idx in candidate_indices))
-
-
-def _svd_diagnostic_positions(seq_len: int) -> list[int]:
-    positions: set[int] = set()
-    positions.update(range(1, min(seq_len, 64) + 1))
-    positions.update(range(80, min(seq_len, 512) + 1, 16))
-    positions.update(range(640, min(seq_len, 4_096) + 1, 128))
-    positions.update(range(4_608, seq_len + 1, 512))
-    positions.add(int(seq_len))
-    return sorted(pos for pos in positions if 1 <= pos <= seq_len)
-
-
 def _finite_mean_std(values: torch.Tensor) -> tuple[float, float]:
     values = values.reshape(-1).float()
-    finite = values[torch.isfinite(values)]
-    if finite.numel() == 0:
+    values = values.masked_fill(~torch.isfinite(values), torch.nan)
+    if torch.isnan(values).all():
         return float("nan"), float("nan")
-    return float(finite.mean().item()), float(finite.std(unbiased=False).item())
+    mean = torch.nanmean(values)
+    variance = torch.nanmean((values - mean).square())
+    return float(mean.item()), float(variance.sqrt().item())
 
 
 def _metric_summary(values_by_name: Mapping[str, torch.Tensor]) -> dict[str, float]:
@@ -1016,25 +958,6 @@ def _metric_summary(values_by_name: Mapping[str, torch.Tensor]) -> dict[str, flo
         out[name] = mean
         out[f"{name}_std"] = std
     return out
-
-
-def _nan_metric_summary(metric_names: tuple[str, ...]) -> dict[str, float]:
-    out: dict[str, float] = {}
-    for name in metric_names:
-        out[name] = float("nan")
-        out[f"{name}_std"] = float("nan")
-    return out
-
-
-def _svd_metric_summary(running_kv_state: torch.Tensor) -> dict[str, float]:
-    singular_values = torch.linalg.svdvals(running_kv_state)
-    sigma1 = singular_values[..., 0]
-    sigma_share = sigma1 / singular_values.sum(dim=-1).clamp_min(1e-12)
-    if singular_values.shape[-1] > 1:
-        sigma_ratio = sigma1 / singular_values[..., 1].clamp_min(1e-12)
-    else:
-        sigma_ratio = torch.full_like(sigma1, float("nan"))
-    return _metric_summary({"sigma1_share": sigma_share, "sigma1_over_sigma2": sigma_ratio})
 
 
 def _prepare_position_metric_attention(
@@ -1048,16 +971,7 @@ def _prepare_position_metric_attention(
         return attn, None, None, None
 
     final_kv_state, final_k_sum = compute_kv_state_5d(k, v)
-    state_length = int(q.shape[1])
-    reference_ratio = layer._runtime_kv_over_ksum_reference(k, v)
-    final_kv_state, final_k_sum = layer._clip_hidden_state_for_prediction(
-        final_kv_state,
-        final_k_sum,
-        state_length=state_length,
-        reference_ratio=reference_ratio,
-    )
     attn = apply_state_to_query_5d(q, final_kv_state, final_k_sum, eps=layer.eps)
-    attn = layer._clip_attention_output(attn, state_length=state_length)
     final_k_sum = final_k_sum.float()
     final_kv_norm = torch.linalg.vector_norm(final_kv_state.float().flatten(start_dim=-2), dim=-1)
     final_k_sum_norm = torch.linalg.vector_norm(final_k_sum, dim=-1)
@@ -1068,11 +982,9 @@ def _track_linear_attention_layer_position_metrics(
     *,
     model_name: str,
     layer_idx: int,
-    q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
     attn: torch.Tensor,
-    svd_positions: set[int],
     final_k_sum: torch.Tensor | None,
     final_kv_norm: torch.Tensor | None,
     final_k_sum_norm: torch.Tensor | None,
@@ -1090,46 +1002,26 @@ def _track_linear_attention_layer_position_metrics(
     )
     for token_idx in range(int(q.shape[1])):
         position = int(token_idx + 1)
-        q_t = q[:, token_idx].float()
         k_t = k[:, token_idx].float()
         v_t = v[:, token_idx].float()
         delta_kv_t = torch.einsum("bnhf,bnhd->bnhfd", k_t, v_t)
-        prev_flat = running_kv_state.flatten(start_dim=-2)
-        delta_flat = delta_kv_t.flatten(start_dim=-2)
-        prev_norm = torch.linalg.vector_norm(prev_flat, dim=-1)
-        delta_norm = torch.linalg.vector_norm(delta_flat, dim=-1)
-        align_vals = (delta_flat * prev_flat).sum(dim=-1) / (delta_norm * prev_norm).clamp_min(1e-12)
-        align_vals = torch.where(
-            prev_norm > 0.0,
-            align_vals,
-            torch.full_like(align_vals, float("nan")),
-        )
-
         running_kv_state = running_kv_state + delta_kv_t
         running_k_sum = running_k_sum + k_t
         if final_k_sum is None or final_kv_norm is None or final_k_sum_norm is None:
-            q_vals = torch.einsum("bnhf,bnhf->bnh", q_t, running_k_sum)
             k_vals = torch.linalg.vector_norm(running_k_sum, dim=-1)
             kv_vals = torch.linalg.vector_norm(running_kv_state.flatten(start_dim=-2), dim=-1)
         else:
-            q_vals = torch.einsum("bnhf,bnhf->bnh", q_t, final_k_sum)
             k_vals = final_k_sum_norm
             kv_vals = final_kv_norm
 
         stats = _metric_summary(
             {
-                "q_dot_k_sum": q_vals,
                 "k_sum_norm": k_vals,
                 "kv_state_norm": kv_vals,
                 "kv_over_ksum_ratio": kv_vals / k_vals.clamp_min(1e-12),
                 "output_norm": torch.linalg.vector_norm(attn[:, token_idx].float(), dim=-1),
-                "update_alignment": align_vals,
             }
         )
-        if position in svd_positions:
-            stats.update(_svd_metric_summary(running_kv_state))
-        else:
-            stats.update(_nan_metric_summary(("sigma1_share", "sigma1_over_sigma2")))
         rows.append({"model": model_name, "layer_idx": int(layer_idx), "position": position, **stats})
     return rows
 
@@ -1146,7 +1038,6 @@ def _track_custom_linear_attention_position_metrics(
 
     out = embedded
     rows: list[dict[str, object]] = []
-    svd_diagnostic_layers = set(_select_position_diagnostic_layers(len(backbone.layers)))
     for layer_idx, layer in enumerate(backbone.layers):
         norm_idx = 0
         x_layer, norm_idx = layer._apply_feature_attention_block(out, norm_idx)
@@ -1158,11 +1049,9 @@ def _track_custom_linear_attention_position_metrics(
             _track_linear_attention_layer_position_metrics(
                 model_name=model_name,
                 layer_idx=int(layer_idx),
-                q=q,
                 k=k,
                 v=v,
                 attn=attn,
-                svd_positions=set(_svd_diagnostic_positions(int(q.shape[1]))) if layer_idx in svd_diagnostic_layers else set(),
                 final_k_sum=final_k_sum,
                 final_kv_norm=final_kv_norm,
                 final_k_sum_norm=final_k_sum_norm,
@@ -1179,7 +1068,7 @@ def run_position_metric_tracking(
     *,
     experiment: Mapping[str, Any],
     device: str,
-    training_context_length: int,
+    training_context_length: int | None = None,
     partial_cache_path: Path | None = None,
 ) -> pd.DataFrame:
     model_configs = get_models_from_names(list(experiment["model_names"]))
@@ -1198,13 +1087,23 @@ def run_position_metric_tracking(
             print(f"Loaded partial position_metric_df from cache: {partial_cache_path}")
 
     seqlen = int(experiment["seqlen"])
-    for rep in tqdm(range(int(experiment["num_repetitions"])), desc="Position-metric tracking"):
-        base_batch = _materialize_seq_len_batch(
-            experiment=dict(experiment),
-            seqlen=seqlen,
-            rep=rep,
-            device=device,
-        )
+    _ = training_context_length
+    _set_data_generation_seed(int(experiment["data_generation_seed"]))
+    batch_generator = create_seq_len_batch_generator(
+        task_variant="tabular_prior",
+        num_batches=int(experiment["num_repetitions"]),
+        smallest_seqlen=seqlen,
+        largest_seqlen=seqlen,
+        num_features=int(experiment["num_features"]),
+        num_classes=int(experiment["num_classes"]),
+        number_of_test_samples=int(experiment["num_test_samples"]),
+        default_device=device,
+        task_kwargs={},
+    )
+    for rep, (base_batch, _) in enumerate(
+        tqdm(batch_generator, total=int(experiment["num_repetitions"]), desc="Position-metric tracking")
+    ):
+        rep_rows: list[dict[str, object]] = []
         for raw_name, model in models.items():
             model_name = str(raw_name)
             if (model_name, int(rep)) in completed_pairs:
@@ -1222,13 +1121,15 @@ def run_position_metric_tracking(
             )
             metric_df["rep"] = int(rep)
             metric_df["seqlen"] = seqlen
-            rows.extend(metric_df.to_dict(orient="records"))
+            rep_rows.extend(metric_df.to_dict(orient="records"))
             completed_pairs.add((model_name, int(rep)))
-            if partial_cache_path is not None:
-                pd.DataFrame(rows).to_pickle(partial_cache_path)
             del embedded, metric_df
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+        if rep_rows:
+            rows.extend(rep_rows)
+            if partial_cache_path is not None:
+                pd.DataFrame(rows).to_pickle(partial_cache_path)
     return pd.DataFrame(rows)
 
 
