@@ -5,17 +5,12 @@ import torch.nn.functional as F
 from pfns.model.attention_utils import (
     apply_state_to_query_5d,
     build_mlp,
-    clip_hidden_state_matrix_frobenius_norm,
     compute_kv_state_5d,
 )
 
 
 class LinearAttention(nn.Module):
     AUTO_CAUSAL_EVAL_CHUNK_SIZE = 2000
-    HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES = {
-        "state_update",
-        "incontext_predict_only",
-    }
 
     """
     Linear attention layer with optional attention between feature blocks,
@@ -41,8 +36,6 @@ class LinearAttention(nn.Module):
         causal_chunk_size: int | None = None,
         feature_attention_softmax: bool = False,
         feature_dim: int | None = None,
-        hidden_state_frobenius_norm_max: float | None = None,
-        hidden_state_frobenius_norm_apply: str = "state_update",
         eps: float = 1e-6,
     ):
         """Initialize projections, norms, and masking flags."""
@@ -69,25 +62,6 @@ class LinearAttention(nn.Module):
         
         self.dropout = nn.Dropout(dropout)
         self.eps = eps
-        if (
-            hidden_state_frobenius_norm_max is not None
-            and hidden_state_frobenius_norm_max <= 0.0
-        ):
-            raise ValueError("hidden_state_frobenius_norm_max must be > 0.")
-        self.hidden_state_frobenius_norm_max = hidden_state_frobenius_norm_max
-        hidden_state_frobenius_norm_apply = (
-            hidden_state_frobenius_norm_apply.strip().lower().replace("-", "_")
-        )
-        if (
-            hidden_state_frobenius_norm_apply
-            not in self.HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES
-        ):
-            raise ValueError(
-                "hidden_state_frobenius_norm_apply must be one of "
-                f"{sorted(self.HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES)}, got "
-                f"{hidden_state_frobenius_norm_apply!r}."
-            )
-        self.hidden_state_frobenius_norm_apply = hidden_state_frobenius_norm_apply
 
         if attention_between_features:
             self.q_proj_feat = nn.Linear(d_model, d_model)
@@ -104,28 +78,6 @@ class LinearAttention(nn.Module):
         num_norms = 3 if attention_between_features else 2
         self.norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(num_norms)])
         self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
-
-    def _clip_hidden_state_matrix(self, kv_state: torch.Tensor) -> torch.Tensor:
-        return clip_hidden_state_matrix_frobenius_norm(
-            kv_state,
-            self.hidden_state_frobenius_norm_max,
-        )
-
-    def _clip_hidden_state_matrix_on_update(
-        self,
-        kv_state: torch.Tensor,
-    ) -> torch.Tensor:
-        if self.hidden_state_frobenius_norm_apply == "state_update":
-            return self._clip_hidden_state_matrix(kv_state)
-        return kv_state
-
-    def _clip_hidden_state_matrix_before_prediction(
-        self,
-        kv_state: torch.Tensor,
-    ) -> torch.Tensor:
-        if self.hidden_state_frobenius_norm_apply == "incontext_predict_only":
-            return self._clip_hidden_state_matrix(kv_state)
-        return kv_state
 
     def _feature_map(self, x: torch.Tensor) -> torch.Tensor:
         """phi(x) = ELU(x) + 1."""
@@ -182,7 +134,6 @@ class LinearAttention(nn.Module):
             kv_prefix = kv_prefix + kv_state_prefix.unsqueeze(1)
         if k_sum_prefix is not None:
             k_prefix = k_prefix + k_sum_prefix.unsqueeze(1)
-        kv_prefix = self._clip_hidden_state_matrix_on_update(kv_prefix)
 
         num = torch.einsum("bsnhf,bsnhfd->bsnhd", q, kv_prefix)
         denom = torch.einsum("bsnhf,bsnhf->bsnh", q, k_prefix)
@@ -297,7 +248,6 @@ class LinearAttention(nn.Module):
             return self._causal_linear_attention_items(q_train, k_train, v_train)
 
         kv_state_train, k_sum_train = compute_kv_state_5d(k_train, v_train)
-        kv_state_train = self._clip_hidden_state_matrix_on_update(kv_state_train)
         attn_train = apply_state_to_query_5d(
             q_train,
             kv_state_train,
@@ -312,8 +262,6 @@ class LinearAttention(nn.Module):
         k_train: torch.Tensor,
         v_train: torch.Tensor,
         q_test: torch.Tensor,
-        k_test: torch.Tensor,
-        v_test: torch.Tensor,
     ) -> torch.Tensor:
         """Apply the split train/test attention path.
 
@@ -329,22 +277,10 @@ class LinearAttention(nn.Module):
             causal_train=use_causal_train_only,
         )
         q_test = self._feature_map(q_test)
-        prediction_kv_state = kv_state_train
-        prediction_k_sum = k_sum_train
-        if self.hidden_state_frobenius_norm_apply == "incontext_predict_only" and (
-            self.causal_train_only or not self.causal
-        ):
-            k_test = self._feature_map(k_test)
-            kv_state_test, k_sum_test = compute_kv_state_5d(k_test, v_test)
-            prediction_kv_state = prediction_kv_state + kv_state_test
-            prediction_k_sum = prediction_k_sum + k_sum_test
-            prediction_kv_state = self._clip_hidden_state_matrix_before_prediction(
-                prediction_kv_state
-            )
         attn_test = apply_state_to_query_5d(
             q_test,
-            prediction_kv_state,
-            prediction_k_sum,
+            kv_state_train,
+            k_sum_train,
             eps=self.eps,
         )
         return torch.cat([attn_train, attn_test], dim=1)
@@ -400,8 +336,6 @@ class LinearAttention(nn.Module):
             k_train,
             v_train,
             q_test,
-            k_test,
-            v_test,
         )
         return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
 
@@ -426,7 +360,6 @@ class LinearAttention(nn.Module):
             q = self._feature_map(q)
             k = self._feature_map(k)
             kv_state, k_sum = compute_kv_state_5d(k, v)
-            kv_state = self._clip_hidden_state_matrix_on_update(kv_state)
             attn = apply_state_to_query_5d(q, kv_state, k_sum, eps=self.eps)
         x = self._apply_item_output_and_mlp(x, attn, norm_idx)
         return x, {"kv_state": kv_state, "k_sum": k_sum}
@@ -459,15 +392,6 @@ class LinearAttention(nn.Module):
                 k_sum_prefix=k_sum,
             )
         else:
-            if self.hidden_state_frobenius_norm_apply == "incontext_predict_only" and (
-                self.causal_train_only or not self.causal
-            ):
-                k = self._feature_map(k)
-                kv_state_test, k_sum_test = compute_kv_state_5d(k, v)
-                kv_state = self._clip_hidden_state_matrix_before_prediction(
-                    kv_state + kv_state_test
-                )
-                k_sum = k_sum + k_sum_test
             attn = apply_state_to_query_5d(
                 q,
                 kv_state,
