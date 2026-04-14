@@ -60,6 +60,12 @@ class LinearAttention(nn.Module):
         assert causal_chunk_size is None or causal_chunk_size > 0, (
             "causal_chunk_size must be >= 1."
         )
+        assert not (
+            use_k_sum_normalization and state_renormalization not in {None, "none"}
+        ), (
+            "use_k_sum_normalization and state_renormalization are mutually "
+            "exclusive."
+        )
         assert (
             state_renormalization_target_norm is None
             or state_renormalization_target_norm > 0
