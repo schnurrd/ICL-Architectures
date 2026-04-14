@@ -221,9 +221,8 @@ def get_config(
             dropout=0.0,
             activation="relu",
             layer_kwargs={
-                "feature_attention_softmax": False,
                 **layer_kwargs,
-                #"feature_dim": 64,
+                #"qk_dim": 64,
             },
         ),
         features_per_group=20,

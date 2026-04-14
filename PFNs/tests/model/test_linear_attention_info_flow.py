@@ -1,5 +1,6 @@
 import torch
 
+from pfns.model.backbones import LinearAttentionBackboneConfig
 from pfns.model.linear_attention import LinearAttention
 
 
@@ -14,7 +15,6 @@ def _build_layer(
         dim_mlp_hidden=16,
         dropout=0.0,
         activation="swish",
-        attention_between_features=False,
         causal=causal,
         causal_train_only=causal_train_only,
     )
@@ -145,8 +145,105 @@ def test_linear_attention_causal_train_only_test_tokens_independent():
     torch.testing.assert_close(out_test[:, 1:2], out_pert_test[:, 1:2], rtol=5e-4, atol=1e-5)
 
 
+def test_linear_attention_backbone_ignores_legacy_layer_kwargs():
+    backbone = LinearAttentionBackboneConfig(
+        nlayers=2,
+        nhead=2,
+        mlp_hidden_dim=16,
+        layer_kwargs={
+            "feature_dim": 3,
+            "attention_between_features": False,
+            "feature_attention_softmax": False,
+            "causal": True,
+        },
+    ).create_backbone(ninp=8, attention_between_features=False)
+
+    assert len(backbone.layers) == 2
+    assert all(layer.causal for layer in backbone.layers)
+    assert all(layer.qk_dim == 3 for layer in backbone.layers)
+
+
+def test_linear_attention_chunked_causal_matches_unchunked_with_state_renormalization():
+    torch.manual_seed(0)
+    layer_full = LinearAttention(
+        d_model=8,
+        num_heads=2,
+        dim_mlp_hidden=16,
+        dropout=0.0,
+        activation="swish",
+        causal=True,
+        state_renormalization="sqrt_d_fro",
+    )
+    layer_chunked = LinearAttention(
+        d_model=8,
+        num_heads=2,
+        dim_mlp_hidden=16,
+        dropout=0.0,
+        activation="swish",
+        causal=True,
+        causal_chunk_size=3,
+        state_renormalization="sqrt_d_fro",
+    )
+    layer_chunked.load_state_dict(layer_full.state_dict())
+    layer_full.eval()
+    layer_chunked.eval()
+
+    x = torch.randn(2, 9, 1, 8)
+
+    with torch.no_grad():
+        out_full, state_full = layer_full.incontext_fit(x)
+        out_chunked, state_chunked = layer_chunked.incontext_fit(x)
+
+    torch.testing.assert_close(out_full, out_chunked, rtol=5e-4, atol=1e-5)
+    torch.testing.assert_close(
+        state_full["kv_state"],
+        state_chunked["kv_state"],
+        rtol=5e-4,
+        atol=1e-5,
+    )
+    torch.testing.assert_close(
+        state_full["k_sum"],
+        state_chunked["k_sum"],
+        rtol=5e-4,
+        atol=1e-5,
+    )
+
+
+def test_linear_attention_chunked_incontext_predict_matches_forward_with_state_renormalization():
+    torch.manual_seed(0)
+    layer = LinearAttention(
+        d_model=8,
+        num_heads=2,
+        dim_mlp_hidden=16,
+        dropout=0.0,
+        activation="swish",
+        causal=True,
+        causal_chunk_size=3,
+        state_renormalization="sqrt_d_fro",
+    )
+    layer.eval()
+
+    x = torch.randn(2, 9, 1, 8)
+    train_len = 5
+
+    with torch.no_grad():
+        out_full = layer(x, single_eval_pos=train_len)
+        train_out, state = layer.incontext_fit(x[:, :train_len])
+        test_out = layer.incontext_predict(x[:, train_len:], state)
+
+    torch.testing.assert_close(
+        torch.cat([train_out, test_out], dim=1),
+        out_full,
+        rtol=5e-4,
+        atol=1e-5,
+    )
+
+
 if __name__ == "__main__":
     test_linear_attention_test_tokens_independent()
     test_linear_attention_causal_eval_test_tokens_independent()
     test_linear_attention_causal_train_mode_test_tokens_dependent()
     test_linear_attention_causal_train_only_test_tokens_independent()
+    test_linear_attention_backbone_ignores_legacy_layer_kwargs()
+    test_linear_attention_chunked_causal_matches_unchunked_with_state_renormalization()
+    test_linear_attention_chunked_incontext_predict_matches_forward_with_state_renormalization()
