@@ -20,14 +20,6 @@ LEGACY_CONFIG_KEYS_TO_DROP: dict[str, set[str]] = {
     },
 }
 
-LEGACY_CONFIG_KEY_RENAMES: dict[str, dict[str, str]] = {
-    "pfns.model.backbones:LinearAttentionBackboneConfig": {
-        "dropout": "dropout_prob",
-        "activation": "mlp_activation",
-    },
-}
-
-
 class BaseConfig:
     strict_field_types: ClassVar[bool] = True
 
@@ -131,21 +123,6 @@ class BaseConfig:
         config_type = data.pop("__config_type__")
         for legacy_key in LEGACY_CONFIG_KEYS_TO_DROP.get(config_type, set()):
             data.pop(legacy_key, None)
-        for legacy_key, current_key in LEGACY_CONFIG_KEY_RENAMES.get(
-            config_type,
-            {},
-        ).items():
-            if legacy_key not in data:
-                continue
-            legacy_value = data.pop(legacy_key)
-            current_value = data.get(current_key)
-            if current_value is None:
-                data[current_key] = legacy_value
-            elif current_value != legacy_value:
-                raise ValueError(
-                    f"Config {config_type} contains both deprecated "
-                    f"{legacy_key!r} and {current_key!r} with different values."
-                )
 
         module_name, class_name = config_type.split(":")
         mod = importlib.import_module(module_name)

@@ -254,26 +254,6 @@ class TabularModel(nn.Module):
                 alias_key = key.replace(backbone_prefix, transformer_prefix, 1)
                 state_dict[alias_key] = state_dict[key]
 
-        # LinearAttention renamed its two norm modules from a positional ModuleList
-        # to explicit attention_norm/mlp_norm attributes. Only remap when the
-        # current model actually expects the new key, so backbones that still use
-        # norms.0/norms.1 are left untouched.
-        expected_keys = set(self.state_dict().keys())
-        for old_fragment, new_fragment in (
-            (".norms.0.", ".attention_norm."),
-            (".norms.1.", ".mlp_norm."),
-        ):
-            keys_to_remap = [
-                key
-                for key in state_dict.keys()
-                if key.startswith(prefix) and old_fragment in key
-            ]
-            for old_key in keys_to_remap:
-                new_key = old_key.replace(old_fragment, new_fragment, 1)
-                if new_key in expected_keys:
-                    value = state_dict.pop(old_key)
-                    state_dict.setdefault(new_key, value)
-
     def _prepare_batch_first_inputs(
         self,
         x: torch.Tensor | None,
