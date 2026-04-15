@@ -192,7 +192,7 @@ def get_config(
         resolve_eval_pos_split_pct(eval_pos_split_pct)
     )
     resolved_seq_len_stages = seq_len_stages
-    resolved_nlayers = 15 if nlayers is None else int(nlayers)
+    resolved_nlayers = 12 if nlayers is None else int(nlayers)
     if resolved_nlayers <= 0:
         raise ValueError(f"nlayers must be >= 1, got {resolved_nlayers}.")
     resolved_epochs = profile.get("epochs", 200)
