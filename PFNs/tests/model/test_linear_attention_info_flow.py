@@ -1,5 +1,6 @@
 import torch
 import pytest
+from fla.modules import RMSNorm
 
 from pfns.base_config import BaseConfig
 from pfns.model.backbones import LinearAttentionBackboneConfig
@@ -15,8 +16,7 @@ def _build_layer(
         d_model=8,
         num_heads=2,
         mlp_hidden_dim=16,
-        dropout_prob=0.0,
-        mlp_activation="swish",
+        norm_type="layernorm",
         causal=causal,
         causal_train_only=causal_train_only,
     )
@@ -91,8 +91,7 @@ def test_linear_attention_causal_matches_prefix_reads_with_scaled_query():
         d_model=8,
         num_heads=2,
         mlp_hidden_dim=16,
-        dropout_prob=0.0,
-        mlp_activation="swish",
+        norm_type="layernorm",
         causal=True,
         scale_query_by_sqrt_dk=True,
         use_k_sum_normalization=False,
@@ -106,7 +105,7 @@ def test_linear_attention_causal_matches_prefix_reads_with_scaled_query():
         normalize_sum=layer.normalize_q_sum,
     )
     q = layer._scale_query(q)
-    k = layer._apply_feature_map(
+    k = layer._apply_feature_map_k(
         k_raw,
         normalize_sum=layer.normalize_k_sum,
     )
@@ -133,8 +132,7 @@ def test_linear_attention_chunked_causal_matches_unchunked_with_state_renormaliz
         d_model=8,
         num_heads=2,
         mlp_hidden_dim=16,
-        dropout_prob=0.0,
-        mlp_activation="swish",
+        norm_type="layernorm",
         causal=True,
         use_k_sum_normalization=False,
         state_renormalization="sqrt_d_fro",
@@ -143,8 +141,7 @@ def test_linear_attention_chunked_causal_matches_unchunked_with_state_renormaliz
         d_model=8,
         num_heads=2,
         mlp_hidden_dim=16,
-        dropout_prob=0.0,
-        mlp_activation="swish",
+        norm_type="layernorm",
         causal=True,
         causal_chunk_size=3,
         use_k_sum_normalization=False,
@@ -181,8 +178,7 @@ def test_linear_attention_chunked_incontext_predict_matches_forward_with_state_r
         d_model=8,
         num_heads=2,
         mlp_hidden_dim=16,
-        dropout_prob=0.0,
-        mlp_activation="swish",
+        norm_type="layernorm",
         causal=True,
         causal_chunk_size=3,
         use_k_sum_normalization=False,

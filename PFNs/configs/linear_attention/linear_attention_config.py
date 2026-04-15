@@ -249,9 +249,7 @@ def get_config(
         backbone=LinearAttentionBackboneConfig(
             nlayers=resolved_nlayers,
             nhead=4,
-            dropout_prob=0.0,
             mlp_hidden_dim=320 * 2,
-            mlp_activation="relu",
             layer_kwargs=layer_kwargs,
         ),
         features_per_group=20,

@@ -3,12 +3,23 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 from torch import nn
+from fla.modules import GatedMLP as FLAGatedMLP
+from fla.modules.feature_map import HadamardFeatureMap
 
 from pfns.model.attention_utils import (
-    build_mlp,
     build_norm,
     renormalize_state_frobenius,
 )
+
+
+class GatedMLP(FLAGatedMLP):
+    """Upstream FLA GatedMLP with CPU-safe forward fallback."""
+
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        if x.is_cuda:
+            return super().forward(x, **kwargs)
+        gate, y = self.gate_proj(x), self.up_proj(x)
+        return self.down_proj(F.silu(gate) * y)
 
 
 class LinearAttention(nn.Module):
@@ -26,17 +37,35 @@ class LinearAttention(nn.Module):
     """
     DEFAULT_CAUSAL_CHUNK_SIZE = 64
 
+    @staticmethod
+    def _build_feature_maps(
+        feature_map: str,
+        head_k_dim: int,
+    ) -> tuple[nn.Module, nn.Module]:
+        if feature_map == "elementwise_product":
+            return HadamardFeatureMap(head_k_dim), HadamardFeatureMap(head_k_dim)
+        if feature_map == "elu":
+            class _EluPlusOne(nn.Module):
+                def forward(self, x: torch.Tensor) -> torch.Tensor:
+                    return F.elu(x) + 1.0
+
+            return _EluPlusOne(), _EluPlusOne()
+        if feature_map == "identity":
+            return nn.Identity(), nn.Identity()
+        raise ValueError(f"Unsupported feature_map: {feature_map}")
+
     def __init__(
         self,
         # Model dimensions.
         d_model: int,
         num_heads: int,
+        expand_k: float = 1.0,
+        expand_v: float = 1.0,
         # MLP block.
-        mlp_hidden_dim: int,
-        mlp_activation: str = "silu",
+        mlp_hidden_dim: int | None = None,
         use_mlp_norm: bool = True,
-        # Attention dimensions.
-        qk_dim: int | None = None,
+        # Attention feature map.
+        feature_map: str = "elu",
         # Sequence mixing mode.
         causal: bool = False,
         causal_train_only: bool = False,
@@ -45,13 +74,11 @@ class LinearAttention(nn.Module):
         normalize_q_sum: bool = False,
         normalize_k_sum: bool = False,
         scale_query_by_sqrt_dk: bool = False,
-        use_k_sum_normalization: bool = True,
+        use_k_sum_normalization: bool = False,
         # Attention/output blocks.
         use_attention_norm: bool = True,
-        use_output_norm: bool = False,
-        use_output_projection: bool = True,
-        dropout_prob: float = 0.1,
-        norm_type: str = "layernorm",
+        use_output_norm: bool = True,
+        norm_type: str = "rmsnorm",
         # Recurrent state handling.
         state_renormalization: str | None = None,
         learnable_state_renorm_scale: bool = True,
@@ -62,6 +89,7 @@ class LinearAttention(nn.Module):
         super().__init__()
 
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads."
+        assert expand_k > 0 and expand_v > 0, "expand_k and expand_v must be > 0."
         assert not (causal and causal_train_only), (
             "causal and causal_train_only are mutually exclusive."
         )
@@ -81,8 +109,18 @@ class LinearAttention(nn.Module):
 
         self.d_model = d_model
         self.num_heads = num_heads
-        self.head_dim = d_model // num_heads
-        self.qk_dim = qk_dim if qk_dim is not None else self.head_dim
+
+        self.key_dim = int(d_model * expand_k)
+        self.value_dim = int(d_model * expand_v)
+        assert self.key_dim % self.num_heads == 0, (
+            "int(d_model * expand_k) must be divisible by num_heads."
+        )
+        assert self.value_dim % self.num_heads == 0, (
+            "int(d_model * expand_v) must be divisible by num_heads."
+        )
+
+        self.head_k_dim = self.key_dim // self.num_heads
+        self.head_v_dim = self.value_dim // self.num_heads
 
         self.causal = causal
         self.causal_train_only = causal_train_only
@@ -106,13 +144,23 @@ class LinearAttention(nn.Module):
                 torch.zeros(self.num_heads),
             )
 
-        self.q_proj_item = nn.Linear(d_model, self.num_heads * self.qk_dim)
-        self.k_proj_item = nn.Linear(d_model, self.num_heads * self.qk_dim)
-        self.v_proj_item = nn.Linear(d_model, d_model)
-        self.out_proj_item = (
-            nn.Linear(d_model, d_model) if use_output_projection else nn.Identity()
+        self.feature_map_q, self.feature_map_k = self._build_feature_maps(
+            feature_map,
+            self.head_k_dim,
         )
-        self.output_dropout = nn.Dropout(dropout_prob)
+
+        self.q_proj_item = nn.Linear(
+            d_model,
+            self.key_dim,
+            bias=False,
+        )
+        self.k_proj_item = nn.Linear(
+            d_model,
+            self.key_dim,
+            bias=False,
+        )
+        self.v_proj_item = nn.Linear(d_model, self.value_dim, bias=False)
+        self.out_proj_item = nn.Linear(self.value_dim, d_model, bias=False)
 
         self.attention_norm = build_norm(
             d_model,
@@ -120,7 +168,7 @@ class LinearAttention(nn.Module):
             norm_type=norm_type,
         )
         self.output_norm = build_norm(
-            self.head_dim,
+            self.head_v_dim,
             enabled=use_output_norm,
             norm_type=norm_type,
         )
@@ -130,15 +178,12 @@ class LinearAttention(nn.Module):
             enabled=use_mlp_norm,
             norm_type=norm_type,
         )
-        self.mlp = build_mlp(
-            d_model,
-            mlp_hidden_dim,
-            dropout_prob,
-            mlp_activation,
+        self.mlp = GatedMLP(
+            hidden_size=d_model,
+            intermediate_size=mlp_hidden_dim,
+            hidden_act="swish",
+            fuse_swiglu=False,
         )
-
-    def _feature_map(self, x: torch.Tensor) -> torch.Tensor:
-        return F.elu(x) + 1.0
 
     def _apply_feature_map(
         self,
@@ -146,7 +191,18 @@ class LinearAttention(nn.Module):
         *,
         normalize_sum: bool,
     ) -> torch.Tensor:
-        x = self._feature_map(x)
+        x = self.feature_map_q(x)
+        if normalize_sum:
+            x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
+        return x
+
+    def _apply_feature_map_k(
+        self,
+        x: torch.Tensor,
+        *,
+        normalize_sum: bool,
+    ) -> torch.Tensor:
+        x = self.feature_map_k(x)
         if normalize_sum:
             x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
         return x
@@ -159,9 +215,19 @@ class LinearAttention(nn.Module):
         batch_size, seq_len, num_features, _ = x.shape
         assert num_features == 1, f"LinearAttention only supports num_features=1, got {num_features}."
         x_flat = x.transpose(1, 2).reshape(batch_size * num_features, seq_len, self.d_model)
-        q = self.q_proj_item(x_flat).view(batch_size * num_features, seq_len, self.num_heads, self.qk_dim)
-        k = self.k_proj_item(x_flat).view(batch_size * num_features, seq_len, self.num_heads, self.qk_dim)
-        v = self.v_proj_item(x_flat).view(batch_size * num_features, seq_len, self.num_heads, self.head_dim)
+        q = self.q_proj_item(x_flat).view(batch_size * num_features, seq_len, self.num_heads, self.head_k_dim)
+        k = self.k_proj_item(x_flat).view(
+            batch_size * num_features,
+            seq_len,
+            self.num_heads,
+            self.head_k_dim,
+        )
+        v = self.v_proj_item(x_flat).view(
+            batch_size * num_features,
+            seq_len,
+            self.num_heads,
+            self.head_v_dim,
+        )
         return q, k, v
 
     def _renormalize_state(self, kv_state: torch.Tensor) -> torch.Tensor:
@@ -179,7 +245,7 @@ class LinearAttention(nn.Module):
 
     def _scale_query(self, q: torch.Tensor) -> torch.Tensor:
         if self.scale_query_by_sqrt_dk:
-            q = q / (self.qk_dim ** 0.5)
+            q = q / (self.head_k_dim ** 0.5)
         return q
 
     def _apply_query_key_feature_maps(
@@ -189,7 +255,7 @@ class LinearAttention(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         q = self._apply_feature_map(q, normalize_sum=self.normalize_q_sum)
         q = self._scale_query(q)
-        k = self._apply_feature_map(k, normalize_sum=self.normalize_k_sum)
+        k = self._apply_feature_map_k(k, normalize_sum=self.normalize_k_sum)
         return q, k
 
     def _read_from_kv_state(
@@ -330,16 +396,16 @@ class LinearAttention(nn.Module):
             num_features,
             seq_len,
             self.num_heads,
-            self.head_dim,
+            self.head_v_dim,
         )
         attn = self.output_norm(attn)
         attn = attn.reshape(
             batch_size,
             num_features,
             seq_len,
-            self.d_model,
+            self.value_dim,
         ).transpose(1, 2)
-        x = x + self.output_dropout(self.out_proj_item(attn))
+        x = x + self.out_proj_item(attn)
         return x + self.mlp(self.mlp_norm(x))
 
     def forward(self, x, *, single_eval_pos: int | None = None, **kwargs):
