@@ -187,21 +187,11 @@ class LinearAttention(nn.Module):
     def _apply_feature_map(
         self,
         x: torch.Tensor,
+        feature_map: nn.Module,
         *,
         normalize_sum: bool,
     ) -> torch.Tensor:
-        x = self.feature_map_q(x)
-        if normalize_sum:
-            x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
-        return x
-
-    def _apply_feature_map_k(
-        self,
-        x: torch.Tensor,
-        *,
-        normalize_sum: bool,
-    ) -> torch.Tensor:
-        x = self.feature_map_k(x)
+        x = feature_map(x)
         if normalize_sum:
             x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
         return x
@@ -247,9 +237,17 @@ class LinearAttention(nn.Module):
         q: torch.Tensor,
         k: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        q = self._apply_feature_map(q, normalize_sum=self.normalize_q_sum)
+        q = self._apply_feature_map(
+            q,
+            self.feature_map_q,
+            normalize_sum=self.normalize_q_sum,
+        )
         q = q * self.query_scale
-        k = self._apply_feature_map_k(k, normalize_sum=self.normalize_k_sum)
+        k = self._apply_feature_map(
+            k,
+            self.feature_map_k,
+            normalize_sum=self.normalize_k_sum,
+        )
         return q, k
 
     def _read_from_kv_state(
@@ -373,6 +371,7 @@ class LinearAttention(nn.Module):
         )
         q_test = self._apply_feature_map(
             q[:, single_eval_pos:],
+            self.feature_map_q,
             normalize_sum=self.normalize_q_sum,
         )
         q_test = q_test * self.query_scale
@@ -451,6 +450,7 @@ class LinearAttention(nn.Module):
         else:
             q = self._apply_feature_map(
                 q,
+                self.feature_map_q,
                 normalize_sum=self.normalize_q_sum,
             )
             q = q * self.query_scale
