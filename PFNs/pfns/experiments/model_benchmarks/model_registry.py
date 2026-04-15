@@ -519,21 +519,21 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_verbose": False,
         "eval_autocast_dtype": "bf16",
     },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_state_init_v2": {
-        **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 5e-3,
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 40,
-        "oracle_query_batch_fraction": 0.04,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_random_init_hidden_state": True,
-        "oracle_verbose": False,
-        "eval_autocast_dtype": "bf16",
-    },
+    # "Oracle_Hidden_State_DeltaNet_Comb_ST_state_init_v2": {
+    #     **DELTANET_MODELS["DeltaNet_Comb_ST"],
+    #     "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
+    #     "oracle_hidden_state_baseline": True,
+    #     "oracle_num_epochs": 400,
+    #     "oracle_lr": 5e-3,
+    #     "oracle_weight_decay": 1e-5,
+    #     "oracle_patience": 40,
+    #     "oracle_query_batch_fraction": 0.04,
+    #     "oracle_selection_fraction": 0.1,
+    #     "oracle_evaluate_only_max_seqlen": True,
+    #     "oracle_random_init_hidden_state": True,
+    #     "oracle_verbose": False,
+    #     "eval_autocast_dtype": "bf16",
+    # },
     "Oracle_Hidden_State_DeltaNet_Comb_ST": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
         "display_name": "Oracle Hidden State\n(DeltaNet)",
@@ -611,23 +611,19 @@ CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
     #     "wandb_run_id": "linear_attention/runs/uo3uos24",
     # },
     
-    "Linear_Attention_Causal_Comb_ST_high_1l": {
-        "wandb_run_id": "linear_attention/runs/hh407jv1",
-    },
-    "Linear_Attention_Causal_Comb_ST_high_2l": {
-        "wandb_run_id": "linear_attention/runs/lwt3i9xh",
-        "note": "Epoch 124/200"
-    },
-    "Linear_Attention_Causal_Comb_ST_high_4l": {
-        "wandb_run_id": "linear_attention/runs/uurehyuk",
-        "note": "Epoch 180/200"
-    },
-    "Linear_Attention_Causal_Comb_ST_high_8l": {
-        "wandb_run_id": "linear_attention/runs/23pi6hz5",
-        "note": "Epoch 113/200"
-    },
-    
-    
+    # "Linear_Attention_Causal_Comb_ST_high_1l": {
+    #     "wandb_run_id": "linear_attention/runs/hh407jv1",
+    # },
+    # "Linear_Attention_Causal_Comb_ST_high_2l": {
+    #     "wandb_run_id": "linear_attention/runs/lwt3i9xh",
+    # },
+    # "Linear_Attention_Causal_Comb_ST_high_4l": {
+    #     "wandb_run_id": "linear_attention/runs/uurehyuk",
+    # },
+    # "Linear_Attention_Causal_Comb_ST_high_8l": {
+    #     "wandb_run_id": "linear_attention/runs/23pi6hz5",
+    # },
+        
     # "Linear_Attention_Non_Causal_Comb_ST_small_2l": {
     #     "wandb_run_id": "linear_attention/runs/djan9ch8",
     # },
@@ -648,7 +644,6 @@ CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
     # },
     # "Linear_Attention_Non_Causal_Comb_ST_high_8l": {
     #     "wandb_run_id": "linear_attention/runs/qcmexzis",
-    #     "note": "Epoch 56/200"
     # },
 }
 
@@ -685,7 +680,6 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "mimetic_initialization": MIMETIC_INITIALIZATION_MODELS,
     "subsampled": SUBSAMPLED_MODELS,
     "state_passing": STATE_PASSING_MODELS,
-    "mimetic_initialization": MIMETIC_INITIALIZATION_MODELS,
     "causal_linear_attention_experiments": CAUSAL_LINEAR_ATTENTION_EXPERIMENTS,
     "fla_models": {
         **KDA_MODELS,
