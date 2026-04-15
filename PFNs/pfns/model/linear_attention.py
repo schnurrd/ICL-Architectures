@@ -28,27 +28,35 @@ class LinearAttention(nn.Module):
 
     def __init__(
         self,
-        d_model: int, # dimension of the input and output features
+        # Model dimensions.
+        d_model: int,
         num_heads: int,
+        # MLP block.
         mlp_hidden_dim: int,
-        dropout_prob: float = 0.1,
         mlp_activation: str = "silu",
+        use_mlp_norm: bool = True,
+        # Attention dimensions.
+        qk_dim: int | None = None,
+        # Sequence mixing mode.
         causal: bool = False,
         causal_train_only: bool = False,
         causal_chunk_size: int | None = None,
-        qk_dim: int | None = None, # per head query/key dim.
-        use_attention_norm: bool = True, # if true apply layer norm before attention projection
-        use_mlp_norm: bool = True,
-        norm_type: str = "layernorm",
-        use_output_norm: bool = False,
-        use_output_projection: bool = True,
+        # Attention feature map and readout.
         normalize_q_sum: bool = False,
         normalize_k_sum: bool = False,
         scale_query_by_sqrt_dk: bool = False,
         use_k_sum_normalization: bool = True,
+        # Attention/output blocks.
+        use_attention_norm: bool = True,
+        use_output_norm: bool = False,
+        use_output_projection: bool = True,
+        dropout_prob: float = 0.1,
+        norm_type: str = "layernorm",
+        # Recurrent state handling.
         state_renormalization: str | None = None,
         learnable_state_renorm_scale: bool = True,
         state_renormalization_target_norm: float | None = None,
+        # Numerical stability.
         eps: float = 1e-6,
     ):
         super().__init__()
@@ -75,13 +83,16 @@ class LinearAttention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = d_model // num_heads
         self.qk_dim = qk_dim if qk_dim is not None else self.head_dim
+
         self.causal = causal
         self.causal_train_only = causal_train_only
         self.causal_chunk_size = causal_chunk_size
+
         self.normalize_q_sum = normalize_q_sum
         self.normalize_k_sum = normalize_k_sum
         self.scale_query_by_sqrt_dk = scale_query_by_sqrt_dk
         self.use_k_sum_normalization = use_k_sum_normalization
+
         self.state_renormalization = state_renormalization
         self.state_renormalization_target_norm = state_renormalization_target_norm
         self.eps = eps
@@ -95,26 +106,28 @@ class LinearAttention(nn.Module):
                 torch.zeros(self.num_heads),
             )
 
-        self.output_dropout = nn.Dropout(dropout_prob)
         self.q_proj_item = nn.Linear(d_model, self.num_heads * self.qk_dim)
         self.k_proj_item = nn.Linear(d_model, self.num_heads * self.qk_dim)
         self.v_proj_item = nn.Linear(d_model, d_model)
         self.out_proj_item = (
             nn.Linear(d_model, d_model) if use_output_projection else nn.Identity()
         )
+        self.output_dropout = nn.Dropout(dropout_prob)
+
         self.attention_norm = build_norm(
             d_model,
             enabled=use_attention_norm,
             norm_type=norm_type,
         )
-        self.mlp_norm = build_norm(
-            d_model,
-            enabled=use_mlp_norm,
-            norm_type=norm_type,
-        )
         self.output_norm = build_norm(
             self.head_dim,
             enabled=use_output_norm,
+            norm_type=norm_type,
+        )
+
+        self.mlp_norm = build_norm(
+            d_model,
+            enabled=use_mlp_norm,
             norm_type=norm_type,
         )
         self.mlp = build_mlp(

@@ -5,6 +5,8 @@ Config selector for Linear Attention backbone training profiles.
 
 from __future__ import annotations
 
+import typing as tp
+
 import torch
 
 from configs.config_utils import (
@@ -21,7 +23,7 @@ from pfns.prior_defaults import (
 )
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
 from pfns.model.backbones import LinearAttentionBackboneConfig
-from pfns.model.mode_normalization import resolve_sequence_mode
+from pfns.model.mode_normalization import normalize_mode_name
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.run_logger import WandbConfig
@@ -33,7 +35,7 @@ from pfns.train import (
 )
 
 DEFAULT_BATCH_SIZE = 8
-SUPPORTED_SEQUENCE_MODES = ("Comb_ST", "Comb_MT")
+SUPPORTED_SEQUENCE_MODES = ("Comb_ST", "Comb_MT", "Non_Causal_Comb_ST")
 GLOBAL_TRAIN_MIXED_PRECISION = (
     torch.cuda.is_available()
     and torch.cuda.is_bf16_supported()
@@ -80,21 +82,18 @@ TRAINING_PROFILES = {
 
 
 def _resolve_linear_attention_mode(
-    sequence_mode: str | None,
-    kwargs: dict[str, object]
-) -> tuple[str | None, dict[str, bool]]:
+    sequence_mode: str,
+) -> tuple[str, dict[str, bool]]:
     """Resolve the sequence mode and related layer kwargs for linear attention config."""
-    if sequence_mode is None:
-        if kwargs.get("causal", False): # for backward compatibility
-            return "Comb_MT", {"causal": True, "causal_train_only": False}
-        else:
-            return None, {"causal": False, "causal_train_only": False}
-
-    resolved_mode = resolve_sequence_mode(sequence_mode)
+    resolved_mode = {
+        "comb_st": "Comb_ST",
+        "comb_mt": "Comb_MT",
+        "non_causal_comb_st": "Non_Causal_Comb_ST",
+    }.get(normalize_mode_name(sequence_mode))
     if resolved_mode not in SUPPORTED_SEQUENCE_MODES:
         raise ValueError(
             "Linear attention config only supports sequence_mode "
-            f"{SUPPORTED_SEQUENCE_MODES}, got {resolved_mode!r}."
+            f"{SUPPORTED_SEQUENCE_MODES}, got {sequence_mode!r}."
         )
 
     return resolved_mode, {
@@ -102,11 +101,11 @@ def _resolve_linear_attention_mode(
         "causal_train_only": resolved_mode == "Comb_ST",
     }
 
+
 def get_config(
     config_index: int = 0,
     training_setup: str = "high",
     task_variant: str = "tabular_prior",
-    nlayers: int | None = None,
     batch_size: int | None = None,
     max_seq_len: int | None = None,
     batch_size_stages: list[tuple[int, int]] | tuple[tuple[int, int], ...] | None = None,
@@ -115,24 +114,29 @@ def get_config(
     seq_len_stages: list[tuple[int | float | str, ...]] | tuple[tuple[int | float | str, ...], ...] | None = None,
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
+    # Sequence mixing mode.
+    sequence_mode: tp.Literal[
+        "Comb_ST",
+        "Comb_MT",
+        "Non_Causal_Comb_ST",
+    ] = "Non_Causal_Comb_ST",
     interleave_x_y_pairs: bool = False,
+    nlayers: int | None = None,
     feature_positional_embedding: str | None = None,
-    use_categorical_features: bool = True,
-    sequence_mode: str | None = None,
-    use_attention_norm: bool = True,
-    use_mlp_norm: bool = True,
-    norm_type: str = "layernorm",
-    use_output_norm: bool = False,
-    use_output_projection: bool = True,
+    # Attention feature map and readout.
     normalize_q_sum: bool = False,
     normalize_k_sum: bool = False,
     scale_query_by_sqrt_dk: bool = False,
     use_k_sum_normalization: bool = True,
+    use_attention_norm: bool = True,
+    use_output_norm: bool = False,
+    use_output_projection: bool = True,
+    norm_type: str = "layernorm",
+    use_mlp_norm: bool = True,
     state_renormalization: str | None = None,
     learnable_state_renorm_scale: bool = True,
     causal_chunk_size: int | None = None,
     eps: float = 1e-6,
-    **kwargs,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -143,23 +147,21 @@ def get_config(
         feature_positional_embedding
     )
     state_renormalization = normalize_optional_none_string(state_renormalization)
-    resolved_sequence_mode, layer_kwargs = _resolve_linear_attention_mode(
-        sequence_mode, kwargs
-    )
+    resolved_sequence_mode, layer_kwargs = _resolve_linear_attention_mode(sequence_mode)
     layer_kwargs = {
         **layer_kwargs,
-        "use_attention_norm": use_attention_norm,
-        "use_mlp_norm": use_mlp_norm,
-        "norm_type": norm_type,
-        "use_output_norm": use_output_norm,
-        "use_output_projection": use_output_projection,
+        "causal_chunk_size": causal_chunk_size,
         "normalize_q_sum": normalize_q_sum,
         "normalize_k_sum": normalize_k_sum,
         "scale_query_by_sqrt_dk": scale_query_by_sqrt_dk,
         "use_k_sum_normalization": use_k_sum_normalization,
+        "use_attention_norm": use_attention_norm,
+        "norm_type": norm_type,
+        "use_output_norm": use_output_norm,
+        "use_output_projection": use_output_projection,
+        "use_mlp_norm": use_mlp_norm,
         "state_renormalization": state_renormalization,
         "learnable_state_renorm_scale": learnable_state_renorm_scale,
-        "causal_chunk_size": causal_chunk_size,
         "eps": eps,
     }
 

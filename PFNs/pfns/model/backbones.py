@@ -906,8 +906,8 @@ class LinearAttentionBackboneConfig(BackboneConfig):
     nlayers: int = 6
     nhead: int = 2
     mlp_hidden_dim: int = 200
-    dropout_prob: float = 0.0
     mlp_activation: tp.Literal["gelu", "relu", "swish", "silu"] = "silu"
+    dropout_prob: float = 0.0
     recompute_layer: bool = False
     recompute_every_n_layers: int = 1
     layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
@@ -927,23 +927,6 @@ class LinearAttentionBackboneConfig(BackboneConfig):
                 raise ValueError(
                     "LinearAttention layer_kwargs contain both qk_dim and deprecated "
                     "feature_dim with different values."
-                )
-        for legacy_name, current_name in {
-            "norm_q": "normalize_q_sum",
-            "norm_k": "normalize_k_sum",
-            "scale_readout_by_sqrt_dk": "scale_query_by_sqrt_dk",
-        }.items():
-            legacy_value = sanitized_layer_kwargs.pop(legacy_name, None)
-            if legacy_value is None:
-                continue
-            current_value = sanitized_layer_kwargs.get(current_name)
-            if current_value is None:
-                sanitized_layer_kwargs[current_name] = legacy_value
-            elif current_value != legacy_value:
-                raise ValueError(
-                    "LinearAttention layer_kwargs contain both "
-                    f"{current_name} and deprecated {legacy_name} with different "
-                    "values."
                 )
         sanitized_layer_kwargs.pop("attention_between_features", None)
         sanitized_layer_kwargs.pop("feature_attention_softmax", None)
@@ -965,9 +948,9 @@ class LinearAttentionBackboneConfig(BackboneConfig):
             "d_model": ninp,
             "num_heads": self.nhead,
             "mlp_hidden_dim": self.mlp_hidden_dim,
-            "dropout_prob": self.dropout_prob,
             "mlp_activation": self.mlp_activation,
-            **layer_kwargs,
+            "dropout_prob": self.dropout_prob,
+            **(self.layer_kwargs or {}),
         }
         layers = nn.ModuleList([
             LinearAttention(

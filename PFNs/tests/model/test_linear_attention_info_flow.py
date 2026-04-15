@@ -85,43 +85,6 @@ def test_linear_attention_causal_train_mode_test_tokens_dependent():
     assert (out_test - out_swapped_test).abs().max() > 1e-3
 
 
-def test_linear_attention_backbone_ignores_legacy_layer_kwargs():
-    backbone = LinearAttentionBackboneConfig(
-        nlayers=2,
-        nhead=2,
-        mlp_hidden_dim=16,
-        layer_kwargs={
-            "feature_dim": 3,
-            "norm_q": True,
-            "norm_k": True,
-            "scale_readout_by_sqrt_dk": True,
-            "attention_between_features": False,
-            "feature_attention_softmax": False,
-            "causal": True,
-        },
-    ).create_backbone(ninp=8, attention_between_features=False)
-
-    assert len(backbone.layers) == 2
-    assert all(layer.causal for layer in backbone.layers)
-    assert all(layer.qk_dim == 3 for layer in backbone.layers)
-    assert all(layer.normalize_q_sum for layer in backbone.layers)
-    assert all(layer.normalize_k_sum for layer in backbone.layers)
-    assert all(layer.scale_query_by_sqrt_dk for layer in backbone.layers)
-
-
-def test_linear_attention_disallows_k_sum_normalization_with_state_renormalization():
-    with pytest.raises(AssertionError, match="mutually exclusive"):
-        LinearAttention(
-            d_model=8,
-            num_heads=2,
-            mlp_hidden_dim=16,
-            dropout_prob=0.0,
-            mlp_activation="swish",
-            use_k_sum_normalization=True,
-            state_renormalization="sqrt_d_fro",
-        )
-
-
 def test_linear_attention_causal_matches_prefix_reads_with_scaled_query():
     torch.manual_seed(0)
     layer = LinearAttention(
