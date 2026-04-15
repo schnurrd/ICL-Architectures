@@ -130,16 +130,16 @@ def get_config(
     expand_v: float = 1.0,
     normalize_q_sum: bool = False,
     normalize_k_sum: bool = False,
-    use_k_sum_normalization: bool = True,
+    use_k_sum_normalization: bool = False,
     use_attention_norm: bool = True,
-    use_output_norm: bool = False,
-    norm_type: str = "layernorm",
+    use_output_norm: bool = True,
+    norm_type: str = "rmsnorm",
     use_mlp_norm: bool = True,
     state_renormalization: str | None = None,
     learnable_state_renorm_scale: bool = True,
     state_renormalization_target_norm: float | None = None,
     causal_chunk_size: int | None = None,
-    eps: float = 1e-6,
+    eps: float = 1e-5,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -302,19 +302,19 @@ def get_config(
         != {
             "use_attention_norm": True,
             "use_mlp_norm": True,
-            "norm_type": "layernorm",
-            "use_output_norm": False,
+            "norm_type": "rmsnorm",
+            "use_output_norm": True,
             "feature_map": "elu",
             "expand_k": 1.0,
             "expand_v": 1.0,
             "normalize_q_sum": False,
             "normalize_k_sum": False,
-            "use_k_sum_normalization": True,
+            "use_k_sum_normalization": False,
             "state_renormalization": None,
             "learnable_state_renorm_scale": True,
             "state_renormalization_target_norm": None,
             "causal_chunk_size": None,
-            "eps": 1e-6,
+            "eps": 1e-5,
         }.get(key)
     )
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
