@@ -5,11 +5,44 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 
 from pfns.model.attention_utils import (
-    apply_state_to_query_4d,
     build_mlp,
-    compute_kv_state_4d,
 )
 from pfns.model.rebased_feature_map import BasedFeatureMap, RebasedFeatureMap
+
+
+def _build_flat_kv_state(
+    k: torch.Tensor,
+    v: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    # k: (batch_times_features, seq, heads, qk_dim)
+    # v: (batch_times_features, seq, heads, v_dim)
+    k_sum = k.sum(dim=1)
+    kv_state = torch.einsum("bshf,bshd->bhfd", k, v)
+    return kv_state, k_sum
+
+
+def _read_from_flat_kv_state(
+    q: torch.Tensor,
+    kv_state: torch.Tensor,
+    k_sum: torch.Tensor | None,
+    *,
+    eps: float,
+) -> torch.Tensor:
+    """Read from a cached KV state for flattened (batch * feature) sequences.
+
+    If k_sum is not None computes:
+        out = (q^T KV) / (q^T K_sum + eps)
+    else:
+        out = q^T KV
+    """
+    # q: (batch_times_features, seq, heads, qk_dim)
+    # kv_state: (batch_times_features, heads, qk_dim, v_dim)
+    # k_sum: (batch_times_features, heads, qk_dim)
+    num = torch.einsum("bshf,bhfd->bshd", q, kv_state)
+    if k_sum is None:
+        return num
+    denom = torch.einsum("bshf,bhf->bsh", q, k_sum)
+    return num / (denom.unsqueeze(-1) + eps)
 
 
 class RebasedLinearAttention(nn.Module):
@@ -162,8 +195,8 @@ class RebasedLinearAttention(nn.Module):
         v_train = v[:, :single_eval_pos]
         
         # A. Compute Train output (non-causal full attention over train prefix)
-        kv_state_train, k_sum_train = compute_kv_state_4d(k_train, v_train)
-        attn_out_train = apply_state_to_query_4d(
+        kv_state_train, k_sum_train = _build_flat_kv_state(k_train, v_train)
+        attn_out_train = _read_from_flat_kv_state(
             q_train, kv_state_train, k_sum_train, eps=self.eps
         )
         
@@ -173,7 +206,7 @@ class RebasedLinearAttention(nn.Module):
         v_test = v[:, single_eval_pos:]
         
         # Test tokens attend only to the Train State
-        attn_out_test = apply_state_to_query_4d(
+        attn_out_test = _read_from_flat_kv_state(
             q_test, 
             kv_state_train, 
             k_sum_train,
@@ -200,8 +233,8 @@ class RebasedLinearAttention(nn.Module):
         x, is_three_dim, b, s, n, d = self._prepare_input(x)
         q, k, v = self._project_qkv_with_feature_map(x, b=b, s=s, n=n, d=d)
 
-        kv_state, k_sum = compute_kv_state_4d(k, v)
-        attn_out = apply_state_to_query_4d(q, kv_state, k_sum, eps=self.eps)
+        kv_state, k_sum = _build_flat_kv_state(k, v)
+        attn_out = _read_from_flat_kv_state(q, kv_state, k_sum, eps=self.eps)
         x = self._apply_output_residual_and_mlp(
             x,
             attn_out,
@@ -224,7 +257,7 @@ class RebasedLinearAttention(nn.Module):
 
         kv_state = state["kv_state"]
         k_sum = state["k_sum"]
-        attn_out = apply_state_to_query_4d(
+        attn_out = _read_from_flat_kv_state(
             q,
             kv_state,
             k_sum,

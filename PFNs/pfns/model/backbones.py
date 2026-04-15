@@ -62,10 +62,6 @@ FLA_MODEL_REGISTRY = {
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 
 
-def _resolve_fla_sequence_mode(sequence_mode: str) -> str:
-    return resolve_sequence_mode(sequence_mode)
-
-
 class Backbone(nn.Module, ABC):
     """Abstract base class for backbone implementations.
     
@@ -355,7 +351,7 @@ class FLABackboneConfig(BackboneConfig):
         object.__setattr__(
             self,
             "sequence_mode",
-            _resolve_fla_sequence_mode(self.sequence_mode),
+            resolve_sequence_mode(self.sequence_mode),
         )
         if not 0.0 <= self.state_passing_dropout <= 1.0:
             raise ValueError("state_passing_dropout must be in [0, 1].")
@@ -419,7 +415,7 @@ class FLABackbone(Backbone):
         assert not (
             state_passing and isinstance(self.fla, Mamba2Model)
         ), "Mamba2 does not support state_passing."
-        self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
+        self.sequence_mode = resolve_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
         self.state_passing = (
             FLAStatePassing(dropout_prob=state_passing_dropout)
@@ -910,11 +906,10 @@ class LinearAttentionBackboneConfig(BackboneConfig):
     nlayers: int = 6
     nhead: int = 2
     mlp_hidden_dim: int = 200
-    dropout: float = 0.0
-    activation: tp.Literal["gelu", "relu", "swish", "silu"] = "silu"
     recompute_layer: bool = False
     recompute_every_n_layers: int = 1
     layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
+
 
     def create_backbone(
         self,
@@ -922,15 +917,20 @@ class LinearAttentionBackboneConfig(BackboneConfig):
         attention_between_features: bool,
         **kwargs: tp.Any,
     ) -> Backbone:
+        if attention_between_features:
+            raise NotImplementedError(
+                "LinearAttentionBackbone no longer supports attention_between_features."
+            )
+        layer_kwargs = dict(self.layer_kwargs or {})
+        linear_attention_kwargs = {
+            "d_model": ninp,
+            "num_heads": self.nhead,
+            "mlp_hidden_dim": self.mlp_hidden_dim,
+            **layer_kwargs,
+        }
         layers = nn.ModuleList([
             LinearAttention(
-                d_model=ninp,
-                num_heads=self.nhead,
-                dim_mlp_hidden=self.mlp_hidden_dim,
-                dropout=self.dropout,
-                activation=self.activation,
-                attention_between_features=attention_between_features,
-                **(self.layer_kwargs or {}),
+                **linear_attention_kwargs,
             )
             for _ in range(self.nlayers)
         ])
@@ -961,6 +961,8 @@ class LinearAttentionBackbone(Backbone):
 
     @staticmethod
     def _pack_recurrent_state(state: dict[str, torch.Tensor]) -> torch.Tensor:
+        if state.get("k_sum") is None:
+            return state["kv_state"]
         return torch.cat([state["kv_state"], state["k_sum"].unsqueeze(-1)], dim=-1)
 
     @staticmethod
