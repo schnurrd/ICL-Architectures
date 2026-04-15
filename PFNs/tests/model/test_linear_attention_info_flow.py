@@ -1,6 +1,7 @@
 import torch
 import pytest
 
+from pfns.base_config import BaseConfig
 from pfns.model.backbones import LinearAttentionBackboneConfig
 from pfns.model.linear_attention import LinearAttention
 
@@ -13,9 +14,9 @@ def _build_layer(
     return LinearAttention(
         d_model=8,
         num_heads=2,
-        dim_mlp_hidden=16,
-        dropout=0.0,
-        activation="swish",
+        mlp_hidden_dim=16,
+        dropout_prob=0.0,
+        mlp_activation="swish",
         causal=causal,
         causal_train_only=causal_train_only,
     )
@@ -91,6 +92,9 @@ def test_linear_attention_backbone_ignores_legacy_layer_kwargs():
         mlp_hidden_dim=16,
         layer_kwargs={
             "feature_dim": 3,
+            "norm_q": True,
+            "norm_k": True,
+            "scale_readout_by_sqrt_dk": True,
             "attention_between_features": False,
             "feature_attention_softmax": False,
             "causal": True,
@@ -100,6 +104,9 @@ def test_linear_attention_backbone_ignores_legacy_layer_kwargs():
     assert len(backbone.layers) == 2
     assert all(layer.causal for layer in backbone.layers)
     assert all(layer.qk_dim == 3 for layer in backbone.layers)
+    assert all(layer.normalize_q_sum for layer in backbone.layers)
+    assert all(layer.normalize_k_sum for layer in backbone.layers)
+    assert all(layer.scale_query_by_sqrt_dk for layer in backbone.layers)
 
 
 def test_linear_attention_disallows_k_sum_normalization_with_state_renormalization():
@@ -107,32 +114,39 @@ def test_linear_attention_disallows_k_sum_normalization_with_state_renormalizati
         LinearAttention(
             d_model=8,
             num_heads=2,
-            dim_mlp_hidden=16,
-            dropout=0.0,
-            activation="swish",
+            mlp_hidden_dim=16,
+            dropout_prob=0.0,
+            mlp_activation="swish",
             use_k_sum_normalization=True,
             state_renormalization="sqrt_d_fro",
         )
 
 
-def test_linear_attention_causal_matches_prefix_reads_with_scaled_readout():
+def test_linear_attention_causal_matches_prefix_reads_with_scaled_query():
     torch.manual_seed(0)
     layer = LinearAttention(
         d_model=8,
         num_heads=2,
-        dim_mlp_hidden=16,
-        dropout=0.0,
-        activation="swish",
+        mlp_hidden_dim=16,
+        dropout_prob=0.0,
+        mlp_activation="swish",
         causal=True,
-        scale_readout_by_sqrt_dk=True,
+        scale_query_by_sqrt_dk=True,
         use_k_sum_normalization=False,
     )
     layer.eval()
 
     x = torch.randn(2, 9, 1, 8)
     q_raw, k_raw, v = layer._project_qkv(x)
-    q = layer._feature_map_with_sum_normalization(q_raw, normalize_sum=layer.norm_q)
-    k = layer._feature_map_with_sum_normalization(k_raw, normalize_sum=layer.norm_k)
+    q = layer._apply_feature_map(
+        q_raw,
+        normalize_sum=layer.normalize_q_sum,
+    )
+    q = layer._scale_query(q)
+    k = layer._apply_feature_map(
+        k_raw,
+        normalize_sum=layer.normalize_k_sum,
+    )
 
     with torch.no_grad():
         attn, _, _ = layer._causal_attention(q_raw, k_raw, v)
@@ -155,9 +169,9 @@ def test_linear_attention_chunked_causal_matches_unchunked_with_state_renormaliz
     layer_full = LinearAttention(
         d_model=8,
         num_heads=2,
-        dim_mlp_hidden=16,
-        dropout=0.0,
-        activation="swish",
+        mlp_hidden_dim=16,
+        dropout_prob=0.0,
+        mlp_activation="swish",
         causal=True,
         use_k_sum_normalization=False,
         state_renormalization="sqrt_d_fro",
@@ -165,9 +179,9 @@ def test_linear_attention_chunked_causal_matches_unchunked_with_state_renormaliz
     layer_chunked = LinearAttention(
         d_model=8,
         num_heads=2,
-        dim_mlp_hidden=16,
-        dropout=0.0,
-        activation="swish",
+        mlp_hidden_dim=16,
+        dropout_prob=0.0,
+        mlp_activation="swish",
         causal=True,
         causal_chunk_size=3,
         use_k_sum_normalization=False,
@@ -203,9 +217,9 @@ def test_linear_attention_chunked_incontext_predict_matches_forward_with_state_r
     layer = LinearAttention(
         d_model=8,
         num_heads=2,
-        dim_mlp_hidden=16,
-        dropout=0.0,
-        activation="swish",
+        mlp_hidden_dim=16,
+        dropout_prob=0.0,
+        mlp_activation="swish",
         causal=True,
         causal_chunk_size=3,
         use_k_sum_normalization=False,

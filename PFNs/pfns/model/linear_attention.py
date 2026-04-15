@@ -12,7 +12,6 @@ from pfns.model.attention_utils import (
 
 
 class LinearAttention(nn.Module):
-    AUTO_CAUSAL_EVAL_CHUNK_SIZE = 2000
     """
     Linear attention layer following the same high-level ordering as
     PerFeatureLayer, but without the feature-attention block
@@ -25,14 +24,15 @@ class LinearAttention(nn.Module):
     - causal: full autoregressive attention during training; switches to
       causal_train_only during inference
     """
+    DEFAULT_CAUSAL_CHUNK_SIZE = 64
 
     def __init__(
         self,
         d_model: int, # dimension of the input and output features
         num_heads: int,
-        dim_mlp_hidden: int,
-        dropout: float = 0.1,
-        activation: str = "silu",
+        mlp_hidden_dim: int,
+        dropout_prob: float = 0.1,
+        mlp_activation: str = "silu",
         causal: bool = False,
         causal_train_only: bool = False,
         causal_chunk_size: int | None = None,
@@ -42,9 +42,9 @@ class LinearAttention(nn.Module):
         norm_type: str = "layernorm",
         use_output_norm: bool = False,
         use_output_projection: bool = True,
-        norm_q: bool = False,
-        norm_k: bool = False,
-        scale_readout_by_sqrt_dk: bool = False,
+        normalize_q_sum: bool = False,
+        normalize_k_sum: bool = False,
+        scale_query_by_sqrt_dk: bool = False,
         use_k_sum_normalization: bool = True,
         state_renormalization: str | None = None,
         learnable_state_renorm_scale: bool = True,
@@ -78,9 +78,9 @@ class LinearAttention(nn.Module):
         self.causal = causal
         self.causal_train_only = causal_train_only
         self.causal_chunk_size = causal_chunk_size
-        self.norm_q = norm_q
-        self.norm_k = norm_k
-        self.scale_readout_by_sqrt_dk = scale_readout_by_sqrt_dk
+        self.normalize_q_sum = normalize_q_sum
+        self.normalize_k_sum = normalize_k_sum
+        self.scale_query_by_sqrt_dk = scale_query_by_sqrt_dk
         self.use_k_sum_normalization = use_k_sum_normalization
         self.state_renormalization = state_renormalization
         self.state_renormalization_target_norm = state_renormalization_target_norm
@@ -95,30 +95,39 @@ class LinearAttention(nn.Module):
                 torch.zeros(self.num_heads),
             )
 
-        self.dropout = nn.Dropout(dropout)
+        self.output_dropout = nn.Dropout(dropout_prob)
         self.q_proj_item = nn.Linear(d_model, self.num_heads * self.qk_dim)
         self.k_proj_item = nn.Linear(d_model, self.num_heads * self.qk_dim)
         self.v_proj_item = nn.Linear(d_model, d_model)
         self.out_proj_item = (
             nn.Linear(d_model, d_model) if use_output_projection else nn.Identity()
         )
-        self.norms = nn.ModuleList(
-            [
-                build_norm(d_model, enabled=use_attention_norm, norm_type=norm_type),
-                build_norm(d_model, enabled=use_mlp_norm, norm_type=norm_type),
-            ]
+        self.attention_norm = build_norm(
+            d_model,
+            enabled=use_attention_norm,
+            norm_type=norm_type,
+        )
+        self.mlp_norm = build_norm(
+            d_model,
+            enabled=use_mlp_norm,
+            norm_type=norm_type,
         )
         self.output_norm = build_norm(
-            d_model,
+            self.head_dim,
             enabled=use_output_norm,
             norm_type=norm_type,
         )
-        self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
+        self.mlp = build_mlp(
+            d_model,
+            mlp_hidden_dim,
+            dropout_prob,
+            mlp_activation,
+        )
 
     def _feature_map(self, x: torch.Tensor) -> torch.Tensor:
         return F.elu(x) + 1.0
 
-    def _feature_map_with_sum_normalization(
+    def _apply_feature_map(
         self,
         x: torch.Tensor,
         *,
@@ -133,7 +142,7 @@ class LinearAttention(nn.Module):
         self,
         x: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        x = self.norms[0](x)
+        x = self.attention_norm(x) # normalize last dim (d_model)
         batch_size, seq_len, num_features, _ = x.shape
         assert num_features == 1, f"LinearAttention only supports num_features=1, got {num_features}."
         x_flat = x.transpose(1, 2).reshape(batch_size * num_features, seq_len, self.d_model)
@@ -155,10 +164,20 @@ class LinearAttention(nn.Module):
             eps=self.eps,
         )
 
-    def _scale_readout(self, num: torch.Tensor) -> torch.Tensor:
-        if self.scale_readout_by_sqrt_dk:
-            num = num / (self.qk_dim ** 0.5)
-        return num
+    def _scale_query(self, q: torch.Tensor) -> torch.Tensor:
+        if self.scale_query_by_sqrt_dk:
+            q = q / (self.qk_dim ** 0.5)
+        return q
+
+    def _apply_query_key_feature_maps(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        q = self._apply_feature_map(q, normalize_sum=self.normalize_q_sum)
+        q = self._scale_query(q)
+        k = self._apply_feature_map(k, normalize_sum=self.normalize_k_sum)
+        return q, k
 
     def _read_from_kv_state(
         self,
@@ -177,7 +196,7 @@ class LinearAttention(nn.Module):
         # kv_state: (batch_times_features, heads, qk_dim, v_dim)
         # k_sum: (batch_times_features, heads, qk_dim)
         kv_state = self._renormalize_state(kv_state)
-        num = self._scale_readout(torch.einsum("bshf,bhfd->bshd", q, kv_state))
+        num = torch.einsum("bshf,bhfd->bshd", q, kv_state)
         if k_sum is None:
             return num
         denom = torch.einsum("bshf,bhf->bsh", q, k_sum)
@@ -189,8 +208,7 @@ class LinearAttention(nn.Module):
         k: torch.Tensor,
         v: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
-        q = self._feature_map_with_sum_normalization(q, normalize_sum=self.norm_q)
-        k = self._feature_map_with_sum_normalization(k, normalize_sum=self.norm_k)
+        q, k = self._apply_query_key_feature_maps(q, k)
         # k: (batch_times_features, seq, heads, qk_dim)
         # v: (batch_times_features, seq, heads, v_dim)
         kv_state = torch.einsum("bshf,bshd->bhfd", k, v)
@@ -208,22 +226,14 @@ class LinearAttention(nn.Module):
         kv_state_prefix: torch.Tensor | None = None,
         k_sum_prefix: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
-        q = self._feature_map_with_sum_normalization(q, normalize_sum=self.norm_q)
-        k = self._feature_map_with_sum_normalization(k, normalize_sum=self.norm_k)
+        q, k = self._apply_query_key_feature_maps(q, k)
 
         if q.shape[1] == 0:
             return v, kv_state_prefix, k_sum_prefix
 
         chunk_size = self.causal_chunk_size
-        if (
-            chunk_size is None
-            and not self.training
-            and (self.causal or self.causal_train_only)
-            and q.shape[1] > self.AUTO_CAUSAL_EVAL_CHUNK_SIZE
-        ):
-            chunk_size = self.AUTO_CAUSAL_EVAL_CHUNK_SIZE
         if chunk_size is None:
-            chunk_size = q.shape[1]
+            chunk_size = min(q.shape[1], self.DEFAULT_CAUSAL_CHUNK_SIZE)
 
         outputs = []
         kv_state = kv_state_prefix
@@ -237,7 +247,7 @@ class LinearAttention(nn.Module):
             kv_chunk_raw = torch.cumsum(
                 torch.einsum("bshf,bshd->bshfd", k_chunk, v_chunk),
                 dim=1,
-            )
+            ) # outer kv product then cumulative sum over sequence
             if kv_state is not None:
                 kv_chunk_raw = kv_chunk_raw + kv_state.unsqueeze(1)
             kv_chunk = self._renormalize_state(kv_chunk_raw)
@@ -249,7 +259,7 @@ class LinearAttention(nn.Module):
             else:
                 k_chunk_sum = None
 
-            num = self._scale_readout(torch.einsum("bshf,bshfd->bshd", q_chunk, kv_chunk))
+            num = torch.einsum("bshf,bshfd->bshd", q_chunk, kv_chunk) # cumulative state readout
             if k_chunk_sum is None:
                 outputs.append(num)
             else:
@@ -288,19 +298,36 @@ class LinearAttention(nn.Module):
             v[:, :single_eval_pos],
             causal=self.causal_train_only or self.causal,
         )
-        q_test = self._feature_map_with_sum_normalization(
+        q_test = self._apply_feature_map(
             q[:, single_eval_pos:],
-            normalize_sum=self.norm_q,
+            normalize_sum=self.normalize_q_sum,
         )
-        attn_test = self._read_from_kv_state(q_test, kv_state, k_sum)
+        q_test = self._scale_query(q_test)
+        attn_test = self._read_from_kv_state(
+            q_test,
+            kv_state,
+            k_sum,
+        )
         return torch.cat([attn_train, attn_test], dim=1)
 
     def _apply_output(self, x: torch.Tensor, attn: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, num_features, _ = x.shape
-        attn = attn.reshape(batch_size, num_features, seq_len, self.d_model).transpose(1, 2)
+        attn = attn.reshape(
+            batch_size,
+            num_features,
+            seq_len,
+            self.num_heads,
+            self.head_dim,
+        )
         attn = self.output_norm(attn)
-        x = x + self.dropout(self.out_proj_item(attn))
-        return x + self.mlp(self.norms[1](x))
+        attn = attn.reshape(
+            batch_size,
+            num_features,
+            seq_len,
+            self.d_model,
+        ).transpose(1, 2)
+        x = x + self.output_dropout(self.out_proj_item(attn))
+        return x + self.mlp(self.mlp_norm(x))
 
     def forward(self, x, *, single_eval_pos: int | None = None, **kwargs):
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
@@ -349,11 +376,13 @@ class LinearAttention(nn.Module):
                 k_sum_prefix=state.get("k_sum"),
             )
         else:
+            q = self._apply_feature_map(
+                q,
+                normalize_sum=self.normalize_q_sum,
+            )
+            q = self._scale_query(q)
             attn = self._read_from_kv_state(
-                self._feature_map_with_sum_normalization(
-                    q,
-                    normalize_sum=self.norm_q,
-                ),
+                q,
                 state["kv_state"],
                 state.get("k_sum"),
             )

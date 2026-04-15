@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from fla.modules import RMSNorm
 
 
 def build_activation(activation: str) -> nn.Module:
@@ -46,7 +47,7 @@ def build_norm(
     if norm_type == "layernorm":
         return nn.LayerNorm(d_model)
     if norm_type in {"rmsnorm", "rms_norm"}:
-        return nn.RMSNorm(d_model)
+        return RMSNorm(d_model)
     raise ValueError(f"Unsupported normalization type: {norm_type}")
 
 
