@@ -93,7 +93,6 @@ def test_linear_attention_causal_matches_prefix_reads_with_scaled_query():
         mlp_hidden_dim=16,
         norm_type="layernorm",
         causal=True,
-        scale_query_by_sqrt_dk=True,
         use_k_sum_normalization=False,
     )
     layer.eval()
@@ -104,7 +103,7 @@ def test_linear_attention_causal_matches_prefix_reads_with_scaled_query():
         q_raw,
         normalize_sum=layer.normalize_q_sum,
     )
-    q = layer._scale_query(q)
+    q = q * layer.query_scale
     k = layer._apply_feature_map_k(
         k_raw,
         normalize_sum=layer.normalize_k_sum,

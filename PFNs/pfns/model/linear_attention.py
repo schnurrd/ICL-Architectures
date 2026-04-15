@@ -73,7 +73,6 @@ class LinearAttention(nn.Module):
         # Attention feature map and readout.
         normalize_q_sum: bool = False,
         normalize_k_sum: bool = False,
-        scale_query_by_sqrt_dk: bool = False,
         use_k_sum_normalization: bool = False,
         # Attention/output blocks.
         use_attention_norm: bool = True,
@@ -121,6 +120,7 @@ class LinearAttention(nn.Module):
 
         self.head_k_dim = self.key_dim // self.num_heads
         self.head_v_dim = self.value_dim // self.num_heads
+        self.query_scale = self.head_k_dim ** -0.5
 
         self.causal = causal
         self.causal_train_only = causal_train_only
@@ -128,7 +128,6 @@ class LinearAttention(nn.Module):
 
         self.normalize_q_sum = normalize_q_sum
         self.normalize_k_sum = normalize_k_sum
-        self.scale_query_by_sqrt_dk = scale_query_by_sqrt_dk
         self.use_k_sum_normalization = use_k_sum_normalization
 
         self.state_renormalization = state_renormalization
@@ -243,18 +242,13 @@ class LinearAttention(nn.Module):
             eps=self.eps,
         )
 
-    def _scale_query(self, q: torch.Tensor) -> torch.Tensor:
-        if self.scale_query_by_sqrt_dk:
-            q = q / (self.head_k_dim ** 0.5)
-        return q
-
     def _apply_query_key_feature_maps(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         q = self._apply_feature_map(q, normalize_sum=self.normalize_q_sum)
-        q = self._scale_query(q)
+        q = q * self.query_scale
         k = self._apply_feature_map_k(k, normalize_sum=self.normalize_k_sum)
         return q, k
 
@@ -381,7 +375,7 @@ class LinearAttention(nn.Module):
             q[:, single_eval_pos:],
             normalize_sum=self.normalize_q_sum,
         )
-        q_test = self._scale_query(q_test)
+        q_test = q_test * self.query_scale
         attn_test = self._read_from_kv_state(
             q_test,
             kv_state,
@@ -459,7 +453,7 @@ class LinearAttention(nn.Module):
                 q,
                 normalize_sum=self.normalize_q_sum,
             )
-            q = self._scale_query(q)
+            q = q * self.query_scale
             attn = self._read_from_kv_state(
                 q,
                 state["kv_state"],
