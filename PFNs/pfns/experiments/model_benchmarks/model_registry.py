@@ -4,37 +4,6 @@ from typing import Any, Iterable
 from pfns.training_utils import is_autocast_dtype_enabled, resolve_autocast_dtype
 from pfns.utils import get_default_device
 
-# TRANSFORMER_DEBUG_MODELS: dict[str, dict[str, Any]] = {    
-#     "Softmax_Transformer_trained_wo_norm_eval_no_norm": {
-#         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
-#         "high_cardinality_categorical_threshold": 1_000_000,
-#     },
-#     "Softmax_Transformer_trained_wo_norm_eval_half_norm": {
-#         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla
-#         "high_cardinality_categorical_threshold": 10,
-#     },
-#     "Softmax_Transformer_trained_wo_norm_eval_full_norm": {
-#         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",  # no feature attention like fla, old transformer
-#         "high_cardinality_categorical_threshold": 0,
-#     },
-#     "Softmax_Transformer_trained_w_full_norm_eval_full_norm": {
-#         "wandb_run_id": "icl_arch/tabpfn_transformer/02e7n51p",  # no feature attention like fla, old transformer
-#         "high_cardinality_categorical_threshold": 0,
-#     },
-#     "Softmax_Transformer_trained_w_no_cat_norm_eval_half_norm": {
-#         "wandb_run_id": "icl_arch/tabpfn_transformer/ajttwh65",  # no feature attention like fla, old transformer
-#         "high_cardinality_categorical_threshold": 10,
-#     },
-#     "Softmax_Transformer_trained_w_no_cat_norm_eval_full_norm": {
-#         "wandb_run_id": "icl_arch/tabpfn_transformer/ajttwh65",  # no feature attention like fla, old transformer
-#         "high_cardinality_categorical_threshold": 0,
-#     },
-#     "Softmax_Transformer_trained_w_no_cat_norm_eval_no_norm": {
-#         "wandb_run_id": "icl_arch/tabpfn_transformer/ajttwh65",  # no feature attention like fla, old transformer
-#         "high_cardinality_categorical_threshold": 1_000_000,
-#     },
-# }
-
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
@@ -247,66 +216,7 @@ MESANET_MODELS: dict[str, dict[str, Any]] = {
     }
 }
 
-
-# LINEAR_ATTENTION_DEBUG_MODELS: dict[str, dict[str, Any]] = {
-#     "Linear_Attention_Non_Causal_Cat_Norm_Full_Norm": {
-#         "wandb_run_id": "linear_attention/runs/ygawhsm9",
-#         "high_cardinality_categorical_threshold": 0,
-#     },
-#     "Linear_Attention_Non_Causal_Cat_Norm_Half_Norm": {
-#         "wandb_run_id": "linear_attention/runs/ygawhsm9",
-#         "high_cardinality_categorical_threshold": 10,
-#     },
-#     "Linear_Attention_Non_Causal_Cat_Norm": {
-#         "wandb_run_id": "linear_attention/runs/qqts8fpp",
-#         "high_cardinality_categorical_threshold": 0,
-#     },
-#     "Linear_Attention_Non_Causal_Cat_Norm_Half_Norm": {
-#         "wandb_run_id": "linear_attention/runs/qqts8fpp",
-#         "high_cardinality_categorical_threshold": 10,
-#     },
-#     "Linear_Attention_Non_Causal_Half_Cat_Norm_Real": {
-#         "wandb_run_id": "linear_attention/runs/hwsxnsho",
-#         "high_cardinality_categorical_threshold": 10,
-#     },
-#     "Linear_Attention_Non_Causal_Half_Cat_Norm": {
-#         "wandb_run_id": "linear_attention/runs/0j5sy87c",
-#         "high_cardinality_categorical_threshold": 10,
-#     },
-#     "Linear_Attention_Causal": { # Comb_MT
-#         "wandb_run_id": "linear_attention/runs/fdzuamc8",
-#     },
-# }
-
-
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
-    # "Linear_Attention_Non_Causal_Cat_10_Training": { 
-    #     "wandb_run_id": "linear_attention/runs/hwsxnsho",
-    # },
-    "Linear_Attention_Non_Causal": { # Trained without cat normalization
-        "wandb_run_id": "linear_attention/runs/0j5sy87c",
-        "display_name": "Non-Causal Linear\nAttention (Comb ST)",
-    },
-    "Linear_Attention_Causal_Comb_ST": { # Trained without cat normalization
-        "wandb_run_id": "linear_attention/runs/2qth8bnj",
-        "display_name": "Causal Linear\nAttention (Comb ST)",
-    },
-    "Linear_Attention_Causal_Comb_MT": { # Trained without cat normalization
-        "wandb_run_id": "linear_attention/runs/3lyr8wze",
-        "display_name": "Causal Linear\nAttention (Comb MT)",
-    },
-    # "Linear_Attention_Causal_Comb_ST_Cat_Norm": {
-    #     "wandb_run_id": "linear_attention/runs/v14em9ik",
-    #     "high_cardinality_categorical_threshold": 0,
-    # },
-    # "Linear_Attention_Non_Causal_Cat_Norm": {
-    #     "wandb_run_id": "linear_attention/runs/qqts8fpp",
-    #     "high_cardinality_categorical_threshold": 0,
-    # },
-    # "Linear_Attention_Causal_Comb_MT_Cat_Norm": { # never finished ep 172
-    #     "wandb_run_id": "linear_attention/runs/3yp9x3kf",
-    #     "high_cardinality_categorical_threshold": 0,
-    # },
     "Linear_Attention_FLA_Comb_ST": { 
         "wandb_run_id": "icl_arch/fla_models/f4rsksje",
         "display_name": "Causal Linear Attention (Comb ST)",
@@ -318,22 +228,6 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
 }
 
 BASED_MODELS: dict[str, dict[str, Any]] = {
-    # "Rebased_feat_dim_32": {
-    #     "display_name": "Rebased $\\phi$ with 32-dim features", # todo retrain and delete rerun
-    #     "wandb_run_id": "fla_models/runs/72wtj14x"
-    # },
-    # "Rebased_feat_dim_16": {
-    #     "display_name": "Rebased $\\phi$ with 16-dim features",
-    #     "wandb_run_id": "fla_models/runs/478t1e31"
-    # },
-    # "Based_feat_dim_32": {
-    #     "display_name": "Based $\\phi$ with 32-dim features",
-    #     "wandb_run_id": "fla_models/runs/csb759y0"
-    # },
-    # "Based_feat_dim_16": {
-    #     "display_name": "Based $\\phi$ with 16-dim features",
-    #     "wandb_run_id": "fla_models/runs/kxe10m62"
-    # },
     "Rebased_feat_dim_32": {
         "display_name": "Rebased $\\phi$ with 32-dim features", # todo retrain and delete rerun
         "wandb_run_id": "fla_models/runs/7z1vh7vl"
@@ -551,66 +445,47 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
 }
 
 MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
-    "mimetic:GLA_Comb_ST_Ref": {
-        "display_name": "GLA Comb ST",
-        "wandb_run_id": "fla_models/runs/2v2xw7d2",
-    },
-    "mimetic:GLA_Comb_ST_Gating_only": {
-        "display_name": "Mimetic GLA\nComb ST",
-        "wandb_run_id": "fla_models/runs/i8vmztxo",
-    },
     "mimetic:Linear_Attention_FLA_Comb_ST": { 
-        "display_name": "Linear Attention\nComb ST",
+        "display_name": "Linear Attention\nComb ST (Reference)",
         "wandb_run_id": "icl_arch/fla_models/f4rsksje",
     },
+    "mimetic:GLA_Comb_ST_Ref": {
+        "display_name": "GLA Comb ST (Reference)",
+        "wandb_run_id": "fla_models/runs/2v2xw7d2",
+    },
+    "mimetic:GLA_Comb_ST_mimetic_full_wo_output_gate_init": {
+        "display_name": "GLA Comb ST (Full Mimetic wo. output gate init)",
+        "wandb_run_id": "fla_models/runs/brps0byt",
+    },
+    "mimetic:GLA_Comb_ST_mimetic_full": {
+        "display_name": "GLA Comb ST (Full Mimetic)",
+        "wandb_run_id": "fla_models/runs/dthrura3",
+    },
+    "mimetic:GLA_Comb_ST_mimetic_gate_only": {
+        "display_name": "GLA Comb ST (Mimetic gate only)",
+        "wandb_run_id": "fla_models/runs/l9lcdj1f",
+    },
+    
     "mimetic:DeltaNet_Comb_ST": {
-        "display_name": "DeltaNet\nComb ST",
+        "display_name": "DeltaNet\nComb ST (Reference)",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
     },
     "mimetic:Gated_DeltaNet_Comb_ST": {
-        "display_name": "Gated DeltaNet\nComb ST",
+        "display_name": "Gated DeltaNet\nComb ST (Reference)",
         "wandb_run_id": "fla_models/runs/g7rh5nv9",  
     },
-    # "mimetic:Gated_DeltaNet_Comb_ST_mimetic": {
-    #     "display_name": "Mimetic Gated\nDeltaNet Comb ST",
-    #     "wandb_run_id": "fla_models/runs/4r98jepy",  
-    # },
-    # "mimetic:GLA_Comb_ST_Simple": {
-    #     "display_name": "Mimetic GLA Comb ST (Simple)",
-    #     "wandb_run_id": "fla_models/runs/5r6j4hjs",
-    # },
-    # "mimetic:GLA_Comb_ST_Improved_1_layer": {
-    #     "display_name": "Mimetic GLA Comb ST (Improved, 1 Layer)",
-    #     "wandb_run_id": "fla_models/runs/bvqfpbpl",
-    # },
-    # "mimetic:GLA_Comb_ST_Improved_all_layer": {
-    #     "display_name": "Mimetic GLA Comb ST (Improved, All Layers)",
-    #     "wandb_run_id": "fla_models/runs/7mkque2f",
-    # },
-    # "mimetic:GLA_Comb_ST_New_Simple": {
-    #     "display_name": "Mimetic GLA Comb ST (New Simple)",
-    #     "wandb_run_id": "fla_models/runs/cubna8dc",
-    # },
-    # "mimetic:Gated_DeltaNet_Comb_ST_Ref": {
-    #     "display_name": "Gated DeltaNet Comb ST (Reference)",
-    #     "wandb_run_id": "fla_models/runs/nv19z5jw",
-    # },
-    # "mimetic:Gated_DeltaNet_Comb_ST_Improved": {
-    #     "display_name": "Mimetic Gated DeltaNet Comb ST (Improved)",
-    #     "wandb_run_id": "fla_models/runs/h83z2jq5",
-    # },
-    # "mimetic:Gated_DeltaNet_Comb_ST_New_Simple": {
-    #     "display_name": "Mimetic Gated DeltaNet Comb ST (New Simple)",
-    #     "wandb_run_id": "fla_models/runs/cubna8dc",
-    # },
-    # "mimetic:Gated_DeltaNet_Comb_ST_New_Gates": {
-    #     "display_name": "Mimetic Gated DeltaNet Comb ST Newest Gates",
-    #     "wandb_run_id": "fla_models/runs/i8vmztxo",
-    # },
-    # "mimetic:Gated_DeltaNet_Comb_ST_New_Full": {
-    #     "display_name": "Mimetic Gated DeltaNet Comb ST Newest Full",
-    #     "wandb_run_id": "fla_models/runs/tfmv77e1",
-    # },
+    "mimetic:Gated_DeltaNet_Comb_ST_mimetic_full_wo_output_gate_init": {
+        "display_name": "Gated DeltaNet\nComb ST (Full Mimetic wo. output gate init)",
+        "wandb_run_id": "fla_models/runs/g7rh5nv9",  
+    },
+    "mimetic:Gated_DeltaNet_Comb_ST_mimetic_full": {
+        "display_name": "Gated DeltaNet\nComb ST (Full Mimetic)",
+        "wandb_run_id": "fla_models/runs/p8uli0zu",  
+    },
+     "mimetic:Gated_DeltaNet_Comb_ST_mimetic_gate_only": {
+        "display_name": "Gated DeltaNet\nComb ST (Mimetic gate only)",
+        "wandb_run_id": "fla_models/runs/xvjvp179",  
+    },
 }
 
 
