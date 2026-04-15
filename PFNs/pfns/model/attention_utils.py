@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from fla.modules import RMSNorm
 
 
 def build_activation(activation: str) -> nn.Module:
@@ -34,91 +35,47 @@ def build_mlp(
     )
 
 
-def clip_hidden_state_matrix_frobenius_norm(
-    kv_state: torch.Tensor,
-    max_frobenius_norm: float | None,
-) -> torch.Tensor:
-    """Clip batched hidden-state matrices so each Frobenius norm stays bounded."""
-    if max_frobenius_norm is None or kv_state.numel() == 0:
-        return kv_state
-
-    max_frobenius_norm = float(max_frobenius_norm)
-    if max_frobenius_norm <= 0.0:
-        raise ValueError("max_frobenius_norm must be > 0.")
-
-    norm_input = (
-        kv_state
-        if kv_state.dtype in {torch.float32, torch.float64}
-        else kv_state.float()
-    )
-    frobenius_norm = norm_input.square().sum(dim=(-2, -1)).sqrt()
-    min_norm = torch.finfo(norm_input.dtype).tiny
-    scale = torch.clamp(
-        max_frobenius_norm / frobenius_norm.clamp_min(min_norm),
-        max=1.0,
-    )
-    return kv_state * scale.to(dtype=kv_state.dtype).unsqueeze(-1).unsqueeze(-1)
-
-
-def compute_kv_state_4d(
-    k: torch.Tensor,
-    v: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compute K_sum = sum_t k_t and KV = sum_t k_t v_t^T."""
-    # k: (batch, seq, heads, qk_dim)
-    # v: (batch, seq, heads, v_dim)
-    k_sum = k.sum(dim=1)
-    kv_state = torch.einsum("bshf,bshd->bhfd", k, v)
-    return kv_state, k_sum
-
-
-def apply_state_to_query_4d(
-    q: torch.Tensor,
-    kv_state: torch.Tensor,
-    k_sum: torch.Tensor,
+def build_norm(
+    d_model: int,
     *,
+    enabled: bool,
+    norm_type: str = "layernorm",
+) -> nn.Module:
+    """Build a per-token hidden-state normalization layer."""
+    if not enabled:
+        return nn.Identity()
+    if norm_type == "layernorm":
+        return nn.LayerNorm(d_model)
+    if norm_type in {"rmsnorm", "rms_norm"}:
+        return RMSNorm(d_model)
+    raise ValueError(f"Unsupported normalization type: {norm_type}")
+
+
+def renormalize_state_frobenius(
+    state: torch.Tensor,
+    *,
+    mode: str | None,
+    target_norm: float | None = None,
+    head_scale: torch.Tensor | None = None,
     eps: float,
 ) -> torch.Tensor:
-    """Apply cached state.
+    """Renormalize matrix-valued recurrent states over their last two dims."""
+    if mode in {None, "none"}:
+        return state
+    if mode != "sqrt_d_fro":
+        raise ValueError(f"Unsupported state renormalization mode: {mode}")
 
-    Base form:
-        out = (q^T KV) / (q^T K_sum + eps)
-    """
-    # q: (batch, seq, heads, qk_dim)
-    # kv_state: (batch, heads, qk_dim, v_dim)
-    # k_sum: (batch, heads, qk_dim)
-    num = torch.einsum("bshf,bhfd->bshd", q, kv_state)
-    denom = torch.einsum("bshf,bhf->bsh", q, k_sum)
-    return num / (denom.unsqueeze(-1) + eps)
-
-
-def compute_kv_state_5d(
-    k: torch.Tensor,
-    v: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compute K_sum = sum_t k_t and KV = sum_t k_t v_t^T for per-feature states."""
-    # k: (batch, seq, features, heads, qk_dim)
-    # v: (batch, seq, features, heads, v_dim)
-    k_sum = torch.einsum("bsnhf->bnhf", k)
-    kv_state = torch.einsum("bsnhf,bsnhd->bnhfd", k, v)
-    return kv_state, k_sum
-
-
-def apply_state_to_query_5d(
-    q: torch.Tensor,
-    kv_state: torch.Tensor,
-    k_sum: torch.Tensor,
-    *,
-    eps: float,
-) -> torch.Tensor:
-    """Apply cached per-feature state.
-
-    Base form:
-        out = (q^T KV) / (q^T K_sum + eps)
-    """
-    # q: (batch, seq, features, heads, qk_dim)
-    # kv_state: (batch, features, heads, qk_dim, v_dim)
-    # k_sum: (batch, features, heads, qk_dim)
-    num = torch.einsum("bsnhf,bnhfd->bsnhd", q, kv_state)
-    denom = torch.einsum("bsnhf,bnhf->bsnh", q, k_sum)
-    return num / (denom.unsqueeze(-1) + eps)
+    if target_norm is None:
+        target_norm = float(state.shape[-1]) ** 0.5
+    current_norm = torch.linalg.matrix_norm(
+        state,
+        ord="fro",
+        dim=(-2, -1),
+        keepdim=True,
+    )
+    target = state.new_tensor(target_norm)
+    if head_scale is not None:
+        # Expand per-head scales to `(heads, 1, 1)` so they broadcast over `state`.
+        target = target * head_scale[..., None, None]
+    scale = target / current_norm.clamp_min(eps)
+    return state * scale

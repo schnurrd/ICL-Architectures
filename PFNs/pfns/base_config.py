@@ -20,7 +20,6 @@ LEGACY_CONFIG_KEYS_TO_DROP: dict[str, set[str]] = {
     },
 }
 
-
 class BaseConfig:
     strict_field_types: ClassVar[bool] = True
 

@@ -1,25 +1,32 @@
+from __future__ import annotations
+
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
+from fla.modules import GatedMLP as FLAGatedMLP
+from fla.modules.feature_map import HadamardFeatureMap
 
 from pfns.model.attention_utils import (
-    apply_state_to_query_5d,
-    build_mlp,
-    clip_hidden_state_matrix_frobenius_norm,
-    compute_kv_state_5d,
+    build_norm,
+    renormalize_state_frobenius,
 )
 
 
-class LinearAttention(nn.Module):
-    AUTO_CAUSAL_EVAL_CHUNK_SIZE = 2000
-    HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES = {
-        "state_update",
-        "incontext_predict_only",
-    }
+class GatedMLP(FLAGatedMLP):
+    """Upstream FLA GatedMLP with CPU-safe forward fallback."""
 
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        if x.is_cuda:
+            return super().forward(x, **kwargs)
+        gate, y = self.gate_proj(x), self.up_proj(x)
+        return self.down_proj(F.silu(gate) * y)
+
+
+class LinearAttention(nn.Module):
     """
-    Linear attention layer with optional attention between feature blocks,
-    following the same ordering as PerFeatureLayer (features -> items -> MLP).
+    Linear attention layer following the same high-level ordering as
+    PerFeatureLayer, but without the feature-attention block
+    (items -> MLP).
 
     Item attention supports three masking modes:
     - default: train tokens attend bidirectionally within train; test tokens attend
@@ -28,141 +35,260 @@ class LinearAttention(nn.Module):
     - causal: full autoregressive attention during training; switches to
       causal_train_only during inference
     """
+    DEFAULT_CAUSAL_CHUNK_SIZE = 64
+
+    @staticmethod
+    def _build_feature_maps(
+        feature_map: str,
+        head_k_dim: int,
+    ) -> tuple[nn.Module, nn.Module]:
+        if feature_map == "elementwise_product":
+            return HadamardFeatureMap(head_k_dim), HadamardFeatureMap(head_k_dim)
+        if feature_map == "elu":
+            class _EluPlusOne(nn.Module):
+                def forward(self, x: torch.Tensor) -> torch.Tensor:
+                    return F.elu(x) + 1.0
+
+            return _EluPlusOne(), _EluPlusOne()
+        if feature_map == "identity":
+            return nn.Identity(), nn.Identity()
+        raise ValueError(f"Unsupported feature_map: {feature_map}")
+
     def __init__(
         self,
+        # Model dimensions.
         d_model: int,
         num_heads: int,
-        dim_mlp_hidden: int,
-        dropout: float = 0.1,
-        activation: str = "silu",
-        attention_between_features: bool = False,
+        expand_k: float = 1.0,
+        expand_v: float = 1.0,
+        # MLP block.
+        mlp_hidden_dim: int | None = None,
+        use_mlp_norm: bool = True,
+        # Attention feature map.
+        feature_map: str = "elu",
+        # Sequence mixing mode.
         causal: bool = False,
         causal_train_only: bool = False,
         causal_chunk_size: int | None = None,
-        feature_attention_softmax: bool = False,
-        feature_dim: int | None = None,
-        hidden_state_frobenius_norm_max: float | None = None,
-        hidden_state_frobenius_norm_apply: str = "state_update",
+        # Attention feature map and readout.
+        normalize_q_sum: bool = False,
+        normalize_k_sum: bool = False,
+        use_k_sum_normalization: bool = False,
+        # Attention/output blocks.
+        use_attention_norm: bool = True,
+        use_output_norm: bool = True,
+        norm_type: str = "rmsnorm",
+        # Recurrent state handling.
+        state_renormalization: str | None = None,
+        learnable_state_renorm_scale: bool = True,
+        state_renormalization_target_norm: float | None = None,
+        # Numerical stability.
         eps: float = 1e-6,
     ):
-        """Initialize projections, norms, and masking flags."""
         super().__init__()
-        
+
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads."
-        
+        assert expand_k > 0 and expand_v > 0, "expand_k and expand_v must be > 0."
+        assert not (causal and causal_train_only), (
+            "causal and causal_train_only are mutually exclusive."
+        )
+        assert causal_chunk_size is None or causal_chunk_size > 0, (
+            "causal_chunk_size must be >= 1."
+        )
+        assert not (
+            use_k_sum_normalization and state_renormalization not in {None, "none"}
+        ), (
+            "use_k_sum_normalization and state_renormalization are mutually "
+            "exclusive."
+        )
+        assert (
+            state_renormalization_target_norm is None
+            or state_renormalization_target_norm > 0
+        ), "state_renormalization_target_norm must be > 0."
+
         self.d_model = d_model
         self.num_heads = num_heads
-        self.head_dim = d_model // num_heads
-        self.feature_dim = feature_dim if feature_dim is not None else self.head_dim
-        
-        self.attention_between_features = attention_between_features
-        self.causal = bool(causal)
-        self.causal_train_only = bool(causal_train_only)
-        if self.causal and self.causal_train_only:
-            raise ValueError(
-                "causal and causal_train_only are mutually exclusive."
-            )
-        if causal_chunk_size is not None and causal_chunk_size <= 0:
-            raise ValueError("causal_chunk_size must be >= 1.")
+
+        self.key_dim = int(d_model * expand_k)
+        self.value_dim = int(d_model * expand_v)
+        assert self.key_dim % self.num_heads == 0, (
+            "int(d_model * expand_k) must be divisible by num_heads."
+        )
+        assert self.value_dim % self.num_heads == 0, (
+            "int(d_model * expand_v) must be divisible by num_heads."
+        )
+
+        self.head_k_dim = self.key_dim // self.num_heads
+        self.head_v_dim = self.value_dim // self.num_heads
+        self.query_scale = self.head_k_dim ** -0.5
+
+        self.causal = causal
+        self.causal_train_only = causal_train_only
         self.causal_chunk_size = causal_chunk_size
-        self.feature_attention_softmax = feature_attention_softmax
-        
-        self.dropout = nn.Dropout(dropout)
+
+        self.normalize_q_sum = normalize_q_sum
+        self.normalize_k_sum = normalize_k_sum
+        self.use_k_sum_normalization = use_k_sum_normalization
+
+        self.state_renormalization = state_renormalization
+        self.state_renormalization_target_norm = state_renormalization_target_norm
         self.eps = eps
-        if (
-            hidden_state_frobenius_norm_max is not None
-            and hidden_state_frobenius_norm_max <= 0.0
-        ):
-            raise ValueError("hidden_state_frobenius_norm_max must be > 0.")
-        self.hidden_state_frobenius_norm_max = hidden_state_frobenius_norm_max
-        hidden_state_frobenius_norm_apply = (
-            hidden_state_frobenius_norm_apply.strip().lower().replace("-", "_")
-        )
-        if (
-            hidden_state_frobenius_norm_apply
-            not in self.HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES
-        ):
-            raise ValueError(
-                "hidden_state_frobenius_norm_apply must be one of "
-                f"{sorted(self.HIDDEN_STATE_FROBENIUS_NORM_APPLY_MODES)}, got "
-                f"{hidden_state_frobenius_norm_apply!r}."
+        if state_renormalization in {None, "none"}:
+            self.state_renorm_log_scale = None
+        elif learnable_state_renorm_scale:
+            self.state_renorm_log_scale = nn.Parameter(torch.zeros(self.num_heads))
+        else:
+            self.register_buffer(
+                "state_renorm_log_scale",
+                torch.zeros(self.num_heads),
             )
-        self.hidden_state_frobenius_norm_apply = hidden_state_frobenius_norm_apply
 
-        if attention_between_features:
-            self.q_proj_feat = nn.Linear(d_model, d_model)
-            self.k_proj_feat = nn.Linear(d_model, d_model)
-            self.v_proj_feat = nn.Linear(d_model, d_model)
-            self.out_proj_feat = nn.Linear(d_model, d_model)
-
-        self.q_proj_item = nn.Linear(d_model, self.num_heads * self.feature_dim)
-        self.k_proj_item = nn.Linear(d_model, self.num_heads * self.feature_dim)
-        
-        self.v_proj_item = nn.Linear(d_model, d_model)
-        self.out_proj_item = nn.Linear(d_model, d_model)
-
-        num_norms = 3 if attention_between_features else 2
-        self.norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(num_norms)])
-        self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
-
-    def _clip_hidden_state_matrix(self, kv_state: torch.Tensor) -> torch.Tensor:
-        return clip_hidden_state_matrix_frobenius_norm(
-            kv_state,
-            self.hidden_state_frobenius_norm_max,
+        self.feature_map_q, self.feature_map_k = self._build_feature_maps(
+            feature_map,
+            self.head_k_dim,
         )
 
-    def _clip_hidden_state_matrix_on_update(
+        self.q_proj_item = nn.Linear(
+            d_model,
+            self.key_dim,
+            bias=False,
+        )
+        self.k_proj_item = nn.Linear(
+            d_model,
+            self.key_dim,
+            bias=False,
+        )
+        self.v_proj_item = nn.Linear(d_model, self.value_dim, bias=False)
+        self.out_proj_item = nn.Linear(self.value_dim, d_model, bias=False)
+
+        self.attention_norm = build_norm(
+            d_model,
+            enabled=use_attention_norm,
+            norm_type=norm_type,
+        )
+        self.output_norm = build_norm(
+            self.head_v_dim,
+            enabled=use_output_norm,
+            norm_type=norm_type,
+        )
+
+        self.mlp_norm = build_norm(
+            d_model,
+            enabled=use_mlp_norm,
+            norm_type=norm_type,
+        )
+        self.mlp = GatedMLP(
+            hidden_size=d_model,
+            intermediate_size=mlp_hidden_dim,
+            hidden_act="swish",
+            fuse_swiglu=False,
+        )
+
+    def _apply_feature_map(
         self,
-        kv_state: torch.Tensor,
+        x: torch.Tensor,
+        feature_map: nn.Module,
+        *,
+        normalize_sum: bool,
     ) -> torch.Tensor:
-        if self.hidden_state_frobenius_norm_apply == "state_update":
-            return self._clip_hidden_state_matrix(kv_state)
-        return kv_state
+        x = feature_map(x)
+        if normalize_sum:
+            x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
+        return x
 
-    def _clip_hidden_state_matrix_before_prediction(
+    def _project_qkv(
         self,
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        x = self.attention_norm(x) # normalize last dim (d_model)
+        batch_size, seq_len, num_features, _ = x.shape
+        assert num_features == 1, f"LinearAttention only supports num_features=1, got {num_features}."
+        x_flat = x.transpose(1, 2).reshape(batch_size * num_features, seq_len, self.d_model)
+        q = self.q_proj_item(x_flat).view(batch_size * num_features, seq_len, self.num_heads, self.head_k_dim)
+        k = self.k_proj_item(x_flat).view(
+            batch_size * num_features,
+            seq_len,
+            self.num_heads,
+            self.head_k_dim,
+        )
+        v = self.v_proj_item(x_flat).view(
+            batch_size * num_features,
+            seq_len,
+            self.num_heads,
+            self.head_v_dim,
+        )
+        return q, k, v
+
+    def _renormalize_state(self, kv_state: torch.Tensor) -> torch.Tensor:
+        return renormalize_state_frobenius(
+            kv_state,
+            mode=self.state_renormalization,
+            target_norm=self.state_renormalization_target_norm,
+            head_scale=(
+                None
+                if self.state_renorm_log_scale is None
+                else self.state_renorm_log_scale.exp()
+            ),
+            eps=self.eps,
+        )
+
+    def _apply_query_key_feature_maps(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        q = self._apply_feature_map(
+            q,
+            self.feature_map_q,
+            normalize_sum=self.normalize_q_sum,
+        )
+        q = q * self.query_scale
+        k = self._apply_feature_map(
+            k,
+            self.feature_map_k,
+            normalize_sum=self.normalize_k_sum,
+        )
+        return q, k
+
+    def _read_from_kv_state(
+        self,
+        q: torch.Tensor,
         kv_state: torch.Tensor,
+        k_sum: torch.Tensor | None,
     ) -> torch.Tensor:
-        if self.hidden_state_frobenius_norm_apply == "incontext_predict_only":
-            return self._clip_hidden_state_matrix(kv_state)
-        return kv_state
+        """Apply cached per-feature state.
 
-    def _feature_map(self, x: torch.Tensor) -> torch.Tensor:
-        """phi(x) = ELU(x) + 1."""
-        return F.elu(x) + 1.0
+        If k_sum is not None computes:
+            out = (q^T KV) / (q^T K_sum + eps)
+        else:
+            out = q^T KV
+        """
+        # q: (batch_times_features, seq, heads, qk_dim)
+        # kv_state: (batch_times_features, heads, qk_dim, v_dim)
+        # k_sum: (batch_times_features, heads, qk_dim)
+        kv_state = self._renormalize_state(kv_state)
+        num = torch.einsum("bshf,bhfd->bshd", q, kv_state)
+        if k_sum is None:
+            return num
+        denom = torch.einsum("bshf,bhf->bsh", q, k_sum)
+        return num / (denom.unsqueeze(-1) + self.eps)
 
-    def _linear_attention_features(
+    def _noncausal_attention(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
-    ) -> torch.Tensor:
-        """Feature linear attention: out_n = (phi(q_n)^T sum_m phi(k_m)v_m^T) / (phi(q_n)^T sum_m phi(k_m) + eps)."""
-        # q, k, v: (batch, seq_len, num_feature_blocks, nhead, head_dim)
-        q = self._feature_map(q)
-        k = self._feature_map(k)
-        k_sum = torch.einsum("bsnhd->bshd", k)
-        denom = torch.einsum("bsnhd,bshd->bsnh", q, k_sum).unsqueeze(-1)
-        kv = torch.einsum("bsnhd,bsnhe->bshde", k, v)
-        return torch.einsum("bsnhd,bshde->bsnhe", q, kv) / (denom + self.eps)
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        q, k = self._apply_query_key_feature_maps(q, k)
+        # k: (batch_times_features, seq, heads, qk_dim)
+        # v: (batch_times_features, seq, heads, v_dim)
+        kv_state = torch.einsum("bshf,bshd->bhfd", k, v)
+        k_sum = k.sum(dim=1)
+        if not self.use_k_sum_normalization:
+            k_sum = None
+        return self._read_from_kv_state(q, kv_state, k_sum), kv_state, k_sum
 
-    def _softmax_attention_features(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-    ) -> torch.Tensor:
-        """Feature softmax attention: out_n = sum_m softmax_m(q_n^T k_m) v_m."""
-        # q, k, v: (batch, seq_len, num_feature_blocks, nhead, head_dim)
-        q = q.permute(0, 1, 3, 2, 4)  # (b, s, h, n, d)
-        k = k.permute(0, 1, 3, 2, 4)
-        v = v.permute(0, 1, 3, 2, 4)
-        scores = torch.einsum("bshnd,bshmd->bshnm", q, k)
-        attn = torch.softmax(scores, dim=-1)
-        out = torch.einsum("bshnm,bshmd->bshnd", attn, v)
-        return out.permute(0, 1, 3, 2, 4)
-
-    def _causal_linear_attention_chunk(
+    def _causal_attention(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
@@ -170,312 +296,170 @@ class LinearAttention(nn.Module):
         *,
         kv_state_prefix: torch.Tensor | None = None,
         k_sum_prefix: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Process one causal chunk exactly, optionally seeded from a cached prefix state."""
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+        q, k = self._apply_query_key_feature_maps(q, k)
+
         if q.shape[1] == 0:
-            assert kv_state_prefix is not None and k_sum_prefix is not None
             return v, kv_state_prefix, k_sum_prefix
 
-        kv_prefix = torch.cumsum(torch.einsum("bsnhf,bsnhd->bsnhfd", k, v), dim=1)
-        k_prefix = torch.cumsum(k, dim=1)
-        if kv_state_prefix is not None:
-            kv_prefix = kv_prefix + kv_state_prefix.unsqueeze(1)
-        if k_sum_prefix is not None:
-            k_prefix = k_prefix + k_sum_prefix.unsqueeze(1)
-        kv_prefix = self._clip_hidden_state_matrix_on_update(kv_prefix)
-
-        num = torch.einsum("bsnhf,bsnhfd->bsnhd", q, kv_prefix)
-        denom = torch.einsum("bsnhf,bsnhf->bsnh", q, k_prefix)
-        attn = num / (denom.unsqueeze(-1) + self.eps)
-        return attn, kv_prefix[:, -1], k_prefix[:, -1]
-
-    def _resolved_causal_chunk_size(self, seq_len: int) -> int | None:
-        """Resolve the chunk size for causal recurrence."""
-        if self.causal_chunk_size is not None:
-            return self.causal_chunk_size
-        if (
-            (self.causal or self.causal_train_only)
-            and not self.training
-            and seq_len > self.AUTO_CAUSAL_EVAL_CHUNK_SIZE
-        ):
-            return self.AUTO_CAUSAL_EVAL_CHUNK_SIZE
-        return None
-
-    def _causal_linear_attention_items(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        *,
-        kv_state_prefix: torch.Tensor | None = None,
-        k_sum_prefix: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Causal item attention with optional chunking over the sequence dimension."""
-        if q.shape[1] == 0:
-            return self._causal_linear_attention_chunk(
-                q,
-                k,
-                v,
-                kv_state_prefix=kv_state_prefix,
-                k_sum_prefix=k_sum_prefix,
-            )
-
-        chunk_size = self._resolved_causal_chunk_size(q.shape[1])
-        if chunk_size is None or q.shape[1] <= chunk_size:
-            return self._causal_linear_attention_chunk(
-                q,
-                k,
-                v,
-                kv_state_prefix=kv_state_prefix,
-                k_sum_prefix=k_sum_prefix,
-            )
+        chunk_size = self.causal_chunk_size
+        if chunk_size is None:
+            chunk_size = min(q.shape[1], self.DEFAULT_CAUSAL_CHUNK_SIZE)
 
         outputs = []
         kv_state = kv_state_prefix
         k_sum = k_sum_prefix
         for chunk_start in range(0, q.shape[1], chunk_size):
             chunk_end = min(chunk_start + chunk_size, q.shape[1])
-            attn_chunk, kv_state, k_sum = self._causal_linear_attention_chunk(
-                q[:, chunk_start:chunk_end],
-                k[:, chunk_start:chunk_end],
-                v[:, chunk_start:chunk_end],
-                kv_state_prefix=kv_state,
-                k_sum_prefix=k_sum,
-            )
-            outputs.append(attn_chunk)
+            q_chunk = q[:, chunk_start:chunk_end]
+            k_chunk = k[:, chunk_start:chunk_end]
+            v_chunk = v[:, chunk_start:chunk_end]
+
+            kv_chunk_raw = torch.cumsum(
+                torch.einsum("bshf,bshd->bshfd", k_chunk, v_chunk),
+                dim=1,
+            ) # outer kv product then cumulative sum over sequence
+            if kv_state is not None:
+                kv_chunk_raw = kv_chunk_raw + kv_state.unsqueeze(1)
+            kv_chunk = self._renormalize_state(kv_chunk_raw)
+
+            if self.use_k_sum_normalization:
+                k_chunk_sum = torch.cumsum(k_chunk, dim=1)
+                if k_sum is not None:
+                    k_chunk_sum = k_chunk_sum + k_sum.unsqueeze(1)
+            else:
+                k_chunk_sum = None
+
+            num = torch.einsum("bshf,bshfd->bshd", q_chunk, kv_chunk) # cumulative state readout
+            if k_chunk_sum is None:
+                outputs.append(num)
+            else:
+                denom = torch.einsum("bshf,bshf->bsh", q_chunk, k_chunk_sum)
+                outputs.append(num / (denom.unsqueeze(-1) + self.eps))
+            kv_state = kv_chunk_raw[:, -1]
+            k_sum = None if k_chunk_sum is None else k_chunk_sum[:, -1]
 
         return torch.cat(outputs, dim=1), kv_state, k_sum
 
-    def _apply_feature_attention_block(
+    def _train_attention(
         self,
-        x: torch.Tensor,
-        norm_idx: int,
-    ) -> tuple[torch.Tensor, int]:
-        """Feature block: x' = x + Dropout(W_o Attn_feat(W_q LN(x), W_k LN(x), W_v LN(x)))."""
-        if not self.attention_between_features:
-            return x, norm_idx
-
-        x_norm = self.norms[norm_idx](x)
-        b, s, n, e = x_norm.shape
-        q = self.q_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
-        k = self.k_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
-        v = self.v_proj_feat(x_norm).view(b, s, n, self.num_heads, self.head_dim)
-        if self.feature_attention_softmax:
-            attn_feat = self._softmax_attention_features(q, k, v)
-        else:
-            attn_feat = self._linear_attention_features(q, k, v)
-        attn_feat = attn_feat.reshape(b, s, n, e)
-        attn_feat = self.dropout(self.out_proj_feat(attn_feat))
-        return x + attn_feat, norm_idx + 1
-
-    def _project_item_qkv(
-        self,
-        x: torch.Tensor,
-        norm_idx: int,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Item projections: q = W_q LN(x), k = W_k LN(x), v = W_v LN(x)."""
-        x_norm = self.norms[norm_idx](x)
-        b, s, n, _ = x_norm.shape
-        q = self.q_proj_item(x_norm).view(b, s, n, self.num_heads, self.feature_dim)
-        k = self.k_proj_item(x_norm).view(b, s, n, self.num_heads, self.feature_dim)
-        v = self.v_proj_item(x_norm).view(b, s, n, self.num_heads, self.head_dim)
-        return q, k, v
-
-    def _compute_train_attention_and_state(
-        self,
-        q_train: torch.Tensor,
-        k_train: torch.Tensor,
-        v_train: torch.Tensor,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
         *,
-        causal_train: bool,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Compute train outputs and the train state consumed by test tokens."""
-        q_train = self._feature_map(q_train)
-        k_train = self._feature_map(k_train)
+        causal: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        if causal:
+            attn, kv_state, k_sum = self._causal_attention(q, k, v)
+            assert kv_state is not None
+            return attn, kv_state, k_sum
+        return self._noncausal_attention(q, k, v)
 
-        if causal_train:
-            return self._causal_linear_attention_items(q_train, k_train, v_train)
-
-        kv_state_train, k_sum_train = compute_kv_state_5d(k_train, v_train)
-        kv_state_train = self._clip_hidden_state_matrix_on_update(kv_state_train)
-        attn_train = apply_state_to_query_5d(
-            q_train,
-            kv_state_train,
-            k_sum_train,
-            eps=self.eps,
-        )
-        return attn_train, kv_state_train, k_sum_train
-
-    def _apply_split_item_attention(
+    def _split_attention(
         self,
-        q_train: torch.Tensor,
-        k_train: torch.Tensor,
-        v_train: torch.Tensor,
-        q_test: torch.Tensor,
-        k_test: torch.Tensor,
-        v_test: torch.Tensor,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        single_eval_pos: int,
     ) -> torch.Tensor:
-        """Apply the split train/test attention path.
-
-        Test tokens attend only to the aggregated train state. The difference
-        between modes is whether the train state itself was built causally or
-        non-causally.
-        """
-        use_causal_train_only = self.causal_train_only or (self.causal and not self.training)
-        attn_train, kv_state_train, k_sum_train = self._compute_train_attention_and_state(
-            q_train,
-            k_train,
-            v_train,
-            causal_train=use_causal_train_only,
+        assert not (self.causal and self.training), "split_attention should not be used in full causal training"
+        attn_train, kv_state, k_sum = self._train_attention(
+            q[:, :single_eval_pos],
+            k[:, :single_eval_pos],
+            v[:, :single_eval_pos],
+            causal=self.causal_train_only or self.causal,
         )
-        q_test = self._feature_map(q_test)
-        prediction_kv_state = kv_state_train
-        prediction_k_sum = k_sum_train
-        if self.hidden_state_frobenius_norm_apply == "incontext_predict_only" and (
-            self.causal_train_only or not self.causal
-        ):
-            k_test = self._feature_map(k_test)
-            kv_state_test, k_sum_test = compute_kv_state_5d(k_test, v_test)
-            prediction_kv_state = prediction_kv_state + kv_state_test
-            prediction_k_sum = prediction_k_sum + k_sum_test
-            prediction_kv_state = self._clip_hidden_state_matrix_before_prediction(
-                prediction_kv_state
-            )
-        attn_test = apply_state_to_query_5d(
+        q_test = self._apply_feature_map(
+            q[:, single_eval_pos:],
+            self.feature_map_q,
+            normalize_sum=self.normalize_q_sum,
+        )
+        q_test = q_test * self.query_scale
+        attn_test = self._read_from_kv_state(
             q_test,
-            prediction_kv_state,
-            prediction_k_sum,
-            eps=self.eps,
+            kv_state,
+            k_sum,
         )
         return torch.cat([attn_train, attn_test], dim=1)
 
-    def _apply_item_output_and_mlp(
-        self,
-        x: torch.Tensor,
-        attn: torch.Tensor,
-        norm_idx: int,
-    ) -> torch.Tensor:
-        """Output block: x1 = x + Dropout(W_o attn), out = x1 + MLP(LN(x1))."""
-        b, s, n, _ = x.shape
-        attn = attn.reshape(b, s, n, self.d_model)
-        attn = self.dropout(self.out_proj_item(attn))
-        x = x + attn
-        norm_idx += 1
-        return x + self.mlp(self.norms[norm_idx](x))
+    def _apply_output(self, x: torch.Tensor, attn: torch.Tensor) -> torch.Tensor:
+        batch_size, seq_len, num_features, _ = x.shape
+        attn = attn.reshape(
+            batch_size,
+            num_features,
+            seq_len,
+            self.num_heads,
+            self.head_v_dim,
+        )
+        attn = self.output_norm(attn)
+        attn = attn.reshape(
+            batch_size,
+            num_features,
+            seq_len,
+            self.value_dim,
+        ).transpose(1, 2)
+        x = x + self.out_proj_item(attn)
+        return x + self.mlp(self.mlp_norm(x))
 
     def forward(self, x, *, single_eval_pos: int | None = None, **kwargs):
-        """Run feature attention, item attention, and the residual MLP.
-
-        `causal=True` uses full autoregressive attention only in training mode.
-        All other cases use the split train/test path.
-        """
-        # x: (batch, num_items, num_feature_blocks, embed_dim)
-        norm_idx = 0
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
-        _, s, _, _ = x.shape
-        assert single_eval_pos is not None, (
-            "single_eval_pos must be provided for LinearAttention."
-        )
-        assert 0 < single_eval_pos < s, (
-            f"single_eval_pos must be in the range [1, {s} - 1], got {single_eval_pos}."
+        _, seq_len, _, _ = x.shape
+        assert single_eval_pos is not None, "single_eval_pos must be provided for LinearAttention."
+        assert 0 < single_eval_pos < seq_len, (
+            f"single_eval_pos must be in the range [1, {seq_len} - 1], got {single_eval_pos}."
         )
 
-        x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
-        q_all, k_all, v_all = self._project_item_qkv(x, norm_idx)
-
+        q, k, v = self._project_qkv(x)
         if self.causal and self.training:
-            q_all = self._feature_map(q_all)
-            k_all = self._feature_map(k_all)
-            attn_all, _, _ = self._causal_linear_attention_items(q_all, k_all, v_all)
-            return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
-
-        q_train = q_all[:, :single_eval_pos]
-        k_train = k_all[:, :single_eval_pos]
-        v_train = v_all[:, :single_eval_pos]
-        q_test = q_all[:, single_eval_pos:]
-        k_test = k_all[:, single_eval_pos:]
-        v_test = v_all[:, single_eval_pos:]
-        attn_all = self._apply_split_item_attention(
-            q_train,
-            k_train,
-            v_train,
-            q_test,
-            k_test,
-            v_test,
-        )
-        return self._apply_item_output_and_mlp(x, attn_all, norm_idx)
+            attn, _, _ = self._causal_attention(q, k, v)
+        else:
+            attn = self._split_attention(q, k, v, single_eval_pos)
+        return self._apply_output(x, attn)
 
     def incontext_fit(
         self,
         x: torch.Tensor,
-    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Encode the train context and return cached `(kv_state, k_sum)`."""
-        norm_idx = 0
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor | None]]:
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
-        x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
-        q, k, v = self._project_item_qkv(x, norm_idx)
 
-        if self.causal or self.causal_train_only:
-            attn, kv_state, k_sum = self._compute_train_attention_and_state(
-                q,
-                k,
-                v,
-                causal_train=True,
-            )
-        else:
-            q = self._feature_map(q)
-            k = self._feature_map(k)
-            kv_state, k_sum = compute_kv_state_5d(k, v)
-            kv_state = self._clip_hidden_state_matrix_on_update(kv_state)
-            attn = apply_state_to_query_5d(q, kv_state, k_sum, eps=self.eps)
-        x = self._apply_item_output_and_mlp(x, attn, norm_idx)
-        return x, {"kv_state": kv_state, "k_sum": k_sum}
+        q, k, v = self._project_qkv(x)
+        attn, kv_state, k_sum = self._train_attention(
+            q,
+            k,
+            v,
+            causal=self.causal or self.causal_train_only,
+        )
+        return self._apply_output(x, attn), {"kv_state": kv_state, "k_sum": k_sum}
 
     def incontext_predict(
         self,
         x: torch.Tensor,
-        state: dict[str, torch.Tensor],
+        state: dict[str, torch.Tensor | None],
     ) -> torch.Tensor:
-        """Apply cached train state to test tokens.
-
-        Depending on the mode, this is either:
-        - causal continuation from the cached prefix, or
-        - attention to cached train state only
-        """
-        norm_idx = 0
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
-        x, norm_idx = self._apply_feature_attention_block(x, norm_idx)
-        q, k, v = self._project_item_qkv(x, norm_idx)
-        kv_state = state["kv_state"]
-        k_sum = state["k_sum"]
-        q = self._feature_map(q)
+
+        q, k, v = self._project_qkv(x)
         if self.causal and self.training:
-            k = self._feature_map(k)
-            attn, _, _ = self._causal_linear_attention_items(
+            attn, _, _ = self._causal_attention(
                 q,
                 k,
                 v,
-                kv_state_prefix=kv_state,
-                k_sum_prefix=k_sum,
+                kv_state_prefix=state["kv_state"],
+                k_sum_prefix=state.get("k_sum"),
             )
         else:
-            if self.hidden_state_frobenius_norm_apply == "incontext_predict_only" and (
-                self.causal_train_only or not self.causal
-            ):
-                k = self._feature_map(k)
-                kv_state_test, k_sum_test = compute_kv_state_5d(k, v)
-                kv_state = self._clip_hidden_state_matrix_before_prediction(
-                    kv_state + kv_state_test
-                )
-                k_sum = k_sum + k_sum_test
-            attn = apply_state_to_query_5d(
+            q = self._apply_feature_map(
                 q,
-                kv_state,
-                k_sum,
-                eps=self.eps,
+                self.feature_map_q,
+                normalize_sum=self.normalize_q_sum,
             )
-        return self._apply_item_output_and_mlp(x, attn, norm_idx)
+            q = q * self.query_scale
+            attn = self._read_from_kv_state(
+                q,
+                state["kv_state"],
+                state.get("k_sum"),
+            )
+        return self._apply_output(x, attn)
 
     def empty_trainset_representation_cache(self) -> None:
-        """No internal cache object."""
         return None
