@@ -488,6 +488,36 @@ MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
+    "Bidirectional_DeltaNet_Comb_ST_linear_output_two_cache": {
+        "display_name": "Bidirectional Linear Output Two Cache (DeltaNet)",
+        "wandb_run_id": "icl_arch/fla_models/5htl7smo",
+    },
+    "Bidirectional_DeltaNet_Comb_ST_mean_output_mean_cache": {
+        "display_name": "Bidirectional Mean Output Mean Cache (DeltaNet)",
+        "wandb_run_id": "icl_arch/fla_models/vn8w3gjo",
+    },
+    "Bidirectional_DeltaNet_Comb_ST_mean_output_two_cache": {
+        "display_name": "Bidirectional Mean Output Two Cache (DeltaNet)",
+        "wandb_run_id": "icl_arch/fla_models/hv2uv8nq",
+    },
+    "Bidirectional_DeltaNet_Comb_ST_mean_output_two_cache_separate_weights": {
+        "display_name": "Bidirectional Mean Output Two Cache Separate Weights (DeltaNet)",
+        "wandb_run_id": "icl_arch/fla_models/6lby3bdm",
+    },
+    "Bidirectional_Linear_Attention_Comb_ST_mean_output_mean_cache": {
+        "display_name": "Bidirectional Mean Output Mean Cache (Linear Attention)",
+        "wandb_run_id": "icl_arch/fla_models/3j9jgdvx",
+    },
+    "Bidirectional_GLA_Comb_ST_mean_output_mean_cache": {
+        "display_name": "Bidirectional Mean Output Mean Cache (GLA)",
+        "wandb_run_id": "icl_arch/fla_models/iw22mtux",
+    },
+    "DeltaNet_Comb_ST_Reference_New": {
+        "display_name": "DeltaNet Comb ST (Reference)",
+        "wandb_run_id": "fla_models/runs/tuj1kct1",
+    },
+}
 
 ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     "Oracle_Hidden_State_GLA_Comb_ST": {
@@ -679,6 +709,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "deltanet_finetuned": DELTANET_FINETUNED_MODELS,
     "mimetic_initialization": MIMETIC_INITIALIZATION_MODELS,
     "subsampled": SUBSAMPLED_MODELS,
+    "bidirectional": BIDIRECTIONAL_MODELS,
     "state_passing": STATE_PASSING_MODELS,
     "causal_linear_attention_experiments": CAUSAL_LINEAR_ATTENTION_EXPERIMENTS,
     "fla_models": {
