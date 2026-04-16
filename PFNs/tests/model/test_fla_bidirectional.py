@@ -3,7 +3,7 @@ import torch
 
 pytest.importorskip("fla")
 
-from pfns.model.backbones import (
+from pfns.model.bidirectional_fla import (
     BidirectionalFLACache,
     BidirectionalFLALayer,
     FusedBidirectionalFLACache,
@@ -131,8 +131,20 @@ def test_bidirectional_without_shared_weights_rejects_fused_prediction_cache() -
         )
 
 
+@pytest.mark.parametrize(
+    ("state_fusion", "expected_cache_type"),
+    [
+        ("linear_output_two_cache", BidirectionalFLACache),
+        ("mean_output_two_cache", BidirectionalFLACache),
+        ("mean_output_mean_cache", FusedBidirectionalFLACache),
+    ],
+)
 @pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
-def test_bidirectional_incontext_fit_builds_forward_and_backward_caches(model_type: str) -> None:
+def test_bidirectional_state_fusion_controls_prediction_cache_type(
+    model_type: str,
+    state_fusion: str,
+    expected_cache_type: type[object],
+) -> None:
     if not torch.cuda.is_available():
         pytest.skip("FLA backend requires CUDA/Triton for this test.")
 
@@ -142,51 +154,7 @@ def test_bidirectional_incontext_fit_builds_forward_and_backward_caches(model_ty
         model_type,
         size="small",
         bidirectional=True,
-        bidirectional_state_fusion="linear_output_two_cache",
-    ).to(device)
-    embed_dim = fla_hidden_size(model_type, size="small")
-    train_x = torch.randn(2, 5, embed_dim, device=device)
-
-    with torch.no_grad():
-        _, state = backbone.incontext_fit(train_x)
-
-    cache = state["cache_params"]
-    assert isinstance(cache, BidirectionalFLACache)
-    assert cache.forward_cache is not None
-    assert cache.backward_cache is not None
-
-
-@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
-def test_bidirectional_default_state_fusion_returns_mean_fused_prediction_cache(model_type: str) -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("FLA backend requires CUDA/Triton for this test.")
-
-    torch.manual_seed(0)
-    device = torch.device("cuda")
-    backbone = build_fla_backbone(model_type, size="small", bidirectional=True).to(device)
-    embed_dim = fla_hidden_size(model_type, size="small")
-    train_x = torch.randn(2, 5, embed_dim, device=device)
-
-    with torch.no_grad():
-        _, state = backbone.incontext_fit(train_x)
-
-    cache = state["cache_params"]
-    assert isinstance(cache, FusedBidirectionalFLACache)
-    assert cache.state_fusion == "mean_output_mean_cache"
-
-
-@pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
-def test_bidirectional_mean_state_fusion_keeps_bidirectional_prediction_cache(model_type: str) -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("FLA backend requires CUDA/Triton for this test.")
-
-    torch.manual_seed(0)
-    device = torch.device("cuda")
-    backbone = build_fla_backbone(
-        model_type,
-        size="small",
-        bidirectional=True,
-        bidirectional_state_fusion="mean_output_two_cache",
+        bidirectional_state_fusion=state_fusion,
     ).to(device)
     embed_dim = fla_hidden_size(model_type, size="small")
     train_x = torch.randn(2, 5, embed_dim, device=device)
@@ -197,9 +165,13 @@ def test_bidirectional_mean_state_fusion_keeps_bidirectional_prediction_cache(mo
         out = backbone.incontext_predict(test_x, state)
 
     cache = state["cache_params"]
-    assert isinstance(cache, BidirectionalFLACache)
-    assert cache.forward_cache is not None
-    assert cache.backward_cache is not None
+    assert isinstance(cache, expected_cache_type)
+    if isinstance(cache, BidirectionalFLACache):
+        assert cache.forward_cache is not None
+        assert cache.backward_cache is not None
+    else:
+        assert cache.state_fusion == state_fusion
+        assert cache.cache is not None
     assert out.shape == test_x.shape
     assert torch.isfinite(out).all()
 
