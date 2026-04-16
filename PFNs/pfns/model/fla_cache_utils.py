@@ -42,6 +42,9 @@ def repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
         if repeat == 1:
             return cache_params.clone()
         return cache_params.repeat_interleave(repeat, dim=0)
+    repeat_hook = getattr(cache_params, "__fla_repeat_cache__", None)
+    if callable(repeat_hook):
+        return repeat_hook(repeat)
     if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):
         cache_params_copy = shallow_copy(cache_params)
         if repeat == 1:
@@ -72,6 +75,9 @@ def copy_cache(cache_params: tp.Any) -> tp.Any:
         return None
     if torch.is_tensor(cache_params):
         return cache_params.clone()
+    copy_hook = getattr(cache_params, "__fla_copy_cache__", None)
+    if callable(copy_hook):
+        return copy_hook()
     if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):
         cache_params_copy = shallow_copy(cache_params)
         cache_params_copy.conv_states = cache_params.conv_states.clone()

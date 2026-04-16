@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
-from pfns.model.fla_cache_utils import copy_cache
+from pfns.model.fla_cache_utils import copy_cache, repeat_cache, shallow_copy
 
 BIDIRECTIONAL_FLA_SEQUENCE_MODES = {"Comb_ST"}
 BIDIRECTIONAL_STATE_FUSIONS = {
@@ -42,11 +42,176 @@ class BidirectionalFLACache:
     forward_cache: tp.Any | None
     backward_cache: tp.Any | None
 
+    def __fla_copy_cache__(self) -> "BidirectionalFLACache":
+        return BidirectionalFLACache(
+            forward_cache=copy_cache(self.forward_cache),
+            backward_cache=copy_cache(self.backward_cache),
+        )
+
+    def __fla_repeat_cache__(self, repeat: int) -> "BidirectionalFLACache":
+        return BidirectionalFLACache(
+            forward_cache=repeat_cache(self.forward_cache, repeat),
+            backward_cache=repeat_cache(self.backward_cache, repeat),
+        )
+
 
 @dataclass
 class FusedBidirectionalFLACache:
     cache: tp.Any | None
     state_fusion: str = "mean_output_mean_cache"
+
+    def __fla_copy_cache__(self) -> "FusedBidirectionalFLACache":
+        return FusedBidirectionalFLACache(
+            cache=copy_cache(self.cache),
+            state_fusion=self.state_fusion,
+        )
+
+    def __fla_repeat_cache__(self, repeat: int) -> "FusedBidirectionalFLACache":
+        return FusedBidirectionalFLACache(
+            cache=repeat_cache(self.cache, repeat),
+            state_fusion=self.state_fusion,
+        )
+
+
+def validate_bidirectional_cache(cache_params: tp.Any) -> None:
+    if not isinstance(cache_params, (BidirectionalFLACache, FusedBidirectionalFLACache)):
+        raise TypeError(
+            "BidirectionalFLABackbone requires a BidirectionalFLACache or "
+            "FusedBidirectionalFLACache for prediction."
+        )
+
+
+def _fuse_prediction_value(
+    forward_value: tp.Any,
+    backward_value: tp.Any,
+) -> tp.Any:
+    if forward_value is backward_value:
+        return forward_value
+    if forward_value is None or backward_value is None:
+        assert forward_value is None and backward_value is None, (
+            "Forward and backward cache values must either both be present or both be None."
+        )
+        return None
+    if torch.is_tensor(forward_value):
+        assert torch.is_tensor(backward_value) and forward_value.shape == backward_value.shape, (
+            "Forward and backward cache tensors must have matching shapes for state fusion."
+        )
+        return (forward_value + backward_value) / 2
+    if isinstance(forward_value, (tuple, list)):
+        assert type(forward_value) is type(backward_value) and len(forward_value) == len(backward_value), (
+            "Forward and backward cache sequences must have matching structure for state fusion."
+        )
+        fused_items = [
+            _fuse_prediction_value(f_item, b_item)
+            for f_item, b_item in zip(forward_value, backward_value, strict=True)
+        ]
+        return tuple(fused_items) if isinstance(forward_value, tuple) else fused_items
+    if isinstance(forward_value, dict):
+        assert isinstance(backward_value, dict) and forward_value.keys() == backward_value.keys(), (
+            "Forward and backward cache dicts must have matching keys for state fusion."
+        )
+        return {
+            key: _fuse_prediction_value(forward_value[key], backward_value[key])
+            for key in forward_value
+        }
+    if hasattr(forward_value, "__dict__"):
+        assert hasattr(backward_value, "__dict__")
+        assert forward_value.__dict__.keys() == backward_value.__dict__.keys(), (
+            "Forward and backward cache objects must have matching attributes for state fusion."
+        )
+        fused_value = shallow_copy(forward_value)
+        for attr_name in forward_value.__dict__:
+            setattr(
+                fused_value,
+                attr_name,
+                _fuse_prediction_value(
+                    getattr(forward_value, attr_name),
+                    getattr(backward_value, attr_name),
+                ),
+            )
+        return fused_value
+    if forward_value == backward_value:
+        return forward_value
+    raise AssertionError(
+        "Unsupported cache value type for state fusion. "
+        "Expected tensor/None/list/tuple/dict leaves, got "
+        f"{type(forward_value)!r}"
+    )
+
+
+def fuse_bidirectional_cache(
+    cache_params: BidirectionalFLACache,
+    *,
+    state_fusion: str,
+) -> tp.Any:
+    if not _uses_fused_prediction_cache(state_fusion):
+        raise ValueError(f"Unsupported state_fusion mode: {state_fusion!r}")
+    return _fuse_prediction_value(
+        cache_params.forward_cache,
+        cache_params.backward_cache,
+    )
+
+
+def prepare_bidirectional_cache(
+    cache_params: BidirectionalFLACache | FusedBidirectionalFLACache,
+    *,
+    chunk_len: int,
+    use_custom_recurrent: bool,
+    supports_custom_recurrent: bool,
+) -> tp.Any:
+    def maybe_repeat(cache_value: tp.Any) -> tp.Any:
+        if use_custom_recurrent and supports_custom_recurrent:
+            return cache_value
+        return repeat_cache(cache_value, chunk_len)
+
+    if isinstance(cache_params, FusedBidirectionalFLACache):
+        return maybe_repeat(cache_params.cache)
+    return (
+        maybe_repeat(cache_params.forward_cache),
+        maybe_repeat(cache_params.backward_cache),
+    )
+
+
+def run_bidirectional_layers(
+    hidden: torch.Tensor,
+    *,
+    layers: tp.Iterable[nn.Module],
+    chunk_cache: tp.Any,
+) -> torch.Tensor:
+    for layer in layers:
+        if not isinstance(layer, BidirectionalFLALayer):
+            raise TypeError(
+                "Expected BidirectionalFLALayer in bidirectional FLA backbone."
+            )
+        if isinstance(chunk_cache, tuple):
+            forward_cache, backward_cache = chunk_cache
+            forward_output = layer.forward_layer(
+                hidden,
+                use_cache=False,
+                output_attentions=False,
+                past_key_values=forward_cache,
+            )
+            backward_output = layer.backward_layer(
+                hidden,
+                use_cache=False,
+                output_attentions=False,
+                past_key_values=backward_cache,
+            )
+            hidden = layer._fuse_hidden_states(
+                layer._extract_hidden_states(forward_output),
+                layer._extract_hidden_states(backward_output),
+            )
+        else:
+            fused_output = layer.forward_layer(
+                hidden,
+                use_cache=False,
+                output_attentions=False,
+                past_key_values=chunk_cache,
+            )
+            hidden = layer._fuse_single_hidden_state(
+                layer._extract_hidden_states(fused_output)
+            )
+    return hidden
 
 
 class BidirectionalFLALayer(nn.Module):
