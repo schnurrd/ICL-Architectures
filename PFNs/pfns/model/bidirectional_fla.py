@@ -15,7 +15,6 @@ BIDIRECTIONAL_STATE_FUSIONS = {
     "linear_output_two_cache",
     "mean_output_two_cache",
     "mean_output_mean_cache",
-    "linear_output_mean_cache",
 }
 
 
@@ -24,11 +23,11 @@ def _uses_mean_hidden_fusion(state_fusion: str) -> bool:
 
 
 def _uses_fused_prediction_cache(state_fusion: str) -> bool:
-    return state_fusion in {"mean_output_mean_cache", "linear_output_mean_cache"}
+    return state_fusion in {"mean_output_mean_cache"}
 
 
 def _uses_linear_output_fusion(state_fusion: str) -> bool:
-    return state_fusion in {"linear_output_two_cache", "linear_output_mean_cache"}
+    return state_fusion in {"linear_output_two_cache"}
 
 
 def _get_fla_layers(fla_model: nn.Module) -> nn.ModuleList:

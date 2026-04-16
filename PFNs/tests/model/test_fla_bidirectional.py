@@ -100,7 +100,7 @@ def test_bidirectional_layer_mean_fused_cache_linear_output_keeps_fusion_out() -
     layer = BidirectionalFLALayer(
         torch.nn.Identity(),
         hidden_size=4,
-        state_fusion="linear_output_mean_cache",
+        state_fusion="linear_output_two_cache",
     )
 
     assert layer.fusion_out is not None
@@ -204,7 +204,7 @@ def test_bidirectional_mean_state_fusion_keeps_bidirectional_prediction_cache(mo
     assert torch.isfinite(out).all()
 
 
-@pytest.mark.parametrize("state_fusion", ["mean_output_mean_cache", "linear_output_mean_cache"])
+@pytest.mark.parametrize("state_fusion", ["mean_output_mean_cache"])
 @pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
 def test_bidirectional_fused_prediction_cache_matches_naive_reference(
     model_type: str,

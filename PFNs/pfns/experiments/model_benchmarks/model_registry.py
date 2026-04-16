@@ -489,10 +489,6 @@ MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
 }
 
 BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
-    "Bidirectional_DeltaNet_Comb_ST_linear_output_mean_cache": {
-        "display_name": "Bidirectional Linear Output Mean Cache (DeltaNet)",
-        "wandb_run_id": "icl_arch/fla_models/dgdxmimw",
-    },
     "Bidirectional_DeltaNet_Comb_ST_linear_output_two_cache": {
         "display_name": "Bidirectional Linear Output Two Cache (DeltaNet)",
         "wandb_run_id": "icl_arch/fla_models/5htl7smo",
