@@ -163,7 +163,6 @@ def build_fla_backbone(
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None,
     mimetic_init_mode: str = "gate_only",
     bidirectional: bool = False,
-    bidirectional_share_weights: bool = True,
     bidirectional_state_fusion: str = "mean_output_mean_cache",
     train: bool = False,
 ) -> torch.nn.Module:
@@ -181,7 +180,6 @@ def build_fla_backbone(
         mimetic_init_layer_indices=mimetic_init_layer_indices,
         mimetic_init_mode=mimetic_init_mode,
         bidirectional=bidirectional,
-        bidirectional_share_weights=bidirectional_share_weights,
         bidirectional_state_fusion=bidirectional_state_fusion,
     )
     ninp = int(kwargs["hidden_size"])

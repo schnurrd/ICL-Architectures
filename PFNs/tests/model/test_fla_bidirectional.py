@@ -15,8 +15,11 @@ from tests.model.fla_test_utils import (
     fla_model_config_kwargs,
 )
 
-BIDIRECTIONAL_FLA_MODEL_TYPES = tuple(
-    model_type for model_type in FLA_MODEL_TYPES if model_type != "mamba2"
+BIDIRECTIONAL_FLA_MODEL_TYPES = ("linear_attn", "gla", "deltanet")
+UNSUPPORTED_BIDIRECTIONAL_MODEL_TYPES = tuple(
+    model_type
+    for model_type in FLA_MODEL_TYPES
+    if model_type not in BIDIRECTIONAL_FLA_MODEL_TYPES
 )
 
 
@@ -55,9 +58,10 @@ def test_bidirectional_wraps_every_layer(model_type: str) -> None:
     assert all(isinstance(layer, BidirectionalFLALayer) for layer in backbone.layers)
 
 
-def test_bidirectional_rejects_mamba2() -> None:
-    with pytest.raises(ValueError, match="does not support model_type='mamba2'"):
-        build_fla_backbone("mamba2", size="small", bidirectional=True)
+@pytest.mark.parametrize("model_type", UNSUPPORTED_BIDIRECTIONAL_MODEL_TYPES)
+def test_bidirectional_rejects_unsupported_model_types(model_type: str) -> None:
+    with pytest.raises(ValueError, match="supports only model_type"):
+        build_fla_backbone(model_type, size="small", bidirectional=True)
 
 
 def test_non_bidirectional_ignores_bidirectional_state_fusion() -> None:
@@ -69,17 +73,6 @@ def test_non_bidirectional_ignores_bidirectional_state_fusion() -> None:
     )
 
     assert backbone is not None
-
-
-def test_bidirectional_state_fusion_requires_shared_weights() -> None:
-    with pytest.raises(ValueError, match="bidirectional_state_fusion requires bidirectional_share_weights=True"):
-        build_fla_backbone(
-            "gla",
-            size="small",
-            bidirectional=True,
-            bidirectional_share_weights=False,
-            bidirectional_state_fusion="mean_output_mean_cache",
-        )
 
 
 def test_bidirectional_layer_mean_state_fusion_averages_hidden_states() -> None:

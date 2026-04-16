@@ -15,7 +15,9 @@ from tests.model.fla_test_utils import (
 )
 
 BIDIRECTIONAL_FLA_MODEL_TYPES = tuple(
-    model_type for model_type in FLA_MODEL_TYPES if model_type != "mamba2"
+    model_type
+    for model_type in FLA_MODEL_TYPES
+    if model_type in {"linear_attn", "gla", "deltanet"}
 )
 
 
