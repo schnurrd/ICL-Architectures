@@ -215,7 +215,14 @@ def run_bidirectional_layers(
 
 
 class BidirectionalFLALayer(nn.Module):
-    """Wrap an FLA layer with forward/reverse passes fused back to one state."""
+    """Wrap an FLA layer with forward/reverse passes fused back to one state.
+
+    Note: this wrapper is heuristic. It fuses full forward/backward layer outputs
+    and does not implement a theory-backed correction for possible self-term
+    double counting in bidirectional linear-attention-style models (see Lions paper). 
+    A principled fix would likely need model-specific changes inside each FLA layer/
+    kernel, rather than a generic post-hoc wrapper correction.
+    """
 
     def __init__(
         self,
