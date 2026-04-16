@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
+from pfns.model.fla_cache_utils import copy_cache
+
 BIDIRECTIONAL_FLA_SEQUENCE_MODES = {"Comb_ST"}
 BIDIRECTIONAL_STATE_FUSIONS = {
     "linear_output_two_cache",
@@ -56,12 +58,18 @@ class BidirectionalFLALayer(nn.Module):
         layer: nn.Module,
         *,
         hidden_size: int,
+        bidirectional_share_weights: bool = True,
         state_fusion: str = "mean_output_mean_cache",
     ) -> None:
         super().__init__()
+        self.bidirectional_share_weights = bool(bidirectional_share_weights)
         self.state_fusion = state_fusion
         self.forward_layer = layer
-        self.backward_layer = layer
+        self.backward_layer = (
+            layer
+            if self.bidirectional_share_weights
+            else copy.deepcopy(layer)
+        )
         self.fusion_out = (
             nn.Linear(hidden_size * 2, hidden_size)
             if _uses_linear_output_fusion(self.state_fusion)
@@ -98,12 +106,7 @@ class BidirectionalFLALayer(nn.Module):
     ) -> tuple[tp.Any | None, tp.Any | None]:
         if isinstance(cache_value, BidirectionalFLACache):
             return cache_value.forward_cache, cache_value.backward_cache
-        from pfns.model.backbones import FLABackbone
-
-        return (
-            FLABackbone._copy_cache(cache_value),
-            FLABackbone._copy_cache(cache_value),
-        )
+        return copy_cache(cache_value), copy_cache(cache_value)
 
     @staticmethod
     def _extract_hidden_states(output: tp.Any) -> torch.Tensor:
@@ -209,6 +212,7 @@ def _make_fla_model_bidirectional(
     fla_model: nn.Module,
     *,
     hidden_size: int,
+    bidirectional_share_weights: bool = True,
     state_fusion: str = "mean_output_mean_cache",
 ) -> nn.Module:
     layers = _get_fla_layers(fla_model)
@@ -217,6 +221,7 @@ def _make_fla_model_bidirectional(
             BidirectionalFLALayer(
                 layer,
                 hidden_size=hidden_size,
+                bidirectional_share_weights=bidirectional_share_weights,
                 state_fusion=state_fusion,
             )
             for layer in layers

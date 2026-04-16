@@ -100,6 +100,31 @@ def test_bidirectional_layer_mean_fused_cache_linear_output_keeps_fusion_out() -
     assert layer.fusion_out is not None
 
 
+def test_bidirectional_layer_without_shared_weights_clones_backward_branch() -> None:
+    layer = torch.nn.Linear(4, 4)
+    wrapped = BidirectionalFLALayer(
+        layer,
+        hidden_size=4,
+        bidirectional_share_weights=False,
+        state_fusion="mean_output_two_cache",
+    )
+
+    assert wrapped.forward_layer is layer
+    assert wrapped.backward_layer is not layer
+    assert wrapped.bidirectional_share_weights is False
+
+
+def test_bidirectional_without_shared_weights_rejects_fused_prediction_cache() -> None:
+    with pytest.raises(ValueError, match="bidirectional_share_weights=False"):
+        build_fla_backbone(
+            "deltanet",
+            size="small",
+            bidirectional=True,
+            bidirectional_share_weights=False,
+            bidirectional_state_fusion="mean_output_mean_cache",
+        )
+
+
 @pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
 def test_bidirectional_incontext_fit_builds_forward_and_backward_caches(model_type: str) -> None:
     if not torch.cuda.is_available():

@@ -57,6 +57,13 @@ from pfns.model.bidirectional_fla import (  # noqa: E402
     _make_fla_model_bidirectional,
     _uses_fused_prediction_cache,
 )
+from pfns.model.fla_cache_utils import (
+    copy_cache as _copy_fla_cache,
+    copy_state as _copy_fla_state,
+    repeat_cache as _repeat_fla_cache,
+    repeat_state as _repeat_fla_state,
+    shallow_copy as _shallow_copy_fla,
+)
 
 from pfns.model.rebased_linear_attention import RebasedLinearAttention
 from pfns.model.tabular_model import LayerStack
@@ -351,6 +358,7 @@ class FLABackboneConfig(BackboneConfig):
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
     bidirectional: bool = False
+    bidirectional_share_weights: bool = True
     bidirectional_state_fusion: str = "mean_output_mean_cache"
     state_passing: bool = False
     state_passing_dropout: float = 0.1
@@ -386,6 +394,14 @@ class FLABackboneConfig(BackboneConfig):
                     "bidirectional_state_fusion must be one of "
                     f"{sorted(BIDIRECTIONAL_STATE_FUSIONS)}."
                 )
+            if (
+                not self.bidirectional_share_weights
+                and _uses_fused_prediction_cache(self.bidirectional_state_fusion)
+            ):
+                raise ValueError(
+                    "bidirectional_share_weights=False is not supported with fused "
+                    "bidirectional prediction caches."
+                )
         if self.bidirectional and self.state_passing:
             raise ValueError("Bidirectional FLA does not support state_passing.")
         if not 0.0 <= self.state_passing_dropout <= 1.0:
@@ -419,6 +435,7 @@ class FLABackboneConfig(BackboneConfig):
             _make_fla_model_bidirectional(
                 wrapped_model,
                 hidden_size=int(config.hidden_size),
+                bidirectional_share_weights=self.bidirectional_share_weights,
                 state_fusion=self.bidirectional_state_fusion,
             )
 
@@ -516,98 +533,23 @@ class FLABackbone(Backbone):
 
     @staticmethod
     def _shallow_copy(obj: tp.Any) -> tp.Any:
-        obj_copy = obj.__class__.__new__(obj.__class__)
-        obj_copy.__dict__.update(obj.__dict__)
-        return obj_copy
+        return _shallow_copy_fla(obj)
 
     @staticmethod
     def _repeat_state(state: dict[str, tp.Any], repeat: int, *, dim: int) -> dict[str, tp.Any]:
-        def _repeat_value(value: tp.Any) -> tp.Any:
-            if torch.is_tensor(value):
-                if repeat == 1:
-                    return value.clone()
-                return value.repeat_interleave(repeat, dim=dim)
-            if isinstance(value, tuple):
-                return tuple(_repeat_value(item) for item in value)
-            return value
-
-        return {key: _repeat_value(value) for key, value in state.items()}
+        return _repeat_fla_state(state, repeat, dim=dim)
 
     @staticmethod
     def _copy_state(state: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        def _copy_value(value: tp.Any) -> tp.Any:
-            if torch.is_tensor(value):
-                return value.clone()
-            if isinstance(value, tuple):
-                return tuple(_copy_value(item) for item in value)
-            return value
-
-        return {key: _copy_value(value) for key, value in state.items()}
+        return _copy_fla_state(state)
 
     @staticmethod
     def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
-        if cache_params is None:
-            return None
-        if torch.is_tensor(cache_params):
-            if repeat == 1:
-                return cache_params.clone()
-            return cache_params.repeat_interleave(repeat, dim=0)
-        if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):  # Mamba2 style
-            cache_params_copy = FLABackbone._shallow_copy(cache_params)
-            if repeat == 1:
-                cache_params_copy.conv_states = cache_params.conv_states.clone()
-                cache_params_copy.ssm_states = cache_params.ssm_states.clone()
-            else:
-                cache_params_copy.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
-                cache_params_copy.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
-            return cache_params_copy
-        if hasattr(cache_params, "layers"):  # GLA, KDA, (Gated) Deltanet style
-            cache_params_copy = FLABackbone._shallow_copy(cache_params)
-            new_layers = []
-            for layer in cache_params.layers:
-                layer_copy = FLABackbone._shallow_copy(layer)
-                state = getattr(layer, "state", None)
-                if isinstance(state, dict):
-                    layer_copy.state = FLABackbone._repeat_state(state, repeat, dim=0)
-                else:
-                    raise ValueError("Unsupported layer state structure for repetition.")
-                new_layers.append(layer_copy)
-            cache_params_copy.layers = new_layers
-            return cache_params_copy
-        raise ValueError("Unsupported cache_params structure for repetition.")
+        return _repeat_fla_cache(cache_params, repeat)
 
     @staticmethod
     def _copy_cache(cache_params: tp.Any) -> tp.Any:
-        if cache_params is None:
-            return None
-        if torch.is_tensor(cache_params):
-            return cache_params.clone()
-        if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):  # Mamba2 style
-            cache_params_copy = FLABackbone._shallow_copy(cache_params)
-            cache_params_copy.conv_states = cache_params.conv_states.clone()
-            cache_params_copy.ssm_states = cache_params.ssm_states.clone()
-            return cache_params_copy
-        if hasattr(cache_params, "layers"):  # GLA, KDA, (Gated) Deltanet style
-            cache_params_copy = FLABackbone._shallow_copy(cache_params)
-            new_layers = []
-            for layer in cache_params.layers:
-                layer_copy = FLABackbone._shallow_copy(layer)
-                state = getattr(layer, "state", None)
-                if isinstance(state, dict):
-                    layer_copy.state = FLABackbone._copy_state(state)
-                else:
-                    raise ValueError("Unsupported layer state structure for copy.")
-                new_layers.append(layer_copy)
-            cache_params_copy.layers = new_layers
-            return cache_params_copy
-        if hasattr(cache_params, "states"):
-            cache_params_copy = FLABackbone._shallow_copy(cache_params)
-            cache_params_copy.states = [
-                FLABackbone._copy_state(state) if isinstance(state, dict) else state
-                for state in cache_params.states
-            ]
-            return cache_params_copy
-        return FLABackbone._shallow_copy(cache_params)
+        return _copy_fla_cache(cache_params)
 
     @staticmethod
     def _prepare_fla_input(
