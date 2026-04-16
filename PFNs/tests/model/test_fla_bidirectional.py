@@ -32,6 +32,12 @@ def _enable_bidirectional_fusion(backbone: torch.nn.Module) -> None:
                     layer.fusion_out.bias.zero_()
 
 
+def _bidirectional_cache_tolerances(model_type: str) -> tuple[float, float]:
+    if model_type == "deltanet":
+        return 1e-3, 1e-3
+    return 1e-5, 1e-5
+
+
 @pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
 @pytest.mark.parametrize("sequence_mode", ["Int_ST", "Comb_MT", "Int_MT"])
 def test_bidirectional_rejects_unsupported_sequence_modes(
@@ -200,7 +206,7 @@ def test_bidirectional_mean_state_fusion_keeps_bidirectional_prediction_cache(mo
 
 @pytest.mark.parametrize("state_fusion", ["mean_output_mean_cache", "linear_output_mean_cache"])
 @pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)
-def test_bidirectional_state_fusion_returns_fused_prediction_cache(
+def test_bidirectional_fused_prediction_cache_matches_naive_reference(
     model_type: str,
     state_fusion: str,
 ) -> None:
@@ -221,14 +227,22 @@ def test_bidirectional_state_fusion_returns_fused_prediction_cache(
 
     with torch.no_grad():
         _, state = backbone.incontext_fit(train_x)
-        out = backbone.incontext_predict(test_x, state)
+        cache = state["cache_params"]
+        out_fast = backbone.incontext_predict(test_x, state)
+        out_naive = backbone._run_test_with_cache_naive(
+            test_x,
+            backbone._copy_cache(cache),
+            use_custom_recurrent=True,
+            use_custom_shortconv=True,
+        )
 
-    cache = state["cache_params"]
     assert isinstance(cache, FusedBidirectionalFLACache)
     assert cache.state_fusion == state_fusion
     assert cache.cache is not None
-    assert out.shape == test_x.shape
-    assert torch.isfinite(out).all()
+    assert out_fast.shape == test_x.shape
+    assert torch.isfinite(out_fast).all()
+    rtol, atol = _bidirectional_cache_tolerances(model_type)
+    torch.testing.assert_close(out_fast, out_naive, rtol=rtol, atol=atol)
 
 
 @pytest.mark.parametrize("model_type", BIDIRECTIONAL_FLA_MODEL_TYPES)

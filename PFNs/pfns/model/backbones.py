@@ -1125,8 +1125,14 @@ class BidirectionalFLABackbone(FLABackbone):
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
     ) -> torch.Tensor:
-        if not isinstance(cache_params, BidirectionalFLACache):
-            raise TypeError("BidirectionalFLABackbone requires a BidirectionalFLACache for prediction.")
+        if not isinstance(
+            cache_params,
+            (BidirectionalFLACache, FusedBidirectionalFLACache),
+        ):
+            raise TypeError(
+                "BidirectionalFLABackbone requires a BidirectionalFLACache or "
+                "FusedBidirectionalFLACache for prediction."
+            )
         if test_x.numel() == 0:
             return test_x
 
