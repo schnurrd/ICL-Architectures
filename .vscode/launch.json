@@ -86,10 +86,18 @@
             "console": "integratedTerminal",
             "python": "${userHome}/miniconda3/envs/icl_arch/bin/python",
             "args": [
-                "PFNs/configs/linear_attention/linear_attention_test.py",
+                "PFNs/configs/linear_attention/linear_attention_config.py",
                 "--checkpoint-save-load-prefix", "PFNs/models_diff",
-                "--overwrite", "--no-wandb"
-            ]
+                "--overwrite", "--no-wandb",
+                "--config-arg", "sequence_mode='Comb_ST'",
+                "--config-arg", "norm_type='rmsnorm'",
+                "--config-arg", "use_output_norm=True",
+                "--config-arg", "scale_query_by_sqrt_dk=True",
+                "--config-arg", "use_k_sum_normalization=False",
+                "--config-arg", "state_renormalization='sqrt_d_fro'",
+                "--config-arg", "learnable_state_renorm_scale=True"
+            ],
+            "justMyCode": false
         },
         {
             "name": "Python Debugger: Evaluation Transformer",

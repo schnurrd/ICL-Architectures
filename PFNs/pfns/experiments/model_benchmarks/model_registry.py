@@ -221,32 +221,49 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
       "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
       "display_name": "Linear Attention\n(Non-Causal)",
     },
+    "Linear_Attention_Non_Causal_fro_norm": {
+      "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
+    },
+    "Linear_Attention_Non_Causal_fro_norm_fp_32": {
+      "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal; FP32) w. Fro Norm",
+      "eval_autocast_dtype": "fp32",
+    },
+    "Linear_Attention_Non_Causal_old": { # old model
+        "wandb_run_id": "linear_attention/runs/hwsxnsho",
+        "display_name": "Old Non-Causal Linear\nAttention (Comb ST)",
+    },
+    # ------linear and element_wise product feature map are worse than the elu one -----
+    # "Linear_Attention_Non_Causal_feat_map_elem_product": {
+    #   "wandb_run_id": "linear_attention/runs/02rush9s", # new default implementation
+    #   "display_name": "Linear Attention\n(Non-Causal) w. Feature Map Element-wise Product",
+    # },
+    # "Linear_Attention_Non_Causal_feat_map_linear": {
+    #   "wandb_run_id": "linear_attention/runs/a4rrhp8v", # new default implementation
+    #   "display_name": "Linear Attention\n(Non-Causal) w. Feature Map Linear",
+    # },
+    "Linear_Attention_Non_Causal_old_setup": {
+      "wandb_run_id": "linear_attention/runs/ashbd98t",
+      "display_name": "Linear Attention\n(Non-Causal) old setup",
+      "note": "ep 181/200"
+    },
+    # ----------- Causal Models -----------
     "Linear_Attention_Comb_ST": {
       "wandb_run_id": "linear_attention/runs/3jq88aqt", # new default implementation
       "display_name": "Linear Attention\n(Comb_ST)",
       "note": "ep 122/200"
-    },
-    "Linear_Attention_Non_Causal_fro_norm": {
-      "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
-      "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
     },
     "Linear_Attention_Comb_ST_fro_norm": {
       "wandb_run_id": "linear_attention/runs/rrakg728", # new default implementation
       "display_name": "Linear Attention\n(Comb_ST) w. Fro Norm",
       "note": "ep 78/200"
     },
-    "Linear_Attention_Non_Causal_feat_map_elem_product": {
-      "wandb_run_id": "linear_attention/runs/02rush9s", # new default implementation
-      "display_name": "Linear Attention\n(Non-Causal) w. Feature Map Element-wise Product",
-    },
-    "Linear_Attention_Non_Causal_feat_map_linear": {
-      "wandb_run_id": "linear_attention/runs/a4rrhp8v", # new default implementation
-      "display_name": "Linear Attention\n(Non-Causal) w. Feature Map Linear",
-    },
-    "Linear_Attention_Non_Causal_old_setup": {
-      "wandb_run_id": "linear_attention/runs/ashbd98t",
-      "display_name": "Linear Attention\n(Non-Causal) old setup",
-      "note": "ep 181/200"
+    "Linear_Attention_Comb_ST_fro_norm_fp_32": {
+      "wandb_run_id": "linear_attention/runs/rrakg728", # new default implementation
+      "display_name": "Linear Attention\n(Comb_ST; FP32) w. Fro Norm",
+      "note": "ep 78/200",
+      "eval_autocast_dtype": "fp32",
     },
     "Linear_Attention_Comb_ST_old_setup": {
       "wandb_run_id": "linear_attention/runs/7kig0n7a",
@@ -255,7 +272,7 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     },
     "Linear_Attention_FLA_Comb_ST": { 
         "wandb_run_id": "icl_arch/fla_models/hqzpuaso",
-        "display_name": "Causal Linear Attention (Comb ST)",
+        "display_name": "Linear Attention (FLA; Comb ST)",
         "note": "ep 56/200"
     },
 }
