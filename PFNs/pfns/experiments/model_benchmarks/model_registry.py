@@ -331,10 +331,10 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Non-Causal Linear\nAttention",
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
     },
-    "Linear_Attention_FLA_Comb_ST": { 
-        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
-        "display_name": "Causal Linear\nAttention (Comb ST)",
-    },
+    # "Linear_Attention_FLA_Comb_ST": { 
+    #     "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+    #     "display_name": "Causal Linear\nAttention (Comb ST)",
+    # },
     "equal_params:DeltaNet_Comb_ST": {
         "display_name": "DeltaNet",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
@@ -478,10 +478,10 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
 }
 
 MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
-    "mimetic:Linear_Attention_FLA_Comb_ST": { 
-        "display_name": "Linear Attention\nComb ST (Reference)",
-        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
-    },
+    # "mimetic:Linear_Attention_FLA_Comb_ST": { 
+    #     "display_name": "Linear Attention\nComb ST (Reference)",
+    #     "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+    # },
     "mimetic:GLA_Comb_ST_Ref": {
         "display_name": "GLA Comb ST (Reference)",
         "wandb_run_id": "fla_models/runs/2v2xw7d2",
@@ -538,7 +538,7 @@ BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Bidirectional Mean Output Two Cache Separate Weights (DeltaNet)",
         "wandb_run_id": "icl_arch/fla_models/6lby3bdm",
     },
-    "Bidirectional_Linear_Attention_Comb_ST_mean_output_mean_cache": {
+    "Bidirectional_Linear_Attention_Comb_ST_mean_output_mean_cache": { # todo retrain as linear attention conf is outdated
         "display_name": "Bidirectional Mean Output Mean Cache (Linear Attention)",
         "wandb_run_id": "icl_arch/fla_models/3j9jgdvx",
     },
