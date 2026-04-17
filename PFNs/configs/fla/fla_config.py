@@ -221,6 +221,9 @@ def get_config(
     model_type: str = "kda",
     hidden_size: int | None = None,
     sequence_mode: str = "Comb_ST",
+    bidirectional: bool = False,
+    bidirectional_share_weights: bool = True,
+    bidirectional_state_fusion: str = "mean_output_mean_cache",
     state_passing: bool = False,
     state_passing_dropout: float = 0.1,
     task_variant: str = "tabular_prior",
@@ -370,6 +373,9 @@ def get_config(
         "model_type": model_type,
         "config_kwargs": resolved_config_kwargs,
         "sequence_mode": sequence_mode,
+        "bidirectional": bidirectional,
+        "bidirectional_share_weights": bidirectional_share_weights,
+        "bidirectional_state_fusion": bidirectional_state_fusion,
         "state_passing": bool(state_passing),
         "state_passing_dropout": float(state_passing_dropout),
         "mimetic_init": mimetic_init,
@@ -436,6 +442,13 @@ def get_config(
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
         "nocat" if not use_categorical_features else None,
         f"mimetic_{mimetic_init_mode}" if mimetic_init else None,
+        "bidir" if bidirectional else None,
+        (
+            f"bidirshare_{int(bidirectional_share_weights)}"
+            if bidirectional
+            else None
+        ),
+        f"sfusion_{bidirectional_state_fusion}" if bidirectional else None,
         f"fpe_{feature_positional_embedding}",
     ]
     extras_str = "_".join(e for e in extras if e)

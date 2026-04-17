@@ -46,6 +46,28 @@ from pfns.model.mode_normalization import (
     CANONICAL_SEQUENCE_MODES,
     resolve_sequence_mode,
 )
+
+from pfns.model.bidirectional_fla import (  # noqa: E402
+    BIDIRECTIONAL_FLA_SEQUENCE_MODES,
+    BIDIRECTIONAL_STATE_FUSIONS,
+    BidirectionalFLACache,
+    FusedBidirectionalFLACache,
+    _get_fla_layers,
+    _make_fla_model_bidirectional,
+    _uses_fused_prediction_cache,
+    fuse_bidirectional_cache,
+    prepare_bidirectional_cache,
+    run_bidirectional_layers,
+    validate_bidirectional_cache,
+)
+from pfns.model.fla_cache_utils import (
+    copy_cache as _copy_fla_cache,
+    copy_state as _copy_fla_state,
+    repeat_cache as _repeat_fla_cache,
+    repeat_state as _repeat_fla_state,
+    shallow_copy as _shallow_copy_fla,
+)
+
 from pfns.model.rebased_linear_attention import RebasedLinearAttention
 from pfns.model.tabular_model import LayerStack
 # Registry mapping model types to their config and model classes
@@ -60,10 +82,7 @@ FLA_MODEL_REGISTRY = {
 }
 
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
-
-
-def _resolve_fla_sequence_mode(sequence_mode: str) -> str:
-    return resolve_sequence_mode(sequence_mode)
+FLA_SPLIT_SEQUENCE_MODES = {"Comb_ST", "Int_ST"}
 
 
 class Backbone(nn.Module, ABC):
@@ -341,6 +360,9 @@ class FLABackboneConfig(BackboneConfig):
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
     cache_chunk_size: int | None = None
+    bidirectional: bool = False
+    bidirectional_share_weights: bool = True
+    bidirectional_state_fusion: str = "mean_output_mean_cache"
     state_passing: bool = False
     state_passing_dropout: float = 0.1
     mimetic_init: bool = False
@@ -355,8 +377,36 @@ class FLABackboneConfig(BackboneConfig):
         object.__setattr__(
             self,
             "sequence_mode",
-            _resolve_fla_sequence_mode(self.sequence_mode),
+            resolve_sequence_mode(self.sequence_mode),
         )
+        if self.bidirectional and self.sequence_mode not in BIDIRECTIONAL_FLA_SEQUENCE_MODES:
+            raise ValueError(
+                "Bidirectional FLA currently supports only sequence_mode "
+                f"in {sorted(BIDIRECTIONAL_FLA_SEQUENCE_MODES)}, "
+                f"got {self.sequence_mode!r}."
+            )
+        if self.bidirectional:
+            supported_bidirectional_models = {"linear_attn", "gla", "deltanet"}
+            if self.model_type not in supported_bidirectional_models:
+                raise ValueError(
+                    "Bidirectional FLA supports only model_type in "
+                    f"{sorted(supported_bidirectional_models)}, got {self.model_type!r}."
+                )
+            if self.bidirectional_state_fusion not in BIDIRECTIONAL_STATE_FUSIONS:
+                raise ValueError(
+                    "bidirectional_state_fusion must be one of "
+                    f"{sorted(BIDIRECTIONAL_STATE_FUSIONS)}."
+                )
+            if (
+                not self.bidirectional_share_weights
+                and _uses_fused_prediction_cache(self.bidirectional_state_fusion)
+            ):
+                raise ValueError(
+                    "bidirectional_share_weights=False is not supported with fused "
+                    "bidirectional prediction caches."
+                )
+        if self.bidirectional and self.state_passing:
+            raise ValueError("Bidirectional FLA does not support state_passing.")
         if not 0.0 <= self.state_passing_dropout <= 1.0:
             raise ValueError("state_passing_dropout must be in [0, 1].")
 
@@ -383,14 +433,28 @@ class FLABackboneConfig(BackboneConfig):
                 layer_indices=layer_indices,
                 mode=self.mimetic_init_mode,
             )
+        if self.bidirectional:
+            wrapped_model = fla_model.model if hasattr(fla_model, "model") else fla_model
+            _make_fla_model_bidirectional(
+                wrapped_model,
+                hidden_size=int(config.hidden_size),
+                bidirectional_share_weights=self.bidirectional_share_weights,
+                state_fusion=self.bidirectional_state_fusion,
+            )
 
-        return FLABackbone(
+        backbone_cls = BidirectionalFLABackbone if self.bidirectional else FLABackbone
+
+        backbone_kwargs = dict(
             fla_model=fla_model,
             sequence_mode=self.sequence_mode,
             cache_chunk_size=self.cache_chunk_size,
             state_passing=self.state_passing,
             state_passing_dropout=self.state_passing_dropout,
         )
+        if self.bidirectional:
+            backbone_kwargs["state_fusion"] = self.bidirectional_state_fusion
+
+        return backbone_cls(**backbone_kwargs)
 
 
 class FLABackbone(Backbone):
@@ -419,13 +483,17 @@ class FLABackbone(Backbone):
         assert not (
             state_passing and isinstance(self.fla, Mamba2Model)
         ), "Mamba2 does not support state_passing."
-        self.sequence_mode = _resolve_fla_sequence_mode(sequence_mode)
+        self.sequence_mode = resolve_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
         self.state_passing = (
             FLAStatePassing(dropout_prob=state_passing_dropout)
             if state_passing
             else None
         )
+
+    @property
+    def layers(self) -> nn.ModuleList:
+        return _get_fla_layers(self.fla)
 
     @staticmethod
     def _summarize_cache(cache_params: tp.Any) -> str:
@@ -468,98 +536,23 @@ class FLABackbone(Backbone):
 
     @staticmethod
     def _shallow_copy(obj: tp.Any) -> tp.Any:
-        obj_copy = obj.__class__.__new__(obj.__class__)
-        obj_copy.__dict__.update(obj.__dict__)
-        return obj_copy
+        return _shallow_copy_fla(obj)
 
     @staticmethod
     def _repeat_state(state: dict[str, tp.Any], repeat: int, *, dim: int) -> dict[str, tp.Any]:
-        def _repeat_value(value: tp.Any) -> tp.Any:
-            if torch.is_tensor(value):
-                if repeat == 1:
-                    return value.clone()
-                return value.repeat_interleave(repeat, dim=dim)
-            if isinstance(value, tuple):
-                return tuple(_repeat_value(item) for item in value)
-            return value
-
-        return {key: _repeat_value(value) for key, value in state.items()}
+        return _repeat_fla_state(state, repeat, dim=dim)
 
     @staticmethod
     def _copy_state(state: dict[str, tp.Any]) -> dict[str, tp.Any]:
-        def _copy_value(value: tp.Any) -> tp.Any:
-            if torch.is_tensor(value):
-                return value.clone()
-            if isinstance(value, tuple):
-                return tuple(_copy_value(item) for item in value)
-            return value
-
-        return {key: _copy_value(value) for key, value in state.items()}
+        return _copy_fla_state(state)
 
     @staticmethod
     def _repeat_cache(cache_params: tp.Any, repeat: int) -> tp.Any:
-        if cache_params is None:
-            return None
-        if torch.is_tensor(cache_params):
-            if repeat == 1:
-                return cache_params.clone()
-            return cache_params.repeat_interleave(repeat, dim=0)
-        if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):  # Mamba2 style
-            cache_params_copy = FLABackbone._shallow_copy(cache_params)
-            if repeat == 1:
-                cache_params_copy.conv_states = cache_params.conv_states.clone()
-                cache_params_copy.ssm_states = cache_params.ssm_states.clone()
-            else:
-                cache_params_copy.conv_states = cache_params.conv_states.repeat_interleave(repeat, dim=1)
-                cache_params_copy.ssm_states = cache_params.ssm_states.repeat_interleave(repeat, dim=1)
-            return cache_params_copy
-        if hasattr(cache_params, "layers"):  # GLA, KDA, (Gated) Deltanet style
-            cache_params_copy = FLABackbone._shallow_copy(cache_params)
-            new_layers = []
-            for layer in cache_params.layers:
-                layer_copy = FLABackbone._shallow_copy(layer)
-                state = getattr(layer, "state", None)
-                if isinstance(state, dict):
-                    layer_copy.state = FLABackbone._repeat_state(state, repeat, dim=0)
-                else:
-                    raise ValueError("Unsupported layer state structure for repetition.")
-                new_layers.append(layer_copy)
-            cache_params_copy.layers = new_layers
-            return cache_params_copy
-        raise ValueError("Unsupported cache_params structure for repetition.")
+        return _repeat_fla_cache(cache_params, repeat)
 
     @staticmethod
     def _copy_cache(cache_params: tp.Any) -> tp.Any:
-        if cache_params is None:
-            return None
-        if torch.is_tensor(cache_params):
-            return cache_params.clone()
-        if hasattr(cache_params, "conv_states") and hasattr(cache_params, "ssm_states"):  # Mamba2 style
-            cache_params_copy = FLABackbone._shallow_copy(cache_params)
-            cache_params_copy.conv_states = cache_params.conv_states.clone()
-            cache_params_copy.ssm_states = cache_params.ssm_states.clone()
-            return cache_params_copy
-        if hasattr(cache_params, "layers"):  # GLA, KDA, (Gated) Deltanet style
-            cache_params_copy = FLABackbone._shallow_copy(cache_params)
-            new_layers = []
-            for layer in cache_params.layers:
-                layer_copy = FLABackbone._shallow_copy(layer)
-                state = getattr(layer, "state", None)
-                if isinstance(state, dict):
-                    layer_copy.state = FLABackbone._copy_state(state)
-                else:
-                    raise ValueError("Unsupported layer state structure for copy.")
-                new_layers.append(layer_copy)
-            cache_params_copy.layers = new_layers
-            return cache_params_copy
-        if hasattr(cache_params, "states"):
-            cache_params_copy = FLABackbone._shallow_copy(cache_params)
-            cache_params_copy.states = [
-                FLABackbone._copy_state(state) if isinstance(state, dict) else state
-                for state in cache_params.states
-            ]
-            return cache_params_copy
-        return FLABackbone._shallow_copy(cache_params)
+        return _copy_fla_cache(cache_params)
 
     @staticmethod
     def _prepare_fla_input(
@@ -680,10 +673,8 @@ class FLABackbone(Backbone):
         if return_cache:
             if hasattr(out, "past_key_values"):
                 cache_params = out.past_key_values
-            elif hasattr(out, "cache_params"):
-                cache_params = out.cache_params
             else:
-                raise RuntimeError("FLA model output does not contain past_key_values or cache_params.")
+                raise RuntimeError("FLA model output does not contain past_key_values.")
         return last_hidden_state, cache_params
 
     def _run_mesanet_with_initial_cache(
@@ -861,11 +852,8 @@ class FLABackbone(Backbone):
         )
         assert single_eval_pos is not None, "single_eval_pos must be provided for FLA backbone"
 
-        batch_size, seq_len, num_tokens, embed_dim = x.shape
-        # Input x is usually [Batch, SeqLen, NumTokens, EmSize]
-        # FLA expects [Batch, SeqLen, EmSize] -> so we flatten NumTokens into Batch
-        x_batched = x.transpose(1, 2).reshape(batch_size * num_tokens, seq_len, embed_dim)
-
+        x_batched, shape_info = self._prepare_fla_input(x)
+        seq_len = x_batched.size(1)
         train_len = min(single_eval_pos, seq_len)
         state_passing = self.state_passing if self.training else None
         initial_cache_params = (
@@ -878,30 +866,142 @@ class FLABackbone(Backbone):
         )
         if initial_cache_params is not None and isinstance(self.fla, DeltaNetModel):
             initial_cache_params = prepare_deltanet_cache_for_fla(initial_cache_params)
-    
-        if self.sequence_mode in {"Comb_ST", "Int_ST"} or not self.training:
-            train_x = x_batched[:, :train_len]
-            test_x = x_batched[:, train_len:]
 
+        if self.sequence_mode in FLA_SPLIT_SEQUENCE_MODES or not self.training:
             train_out, state = self.incontext_fit(
-                train_x,
+                x_batched[:, :train_len],
                 initial_cache_params=initial_cache_params,
             )
-            test_out = self.incontext_predict(test_x, state)
+            test_out = self.incontext_predict(x_batched[:, train_len:], state)
+            attn_out = torch.cat([train_out, test_out], dim=1)
             if state_passing is not None:
                 state_passing.remember(state["cache_params"])
-            attn_out = torch.cat([train_out, test_out], dim=1)
         else:
             attn_out, cache_params = self._run_fla(
                 x_batched,
                 cache_params=initial_cache_params,
-                return_cache=self.state_passing is not None,
+                return_cache=state_passing is not None,
             )
             if state_passing is not None:
                 state_passing.remember(cache_params)
-        
-        out = attn_out.reshape(batch_size, num_tokens, seq_len, embed_dim).transpose(1, 2)
-        return out
+
+        return self._unprepare_fla_output(attn_out, shape_info)
+
+class BidirectionalFLABackbone(FLABackbone):
+    def __init__(
+        self,
+        fla_model: nn.Module,
+        sequence_mode: str = "Comb_ST",
+        cache_chunk_size: int | None = None,
+        state_passing: bool = False,
+        state_passing_dropout: float = 0.1,
+        state_fusion: str = "mean_output_mean_cache",
+    ):
+        super().__init__(
+            fla_model=fla_model,
+            sequence_mode=sequence_mode,
+            cache_chunk_size=cache_chunk_size,
+            state_passing=state_passing,
+            state_passing_dropout=state_passing_dropout,
+        )
+        self.state_fusion = state_fusion
+
+    def incontext_fit(
+        self,
+        train_x: torch.Tensor,
+        *,
+        initial_cache_params: tp.Any | None = None,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, tp.Any]:
+        x_batched, shape_info = self._prepare_fla_input(train_x)
+        if initial_cache_params is not None:
+            raise ValueError("Bidirectional FLA does not support initial_cache_params.")
+
+        train_out, cache_params = self._run_fla(x_batched, return_cache=True)
+        if not isinstance(cache_params, BidirectionalFLACache):
+            raise TypeError(
+                "Bidirectional FLA train cache build must return a BidirectionalFLACache."
+            )
+        returned_cache: tp.Any = cache_params
+        if _uses_fused_prediction_cache(self.state_fusion):
+            returned_cache = FusedBidirectionalFLACache(
+                cache=fuse_bidirectional_cache(cache_params, state_fusion=self.state_fusion),
+                state_fusion=self.state_fusion,
+            )
+        out = self._unprepare_fla_output(train_out, shape_info)
+        return out, {"cache_params": returned_cache}
+
+    def _run_test_with_cache(
+        self,
+        test_x: torch.Tensor,
+        cache_params: tp.Any,
+        use_custom_recurrent: bool = True,
+        use_custom_shortconv: bool = True,
+    ) -> torch.Tensor:
+        if test_x.numel() == 0:
+            return test_x
+        validate_bidirectional_cache(cache_params)
+
+        batch_size, seq_len, embed_dim = test_x.shape
+        supports_custom_recurrent = self._supports_custom_recurrent()
+
+        def _run_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
+            chunk_len = chunk_x.size(1)
+            hidden = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
+            chunk_cache = prepare_bidirectional_cache(
+                cache_params,
+                chunk_len=chunk_len,
+                use_custom_recurrent=use_custom_recurrent,
+                supports_custom_recurrent=supports_custom_recurrent,
+            )
+
+            with ExitStack() as stack:
+                for ctx in self._patch_contexts(
+                    use_custom_recurrent=use_custom_recurrent,
+                    use_custom_shortconv=use_custom_shortconv,
+                ):
+                    stack.enter_context(ctx)
+                hidden = run_bidirectional_layers(
+                    hidden,
+                    layers=self.layers,
+                    chunk_cache=chunk_cache,
+                )
+            if hasattr(self.fla, "norm"):
+                hidden = self.fla.norm(hidden)
+            return hidden.view(batch_size, chunk_len, embed_dim)
+
+        if self.cache_chunk_size is None or seq_len <= self.cache_chunk_size:
+            return _run_chunk(test_x)
+
+        outputs = []
+        for chunk_start in range(0, seq_len, self.cache_chunk_size):
+            chunk_end = min(chunk_start + self.cache_chunk_size, seq_len)
+            outputs.append(_run_chunk(test_x[:, chunk_start:chunk_end]))
+        return torch.cat(outputs, dim=1)
+
+    def _run_test_with_cache_naive(
+        self,
+        test_x: torch.Tensor,
+        cache_params: tp.Any | None,
+        use_custom_recurrent: bool = False,
+        use_custom_shortconv: bool = False,
+    ) -> torch.Tensor:
+        validate_bidirectional_cache(cache_params)
+        if test_x.numel() == 0:
+            return test_x
+
+        output_tokens = []
+        for t in range(test_x.size(1)):
+            current_input = test_x[:, t : t + 1, :]
+            output_tokens.append(
+                self._run_test_with_cache(
+                    current_input,
+                    self._copy_cache(cache_params),
+                    use_custom_recurrent=use_custom_recurrent,
+                    use_custom_shortconv=use_custom_shortconv,
+                )
+            )
+        return torch.cat(output_tokens, dim=1)
 
 
 @dataclass(frozen=True)
@@ -910,11 +1010,10 @@ class LinearAttentionBackboneConfig(BackboneConfig):
     nlayers: int = 6
     nhead: int = 2
     mlp_hidden_dim: int = 200
-    dropout: float = 0.0
-    activation: tp.Literal["gelu", "relu", "swish", "silu"] = "silu"
     recompute_layer: bool = False
     recompute_every_n_layers: int = 1
     layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
+
 
     def create_backbone(
         self,
@@ -922,15 +1021,20 @@ class LinearAttentionBackboneConfig(BackboneConfig):
         attention_between_features: bool,
         **kwargs: tp.Any,
     ) -> Backbone:
+        if attention_between_features:
+            raise NotImplementedError(
+                "LinearAttentionBackbone no longer supports attention_between_features."
+            )
+        layer_kwargs = dict(self.layer_kwargs or {})
+        linear_attention_kwargs = {
+            "d_model": ninp,
+            "num_heads": self.nhead,
+            "mlp_hidden_dim": self.mlp_hidden_dim,
+            **layer_kwargs,
+        }
         layers = nn.ModuleList([
             LinearAttention(
-                d_model=ninp,
-                num_heads=self.nhead,
-                dim_mlp_hidden=self.mlp_hidden_dim,
-                dropout=self.dropout,
-                activation=self.activation,
-                attention_between_features=attention_between_features,
-                **(self.layer_kwargs or {}),
+                **linear_attention_kwargs,
             )
             for _ in range(self.nlayers)
         ])
@@ -961,6 +1065,8 @@ class LinearAttentionBackbone(Backbone):
 
     @staticmethod
     def _pack_recurrent_state(state: dict[str, torch.Tensor]) -> torch.Tensor:
+        if state.get("k_sum") is None:
+            return state["kv_state"]
         return torch.cat([state["kv_state"], state["k_sum"].unsqueeze(-1)], dim=-1)
 
     @staticmethod

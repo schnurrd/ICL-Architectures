@@ -27,7 +27,6 @@ from pfns.experiments.model_benchmarks.plotting import (
     plot_grouped_runs_with_distribution,
     resolve_display_name_map,
 )
-from pfns.model.attention_utils import apply_state_to_query_5d, compute_kv_state_5d
 from pfns.tensor_tree_utils import iter_named_tensors
 from pfns.training_utils import (
     categorical_mask_to_inds,
@@ -468,11 +467,22 @@ def _plot_recurrent_metric(
             tab20 = [mcolors.to_hex(color) for color in plt.get_cmap("tab20").colors]
             tab20_reordered = [tab20[idx] for idx in [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]]
             colors = {value: tab20_reordered[i % len(tab20_reordered)] for i, value in enumerate(line_values)}
+            violin_values: list[np.ndarray] = []
             for line_idx, line_value in enumerate(line_values):
                 value = int(line_value)
                 label = f"{line_name}[{value}]" if value >= 0 else f"{line_name}[unknown]"
                 color = colors[line_value]
                 raw_line_df = sub[sub[line_key] == line_value]
+                if plot_mode == "violin":
+                    finite_line_values = pd.to_numeric(
+                        raw_line_df[metric],
+                        errors="coerce",
+                    ).to_numpy(dtype=float, copy=False)
+                    finite_line_values = finite_line_values[np.isfinite(finite_line_values)]
+                    if log_y:
+                        finite_line_values = finite_line_values[finite_line_values > 0.0]
+                    if finite_line_values.size > 0:
+                        violin_values.append(finite_line_values)
                 plot_grouped_runs_with_distribution(
                     ax=ax,
                     sub=raw_line_df,
@@ -497,6 +507,16 @@ def _plot_recurrent_metric(
                     distribution_zorder=2,
                     summary_zorder=3,
                 )
+            if plot_mode == "violin" and violin_values:
+                all_violin_values = np.concatenate(
+                    [values.astype(float, copy=False) for values in violin_values if values.size > 0]
+                )
+                finite_violin_values = all_violin_values[np.isfinite(all_violin_values)]
+                if finite_violin_values.size > 0:
+                    y_min = float(finite_violin_values.min())
+                    y_max = float(finite_violin_values.max())
+                    pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
+                    ax.set_ylim(y_min - pad, y_max + pad)
             if log_x:
                 ax.set_xscale("log")
             if log_y:
@@ -504,6 +524,12 @@ def _plot_recurrent_metric(
             curr_x_left, curr_x_right = ax.get_xlim()
             shared_x_left = curr_x_left if shared_x_left is None else min(shared_x_left, curr_x_left)
             shared_x_right = curr_x_right if shared_x_right is None else max(shared_x_right, curr_x_right)
+            if training_context_length is not None:
+                apply_pretraining_split_background(
+                    ax,
+                    boundary=float(training_context_length),
+                    boundary_label="Train context",
+                )
             ax.set_xlabel("Sequence Length")
             ax.set_ylabel(metric_label if idx == 0 else "")
             ax.set_title(
@@ -746,17 +772,22 @@ def _prepare_position_metric_attention(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    q_mapped, k_mapped = layer._apply_query_key_feature_maps(q, k)
     if layer.causal or layer.causal_train_only:
-        attn, _, _ = layer._causal_linear_attention_items(q, k, v)
-        return attn, None, None, None
+        attn, _, _ = layer._causal_attention(q, k, v)
+        return k_mapped, attn, None, None
 
-    final_kv_state, final_k_sum = compute_kv_state_5d(k, v)
-    attn = apply_state_to_query_5d(q, final_kv_state, final_k_sum, eps=layer.eps)
-    final_k_sum = final_k_sum.float()
+    final_kv_state = torch.einsum("bshf,bshd->bhfd", k_mapped, v)
+    final_k_sum = k_mapped.sum(dim=1)
+    attn = layer._read_from_kv_state(
+        q_mapped,
+        final_kv_state,
+        final_k_sum if layer.use_k_sum_normalization else None,
+    )
     final_kv_norm = torch.linalg.vector_norm(final_kv_state.float().flatten(start_dim=-2), dim=-1)
-    final_k_sum_norm = torch.linalg.vector_norm(final_k_sum, dim=-1)
-    return attn, final_k_sum, final_kv_norm, final_k_sum_norm
+    final_k_sum_norm = torch.linalg.vector_norm(final_k_sum.float(), dim=-1)
+    return k_mapped, attn, final_kv_norm, final_k_sum_norm
 
 
 def _track_linear_attention_layer_position_metrics(
@@ -766,18 +797,17 @@ def _track_linear_attention_layer_position_metrics(
     k: torch.Tensor,
     v: torch.Tensor,
     attn: torch.Tensor,
-    final_k_sum: torch.Tensor | None,
     final_kv_norm: torch.Tensor | None,
     final_k_sum_norm: torch.Tensor | None,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     running_kv_state = torch.zeros(
-        (k.shape[0], k.shape[2], k.shape[3], k.shape[4], v.shape[4]),
+        (k.shape[0], k.shape[2], k.shape[3], v.shape[3]),
         device=k.device,
         dtype=torch.float32,
     )
     running_k_sum = torch.zeros(
-        (k.shape[0], k.shape[2], k.shape[3], k.shape[4]),
+        (k.shape[0], k.shape[2], k.shape[3]),
         device=k.device,
         dtype=torch.float32,
     )
@@ -785,10 +815,10 @@ def _track_linear_attention_layer_position_metrics(
         position = int(token_idx + 1)
         k_t = k[:, token_idx].float()
         v_t = v[:, token_idx].float()
-        delta_kv_t = torch.einsum("bnhf,bnhd->bnhfd", k_t, v_t)
+        delta_kv_t = torch.einsum("bhf,bhd->bhfd", k_t, v_t)
         running_kv_state = running_kv_state + delta_kv_t
         running_k_sum = running_k_sum + k_t
-        if final_k_sum is None or final_kv_norm is None or final_k_sum_norm is None:
+        if final_kv_norm is None or final_k_sum_norm is None:
             k_vals = torch.linalg.vector_norm(running_k_sum, dim=-1)
             kv_vals = torch.linalg.vector_norm(running_kv_state.flatten(start_dim=-2), dim=-1)
         else:
@@ -820,28 +850,23 @@ def _track_custom_linear_attention_position_metrics(
     out = embedded
     rows: list[dict[str, object]] = []
     for layer_idx, layer in enumerate(backbone.layers):
-        norm_idx = 0
-        x_layer, norm_idx = layer._apply_feature_attention_block(out, norm_idx)
-        q_raw, k_raw, v = layer._project_item_qkv(x_layer, norm_idx)
-        q = layer._feature_map(q_raw)
-        k = layer._feature_map(k_raw)
-        attn, final_k_sum, final_kv_norm, final_k_sum_norm = _prepare_position_metric_attention(layer, q, k, v)
+        q, k, v = layer._project_qkv(out)
+        k_mapped, attn, final_kv_norm, final_k_sum_norm = _prepare_position_metric_attention(layer, q, k, v)
         rows.extend(
             _track_linear_attention_layer_position_metrics(
                 model_name=model_name,
                 layer_idx=int(layer_idx),
-                k=k,
+                k=k_mapped,
                 v=v,
                 attn=attn,
-                final_k_sum=final_k_sum,
                 final_kv_norm=final_kv_norm,
                 final_k_sum_norm=final_k_sum_norm,
             )
         )
-        out = layer._apply_item_output_and_mlp(x_layer, attn, norm_idx)
-        del x_layer, q_raw, k_raw, q, k, v, attn
-        if final_k_sum is not None:
-            del final_k_sum, final_kv_norm, final_k_sum_norm
+        out = layer._apply_output(out, attn)
+        del q, k, v, k_mapped, attn
+        if final_kv_norm is not None:
+            del final_kv_norm, final_k_sum_norm
     return pd.DataFrame(rows)
 
 

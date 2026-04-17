@@ -5,6 +5,8 @@ Config selector for Linear Attention backbone training profiles.
 
 from __future__ import annotations
 
+import typing as tp
+
 import torch
 
 from configs.config_utils import (
@@ -21,7 +23,7 @@ from pfns.prior_defaults import (
 )
 from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
 from pfns.model.backbones import LinearAttentionBackboneConfig
-from pfns.model.mode_normalization import resolve_sequence_mode
+from pfns.model.mode_normalization import normalize_mode_name
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
 from pfns.run_logger import WandbConfig
@@ -33,7 +35,7 @@ from pfns.train import (
 )
 
 DEFAULT_BATCH_SIZE = 8
-SUPPORTED_SEQUENCE_MODES = ("Comb_ST", "Comb_MT")
+SUPPORTED_SEQUENCE_MODES = ("Comb_ST", "Comb_MT", "Non_Causal_Comb_ST")
 GLOBAL_TRAIN_MIXED_PRECISION = (
     torch.cuda.is_available()
     and torch.cuda.is_bf16_supported()
@@ -80,21 +82,18 @@ TRAINING_PROFILES = {
 
 
 def _resolve_linear_attention_mode(
-    sequence_mode: str | None,
-    kwargs: dict[str, object]
-) -> tuple[str | None, dict[str, bool]]:
+    sequence_mode: str,
+) -> tuple[str, dict[str, bool]]:
     """Resolve the sequence mode and related layer kwargs for linear attention config."""
-    if sequence_mode is None:
-        if kwargs.get("causal", False): # for backward compatibility
-            return "Comb_MT", {"causal": True, "causal_train_only": False}
-        else:
-            return None, {"causal": False, "causal_train_only": False}
-
-    resolved_mode = resolve_sequence_mode(sequence_mode)
+    resolved_mode = {
+        "comb_st": "Comb_ST",
+        "comb_mt": "Comb_MT",
+        "non_causal_comb_st": "Non_Causal_Comb_ST",
+    }.get(normalize_mode_name(sequence_mode))
     if resolved_mode not in SUPPORTED_SEQUENCE_MODES:
         raise ValueError(
             "Linear attention config only supports sequence_mode "
-            f"{SUPPORTED_SEQUENCE_MODES}, got {resolved_mode!r}."
+            f"{SUPPORTED_SEQUENCE_MODES}, got {sequence_mode!r}."
         )
 
     return resolved_mode, {
@@ -102,11 +101,11 @@ def _resolve_linear_attention_mode(
         "causal_train_only": resolved_mode == "Comb_ST",
     }
 
+
 def get_config(
     config_index: int = 0,
     training_setup: str = "high",
     task_variant: str = "tabular_prior",
-    nlayers: int | None = None,
     batch_size: int | None = None,
     max_seq_len: int | None = None,
     batch_size_stages: list[tuple[int, int]] | tuple[tuple[int, int], ...] | None = None,
@@ -115,11 +114,32 @@ def get_config(
     seq_len_stages: list[tuple[int | float | str, ...]] | tuple[tuple[int | float | str, ...], ...] | None = None,
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
+    # Sequence mixing mode.
+    sequence_mode: tp.Literal[
+        "Comb_ST",
+        "Comb_MT",
+        "Non_Causal_Comb_ST",
+    ] = "Non_Causal_Comb_ST",
     interleave_x_y_pairs: bool = False,
+    nlayers: int | None = None,
     feature_positional_embedding: str | None = None,
     use_categorical_features: bool = True,
-    sequence_mode: str | None = None,
-    **kwargs,
+    # Attention feature map and readout.
+    feature_map: str = "elu",
+    expand_k: float = 1.0,
+    expand_v: float = 1.0,
+    normalize_q_sum: bool = False,
+    normalize_k_sum: bool = False,
+    use_k_sum_normalization: bool = False,
+    use_attention_norm: bool = True,
+    use_output_norm: bool = True,
+    norm_type: str = "rmsnorm",
+    use_mlp_norm: bool = True,
+    state_renormalization: str | None = None,
+    learnable_state_renorm_scale: bool = True,
+    state_renormalization_target_norm: float | None = None,
+    causal_chunk_size: int | None = None,
+    eps: float = 1e-5,
 ) -> MainConfig:
     """
     Build a config for training a TabPFN-style classifier on the synthetic
@@ -129,9 +149,26 @@ def get_config(
     feature_positional_embedding = normalize_optional_none_string(
         feature_positional_embedding
     )
-    resolved_sequence_mode, layer_kwargs = _resolve_linear_attention_mode(
-        sequence_mode, kwargs
-    )
+    state_renormalization = normalize_optional_none_string(state_renormalization)
+    resolved_sequence_mode, layer_kwargs = _resolve_linear_attention_mode(sequence_mode)
+    layer_kwargs = {
+        **layer_kwargs,
+        "feature_map": feature_map,
+        "expand_k": expand_k,
+        "expand_v": expand_v,
+        "causal_chunk_size": causal_chunk_size,
+        "normalize_q_sum": normalize_q_sum,
+        "normalize_k_sum": normalize_k_sum,
+        "use_k_sum_normalization": use_k_sum_normalization,
+        "use_attention_norm": use_attention_norm,
+        "norm_type": norm_type,
+        "use_output_norm": use_output_norm,
+        "use_mlp_norm": use_mlp_norm,
+        "state_renormalization": state_renormalization,
+        "learnable_state_renorm_scale": learnable_state_renorm_scale,
+        "state_renormalization_target_norm": state_renormalization_target_norm,
+        "eps": eps,
+    }
 
     training_setup = training_setup.strip().lower()
     training_setup, is_associative_recall = resolve_training_setup_for_task(
@@ -155,7 +192,7 @@ def get_config(
         resolve_eval_pos_split_pct(eval_pos_split_pct)
     )
     resolved_seq_len_stages = seq_len_stages
-    resolved_nlayers = 15 if nlayers is None else int(nlayers)
+    resolved_nlayers = 12 if nlayers is None else int(nlayers)
     if resolved_nlayers <= 0:
         raise ValueError(f"nlayers must be >= 1, got {resolved_nlayers}.")
     resolved_epochs = profile.get("epochs", 200)
@@ -218,13 +255,7 @@ def get_config(
             nlayers=resolved_nlayers,
             nhead=4,
             mlp_hidden_dim=320 * 2,
-            dropout=0.0,
-            activation="relu",
-            layer_kwargs={
-                "feature_attention_softmax": False,
-                **layer_kwargs,
-                #"feature_dim": 64,
-            },
+            layer_kwargs=layer_kwargs,
         ),
         features_per_group=20,
         attention_between_features=False,
@@ -263,6 +294,29 @@ def get_config(
         wandb_extras.append(f"layers{resolved_nlayers}")
     if not use_categorical_features:
         wandb_extras.append("nocat")
+    wandb_extras.extend(
+        f"{key}_{value}"
+        for key, value in layer_kwargs.items()
+        if key not in {"causal", "causal_train_only"}
+        and value
+        != {
+            "use_attention_norm": True,
+            "use_mlp_norm": True,
+            "norm_type": "rmsnorm",
+            "use_output_norm": True,
+            "feature_map": "elu",
+            "expand_k": 1.0,
+            "expand_v": 1.0,
+            "normalize_q_sum": False,
+            "normalize_k_sum": False,
+            "use_k_sum_normalization": False,
+            "state_renormalization": None,
+            "learnable_state_renorm_scale": True,
+            "state_renormalization_target_norm": None,
+            "causal_chunk_size": None,
+            "eps": 1e-5,
+        }.get(key)
+    )
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
