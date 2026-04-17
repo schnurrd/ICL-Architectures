@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import re
+from types import MethodType
 from typing import Any, Literal, Mapping
 
 import matplotlib.pyplot as plt
@@ -62,6 +64,12 @@ def _compute_padded_y_limits(
         return (max(y_min / 1.2, 1e-12), y_max * 1.2)
     pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
     return (y_min - pad, y_max + pad)
+
+
+def _reordered_tab20_palette() -> list[str]:
+    tab20 = [mcolors.to_hex(color) for color in plt.get_cmap("tab20").colors]
+    reorder = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]
+    return [tab20[idx] for idx in reorder]
 
 
 @dataclass(frozen=True)
@@ -499,8 +507,7 @@ def _plot_recurrent_metric(
                 continue
             visible_axes.append(ax)
             line_values = agg[line_key].dropna().unique().tolist()
-            tab20 = [mcolors.to_hex(color) for color in plt.get_cmap("tab20").colors]
-            tab20_reordered = [tab20[idx] for idx in [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]]
+            tab20_reordered = _reordered_tab20_palette()
             colors = {value: tab20_reordered[i % len(tab20_reordered)] for i, value in enumerate(line_values)}
             violin_values: list[np.ndarray] = []
             for line_idx, line_value in enumerate(line_values):
@@ -690,8 +697,7 @@ def plot_avg_metric_per_layer_per_head(
         sharey=split,
     )
     head_values = sorted(avg_metric_df["head_idx"].astype(int).unique().tolist())
-    tab20 = [mcolors.to_hex(color) for color in plt.get_cmap("tab20").colors]
-    tab20_reordered = [tab20[idx] for idx in [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]]
+    tab20_reordered = _reordered_tab20_palette()
     colors = {head_idx: tab20_reordered[i % len(tab20_reordered)] for i, head_idx in enumerate(head_values)}
     metric_label = _METRIC_DISPLAY_NAMES.get(metric, metric.replace("_", " ").title())
     ylabel = f"Average {metric_label} Across Seq Len"
