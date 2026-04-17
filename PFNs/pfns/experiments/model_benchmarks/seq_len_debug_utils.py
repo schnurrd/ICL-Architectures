@@ -52,6 +52,18 @@ _METRIC_DISPLAY_NAMES = {
 }
 
 
+def _compute_padded_y_limits(
+    y_min: float,
+    y_max: float,
+    *,
+    log_scale: bool,
+) -> tuple[float, float]:
+    if log_scale:
+        return (max(y_min / 1.2, 1e-12), y_max * 1.2)
+    pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
+    return (y_min - pad, y_max + pad)
+
+
 @dataclass(frozen=True)
 class HiddenStateTrackingConfig:
     num_classes: int
@@ -218,6 +230,28 @@ def _k_sum_norms_by_layer(state: Any) -> dict[tuple[int, int], float]:
     return out
 
 
+def _effective_hidden_state_tensor(
+    model: Any,
+    *,
+    tensor_name: str,
+    tensor: torch.Tensor,
+) -> torch.Tensor:
+    lowered_name = tensor_name.lower()
+    if "recurrent_state" not in lowered_name and "kv_state" not in lowered_name:
+        return tensor
+    backbone = getattr(model, "transformer_layers", None)
+    if backbone is None or backbone.__class__.__name__ != "LinearAttentionBackbone":
+        return tensor
+    layer_idx = _layer_idx(tensor_name)
+    if layer_idx < 0 or layer_idx >= len(backbone.layers):
+        return tensor
+    layer = backbone.layers[layer_idx]
+    if getattr(layer, "state_renormalization", None) in {None, "none"}:
+        return tensor
+    with torch.no_grad():
+        return layer._renormalize_state(tensor.detach().clone())
+
+
 def _effective_rank_from_singular_values(singular_values: torch.Tensor) -> float:
     singular_values = singular_values[singular_values > 0]
     if singular_values.numel() == 0:
@@ -319,7 +353,12 @@ def run_hidden_state_tracking(
                     lowered_name = name.lower()
                     if "recurrent_state" not in lowered_name and "kv_state" not in lowered_name:
                         continue
-                    for head_idx, matrix in _head_matrices(tensor):
+                    effective_tensor = _effective_hidden_state_tensor(
+                        model,
+                        tensor_name=name,
+                        tensor=tensor,
+                    )
+                    for head_idx, matrix in _head_matrices(effective_tensor):
                         metrics = _matrix_metrics(matrix)
                         layer_idx = _layer_idx(name)
                         kv_state_norm = float(metrics["frobenius_norm"])
@@ -444,11 +483,7 @@ def _plot_recurrent_metric(
             if finite_group_values.size > 0:
                 y_min = float(finite_group_values.min())
                 y_max = float(finite_group_values.max())
-                if log_y:
-                    shared_y_limits = (max(y_min / 1.2, 1e-12), y_max * 1.2)
-                else:
-                    pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
-                    shared_y_limits = (y_min - pad, y_max + pad)
+                shared_y_limits = _compute_padded_y_limits(y_min, y_max, log_scale=log_y)
         for idx, model_name in enumerate(panel_models):
             ax = axes[idx if split else 0]
             sub = group_df if not split else group_df[group_df["model"] == model_name]
@@ -515,8 +550,7 @@ def _plot_recurrent_metric(
                 if finite_violin_values.size > 0:
                     y_min = float(finite_violin_values.min())
                     y_max = float(finite_violin_values.max())
-                    pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
-                    ax.set_ylim(y_min - pad, y_max + pad)
+                    ax.set_ylim(*_compute_padded_y_limits(y_min, y_max, log_scale=log_y))
             if log_x:
                 ax.set_xscale("log")
             if log_y:

@@ -255,7 +255,7 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     },
     "Linear_Attention_FLA_Comb_ST": { 
         "wandb_run_id": "icl_arch/fla_models/hqzpuaso",
-        "display_name": "Causal Linear Attention (Comb ST)",
+        "display_name": "Linear Attention (FLA; Comb ST)",
         "note": "ep 56/200"
     },
 }
