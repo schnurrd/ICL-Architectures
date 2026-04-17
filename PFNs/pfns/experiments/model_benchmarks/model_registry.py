@@ -217,13 +217,46 @@ MESANET_MODELS: dict[str, dict[str, Any]] = {
 }
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
-    "Linear_Attention_FLA_Comb_ST": { 
-        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
-        "display_name": "Causal Linear Attention (Comb ST)",
+    "Linear_Attention_Non_Causal": {
+      "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal)",
     },
-    "Linear_Attention_FLA_Comb_MT": { 
-        "wandb_run_id": "icl_arch/fla_models/8wf9f1qz",
-        "display_name": "Causal Linear Attention (Comb MT)",
+    "Linear_Attention_Comb_ST": {
+      "wandb_run_id": "linear_attention/runs/3jq88aqt", # new default implementation
+      "display_name": "Linear Attention\n(Comb_ST)",
+      "note": "ep 122/200"
+    },
+    "Linear_Attention_Non_Causal_fro_norm": {
+      "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
+    },
+    "Linear_Attention_Comb_ST_fro_norm": {
+      "wandb_run_id": "linear_attention/runs/rrakg728", # new default implementation
+      "display_name": "Linear Attention\n(Comb_ST) w. Fro Norm",
+      "note": "ep 78/200"
+    },
+    "Linear_Attention_Non_Causal_feat_map_elem_product": {
+      "wandb_run_id": "linear_attention/runs/02rush9s", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal) w. Feature Map Element-wise Product",
+    },
+    "Linear_Attention_Non_Causal_feat_map_linear": {
+      "wandb_run_id": "linear_attention/runs/a4rrhp8v", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal) w. Feature Map Linear",
+    },
+    "Linear_Attention_Non_Causal_old_setup": {
+      "wandb_run_id": "linear_attention/runs/ashbd98t",
+      "display_name": "Linear Attention\n(Non-Causal) old setup",
+      "note": "ep 181/200"
+    },
+    "Linear_Attention_Comb_ST_old_setup": {
+      "wandb_run_id": "linear_attention/runs/7kig0n7a",
+      "display_name": "Linear Attention\n(Comb_ST) old setup",
+      "note": "ep 79/200"
+    },
+    "Linear_Attention_FLA_Comb_ST": { 
+        "wandb_run_id": "icl_arch/fla_models/hqzpuaso",
+        "display_name": "Causal Linear Attention (Comb ST)",
+        "note": "ep 56/200"
     },
 }
 
@@ -298,10 +331,10 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Non-Causal Linear\nAttention",
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
     },
-    "Linear_Attention_FLA_Comb_ST": { 
-        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
-        "display_name": "Causal Linear\nAttention (Comb ST)",
-    },
+    # "Linear_Attention_FLA_Comb_ST": { 
+    #     "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+    #     "display_name": "Causal Linear\nAttention (Comb ST)",
+    # },
     "equal_params:DeltaNet_Comb_ST": {
         "display_name": "DeltaNet",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
@@ -445,10 +478,10 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
 }
 
 MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
-    "mimetic:Linear_Attention_FLA_Comb_ST": { 
-        "display_name": "Linear Attention\nComb ST (Reference)",
-        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
-    },
+    # "mimetic:Linear_Attention_FLA_Comb_ST": { 
+    #     "display_name": "Linear Attention\nComb ST (Reference)",
+    #     "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+    # },
     "mimetic:GLA_Comb_ST_Ref": {
         "display_name": "GLA Comb ST (Reference)",
         "wandb_run_id": "fla_models/runs/2v2xw7d2",
@@ -505,7 +538,7 @@ BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Bidirectional Mean Output Two Cache Separate Weights (DeltaNet)",
         "wandb_run_id": "icl_arch/fla_models/6lby3bdm",
     },
-    "Bidirectional_Linear_Attention_Comb_ST_mean_output_mean_cache": {
+    "Bidirectional_Linear_Attention_Comb_ST_mean_output_mean_cache": { # todo retrain as linear attention conf is outdated
         "display_name": "Bidirectional Mean Output Mean Cache (Linear Attention)",
         "wandb_run_id": "icl_arch/fla_models/3j9jgdvx",
     },
