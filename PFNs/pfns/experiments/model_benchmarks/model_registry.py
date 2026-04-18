@@ -217,14 +217,14 @@ MESANET_MODELS: dict[str, dict[str, Any]] = {
 }
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
-    "Linear_Attention_Non_Causal": {
-      "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
-      "display_name": "Linear Attention\n(Non-Causal)",
-    },
-    "Linear_Attention_Non_Causal_fro_norm": {
-      "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
-      "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
-    },
+    # "Linear_Attention_Non_Causal": {
+    #   "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
+    #   "display_name": "Linear Attention\n(Non-Causal)",
+    # },
+    # "Linear_Attention_Non_Causal_fro_norm": {
+    #   "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
+    #   "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
+    # },
     # ------linear and element_wise product feature map are worse than the elu one -----
     # "Linear_Attention_Non_Causal_feat_map_elem_product": {
     #   "wandb_run_id": "linear_attention/runs/02rush9s", # new default implementation
@@ -235,11 +235,11 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     #   "display_name": "Linear Attention\n(Non-Causal) w. Feature Map Linear",
     # },
     # ----------- Causal Models -----------
-    "Linear_Attention_Causal_fro_norm_from_non_causal": {
-      "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
-      "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm From Non-Causal",
-      "make_causal": True,
-    },
+    # "Linear_Attention_Causal_fro_norm_from_non_causal": {
+    #   "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
+    #   "display_name": "Linear Attention\n(Causal) w. Fro Norm From Non-Causal",
+    #   "make_causal": True,
+    # },
     "Linear_Attention_Comb_ST": {
       "wandb_run_id": "linear_attention/runs/3jq88aqt", # new default implementation
       "display_name": "Linear Attention\n(Comb_ST)",
@@ -577,21 +577,21 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_verbose": False,
         "eval_autocast_dtype": "bf16",
     },
-    # "Oracle_Hidden_State_DeltaNet_Comb_ST_state_init_v2": {
-    #     **DELTANET_MODELS["DeltaNet_Comb_ST"],
-    #     "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
-    #     "oracle_hidden_state_baseline": True,
-    #     "oracle_num_epochs": 400,
-    #     "oracle_lr": 5e-3,
-    #     "oracle_weight_decay": 1e-5,
-    #     "oracle_patience": 40,
-    #     "oracle_query_batch_fraction": 0.04,
-    #     "oracle_selection_fraction": 0.1,
-    #     "oracle_evaluate_only_max_seqlen": True,
-    #     "oracle_random_init_hidden_state": True,
-    #     "oracle_verbose": False,
-    #     "eval_autocast_dtype": "bf16",
-    # },
+    "Oracle_Hidden_State_DeltaNet_Comb_ST_state_init_v2": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 5e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 40,
+        "oracle_query_batch_fraction": 0.04,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_random_init_hidden_state": True,
+        "oracle_verbose": False,
+        "eval_autocast_dtype": "bf16",
+    },
     "Oracle_Hidden_State_DeltaNet_Comb_ST": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
         "display_name": "Oracle Hidden State\n(DeltaNet)",
@@ -607,52 +607,36 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_verbose": False,
         "eval_autocast_dtype": "bf16",
     },
-    # "Oracle_Hidden_State_Linear_Attention_Non_Causal": {
-    #     **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
-    #     "display_name": "Oracle Hidden State (Linear Attention)",
-    #     "oracle_hidden_state_baseline": True,
-    #     "oracle_num_epochs": 400,
-    #     "oracle_lr": 3e1, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
-    #     "oracle_auto_scale_lr": False,
-    #     "oracle_weight_decay": 1e-5,
-    #     "oracle_patience": 20,
-    #     "oracle_query_batch_size": 4000,
-    #     "oracle_selection_fraction": 0.1,
-    #     "oracle_evaluate_only_max_seqlen": False,
-    #     "oracle_verbose": False,
-    #     "oracle_verbose_every_n_epochs": 10,
-    #     "display_name": "Oracle Hidden State Optimization (Non-CausalLinear Attention)",
-    # },
-    # "Oracle_Hidden_State_Linear_Attention_Non_Causal_new_base": { # uncomment after new new non-causal linear attention model is trained
-    #     **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
-    #     "display_name": "Oracle Hidden State (Linear Attention New)",
-    #     "oracle_hidden_state_baseline": True,
-    #     "oracle_num_epochs": 400,
-    #     "oracle_lr": 1e-2, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
-    #     "oracle_weight_decay": 1e-5,
-    #     "oracle_patience": 20,
-    #     "oracle_auto_scale_lr": True,
-    #     "oracle_target_initial_relative_update_norm": 2.5e-2,
-    #     "oracle_query_batch_fraction": 0.2,
-    #     "oracle_selection_fraction": 0.1,
-    #     "oracle_evaluate_only_max_seqlen": False,
-    #     "oracle_verbose": False,
-    #     "oracle_verbose_every_n_epochs": 10,
-    # },
+    "Oracle_Hidden_State_Linear_Attention_Non_Causal": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Oracle Hidden State (Linear Attention)",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 3e1, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
+        "oracle_auto_scale_lr": False,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_query_batch_size": 4000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": False,
+        "oracle_verbose": False,
+        "oracle_verbose_every_n_epochs": 10,
+        "display_name": "Oracle Hidden State Optimization (Non-CausalLinear Attention)",
+    },
 
-    # "Oracle_Hidden_State_Rebased_feat_dim_32_base": {
-    #     **BASED_MODELS["Rebased_feat_dim_32"],
-    #     "display_name": "Oracle Hidden State (Rebased)",
-    #     "oracle_hidden_state_baseline": True,
-    #     "oracle_num_epochs": 400,
-    #     "oracle_lr": 5e1, 
-    #     "oracle_weight_decay": 1e-5,
-    #     "oracle_patience": 20,
-    #     "oracle_query_batch_size": 4000,
-    #     "oracle_selection_fraction": 0.1,
-    #     "oracle_evaluate_only_max_seqlen": True,
-    #     "oracle_verbose": True,
-    # },
+    "Oracle_Hidden_State_Rebased_feat_dim_32_base": {
+        **BASED_MODELS["Rebased_feat_dim_32"],
+        "display_name": "Oracle Hidden State (Rebased)",
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 5e1, 
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_query_batch_size": 4000,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": True,
+    },
 }
 
 CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
