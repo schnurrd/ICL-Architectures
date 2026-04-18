@@ -22,6 +22,18 @@ class GatedMLP(FLAGatedMLP):
         return self.down_proj(F.silu(gate) * y)
 
 
+def init_linear_attention_weights_like_fla(
+    module: nn.Module,
+    *,
+    initializer_range: float = 0.02,
+) -> None:
+    """Initialize linear-attention modules using FLA's linear-weight scheme."""
+    if isinstance(module, nn.Linear):
+        nn.init.normal_(module.weight, mean=0.0, std=initializer_range)
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
+
+
 class LinearAttention(nn.Module):
     """
     Linear attention layer following the same high-level ordering as
@@ -78,6 +90,7 @@ class LinearAttention(nn.Module):
         use_attention_norm: bool = True,
         use_output_norm: bool = True,
         norm_type: str = "rmsnorm",
+        fuse_swiglu: bool = False,
         # Recurrent state handling.
         state_renormalization: str | None = None,
         learnable_state_renorm_scale: bool = True,
@@ -181,7 +194,7 @@ class LinearAttention(nn.Module):
             hidden_size=d_model,
             intermediate_size=mlp_hidden_dim,
             hidden_act="swish",
-            fuse_swiglu=False,
+            fuse_swiglu=fuse_swiglu,
         )
 
     def _apply_feature_map(

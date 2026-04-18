@@ -40,8 +40,12 @@ from pfns.model.fla_state_passing import (
     FLAStatePassing,
     prepare_deltanet_cache_for_fla,
 )
+from pfns.model.attention_utils import build_norm
 from pfns.model.layer import PerFeatureLayer
-from pfns.model.linear_attention import LinearAttention
+from pfns.model.linear_attention import (
+    LinearAttention,
+    init_linear_attention_weights_like_fla,
+)
 from pfns.model.mode_normalization import (
     CANONICAL_SEQUENCE_MODES,
     resolve_sequence_mode,
@@ -1012,6 +1016,8 @@ class LinearAttentionBackboneConfig(BackboneConfig):
     mlp_hidden_dim: int = 200
     recompute_layer: bool = False
     recompute_every_n_layers: int = 1
+    use_final_norm: bool = False
+    initializer_range: float = 0.02
     layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
 
 
@@ -1038,8 +1044,20 @@ class LinearAttentionBackboneConfig(BackboneConfig):
             )
             for _ in range(self.nlayers)
         ])
+        layers.apply(
+            lambda module: init_linear_attention_weights_like_fla(
+                module,
+                initializer_range=self.initializer_range,
+            )
+        )
+        final_norm = build_norm(
+            ninp,
+            enabled=self.use_final_norm,
+            norm_type=str(layer_kwargs.get("norm_type", "rmsnorm")),
+        )
         return LinearAttentionBackbone(
             layers,
+            final_norm=final_norm,
             recompute_each_layer=self.recompute_layer,
             recompute_every_n_layers=self.recompute_every_n_layers,
         )
@@ -1051,11 +1069,13 @@ class LinearAttentionBackbone(Backbone):
         self,
         layers: nn.ModuleList,
         *,
+        final_norm: nn.Module | None = None,
         recompute_each_layer: bool = False,
         recompute_every_n_layers: int | None = 1,
     ):
         super().__init__()
         self.layers = layers
+        self.final_norm = final_norm if final_norm is not None else nn.Identity()
         self.recompute_each_layer = bool(recompute_each_layer)
         self.recompute_every_n_layers = (
             None if recompute_every_n_layers is None else int(recompute_every_n_layers)
@@ -1114,7 +1134,7 @@ class LinearAttentionBackbone(Backbone):
                 )
             else:
                 out = layer(out, single_eval_pos=single_eval_pos, **kwargs)
-        return out
+        return self.final_norm(out)
 
     def incontext_fit(
         self,
@@ -1139,7 +1159,7 @@ class LinearAttentionBackbone(Backbone):
                 ]
             )
         }
-        return out, cached_state
+        return self.final_norm(out), cached_state
 
     def incontext_predict(
         self,
@@ -1158,7 +1178,7 @@ class LinearAttentionBackbone(Backbone):
             layer_states = cached_state.get("layer_states", [])
         for layer, state in zip(self.layers, layer_states):
             out = layer.incontext_predict(out, state)
-        return out
+        return self.final_norm(out)
 
 
 @dataclass(frozen=True)
