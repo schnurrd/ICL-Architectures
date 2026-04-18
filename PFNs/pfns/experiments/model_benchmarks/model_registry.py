@@ -217,14 +217,14 @@ MESANET_MODELS: dict[str, dict[str, Any]] = {
 }
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
-    # "Linear_Attention_Non_Causal": {
-    #   "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
-    #   "display_name": "Linear Attention\n(Non-Causal)",
-    # },
-    # "Linear_Attention_Non_Causal_fro_norm": {
-    #   "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
-    #   "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
-    # },
+    "Linear_Attention_Non_Causal": {
+      "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal)",
+    },
+    "Linear_Attention_Non_Causal_fro_norm": {
+      "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
+    },
     # ------linear and element_wise product feature map are worse than the elu one -----
     # "Linear_Attention_Non_Causal_feat_map_elem_product": {
     #   "wandb_run_id": "linear_attention/runs/02rush9s", # new default implementation
@@ -235,11 +235,11 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     #   "display_name": "Linear Attention\n(Non-Causal) w. Feature Map Linear",
     # },
     # ----------- Causal Models -----------
-    # "Linear_Attention_Causal_fro_norm_from_non_causal": {
-    #   "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
-    #   "display_name": "Linear Attention\n(Causal) w. Fro Norm From Non-Causal",
-    #   "make_causal": True,
-    # },
+    "Linear_Attention_Causal_fro_norm_from_non_causal": {
+      "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
+      "display_name": "Linear Attention\n(Causal) w. Fro Norm From Non-Causal",
+      "make_causal": True,
+    },
     "Linear_Attention_Comb_ST": {
       "wandb_run_id": "linear_attention/runs/3jq88aqt", # new default implementation
       "display_name": "Linear Attention\n(Comb_ST)",
