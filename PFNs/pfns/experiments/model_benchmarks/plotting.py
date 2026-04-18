@@ -173,25 +173,10 @@ def _compute_violin_widths(
     return np.array([width_lookup[float(x)] for x in x_values], dtype=float)
 
 
-def _half_violin_side(*, model_index: int, model_count: int) -> Literal["left", "right"]:
+def _half_violin_side(*, model_index: int, model_count: int) -> Literal["low", "high"]:
     if model_count <= 1:
-        return "right"
-    return "left" if model_index < (model_count / 2.0) else "right"
-
-
-def _clip_violin_to_half(
-    violin: dict[str, Any],
-    *,
-    positions: np.ndarray,
-    side: Literal["left", "right"],
-) -> None:
-    for body, center in zip(violin["bodies"], positions):
-        for path in body.get_paths():
-            vertices = path.vertices
-            if side == "left":
-                vertices[:, 0] = np.minimum(vertices[:, 0], center)
-            else:
-                vertices[:, 0] = np.maximum(vertices[:, 0], center)
+        return "high"
+    return "low" if model_index < (model_count / 2.0) else "high"
 
 
 def _compute_strip_positions(
@@ -465,10 +450,6 @@ def plot_grouped_runs_with_distribution(
             showmeans=False,
             showmedians=False,
             showextrema=False,
-        )
-        _clip_violin_to_half(
-            violin,
-            positions=plot_x,
             side=_half_violin_side(
                 model_index=model_index,
                 model_count=model_count,

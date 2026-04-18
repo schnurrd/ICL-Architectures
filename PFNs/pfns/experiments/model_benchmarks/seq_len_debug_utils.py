@@ -485,22 +485,11 @@ def _plot_recurrent_metric(
             line_values = agg[line_key].dropna().unique().tolist()
             tab20_reordered = _reordered_tab20_palette()
             colors = {value: tab20_reordered[i % len(tab20_reordered)] for i, value in enumerate(line_values)}
-            violin_values: list[np.ndarray] = []
             for line_idx, line_value in enumerate(line_values):
                 value = int(line_value)
                 label = f"{line_name}[{value}]" if value >= 0 else f"{line_name}[unknown]"
                 color = colors[line_value]
                 raw_line_df = sub[sub[line_key] == line_value]
-                if plot_mode == "violin":
-                    finite_line_values = pd.to_numeric(
-                        raw_line_df[metric],
-                        errors="coerce",
-                    ).to_numpy(dtype=float, copy=False)
-                    finite_line_values = finite_line_values[np.isfinite(finite_line_values)]
-                    if log_y:
-                        finite_line_values = finite_line_values[finite_line_values > 0.0]
-                    if finite_line_values.size > 0:
-                        violin_values.append(finite_line_values)
                 plot_grouped_runs_with_distribution(
                     ax=ax,
                     sub=raw_line_df,
@@ -525,15 +514,6 @@ def _plot_recurrent_metric(
                     distribution_zorder=2,
                     summary_zorder=3,
                 )
-            if plot_mode == "violin" and violin_values:
-                all_violin_values = np.concatenate(
-                    [values.astype(float, copy=False) for values in violin_values if values.size > 0]
-                )
-                finite_violin_values = all_violin_values[np.isfinite(all_violin_values)]
-                if finite_violin_values.size > 0:
-                    y_min = float(finite_violin_values.min())
-                    y_max = float(finite_violin_values.max())
-                    ax.set_ylim(*_compute_padded_y_limits(y_min, y_max, log_scale=log_y))
             if log_x:
                 ax.set_xscale("log")
             if log_y:
