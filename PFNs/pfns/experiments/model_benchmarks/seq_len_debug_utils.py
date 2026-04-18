@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 import re
+from types import MethodType
 from typing import Any, Literal, Mapping
 
 import matplotlib.pyplot as plt
@@ -42,7 +45,31 @@ _METRIC_DISPLAY_NAMES = {
     "spectral_norm": "Spectral Norm",
     "effective_rank": "Effective Rank",
     "stable_rank": "Stable Rank",
+    "kv_state_norm": "KV-State Norm",
+    "kv_state_norm_post_renorm": "KV-State Norm After Renorm",
+    "k_sum_norm": "K-Sum Norm",
+    "joint_hidden_state_norm": "Joint Hidden-State Norm",
+    "kv_over_ksum_ratio": "KV-over-K-Sum Ratio",
+    "output_norm": "Output Norm",
 }
+
+
+def _compute_padded_y_limits(
+    y_min: float,
+    y_max: float,
+    *,
+    log_scale: bool,
+) -> tuple[float, float]:
+    if log_scale:
+        return (max(y_min / 1.2, 1e-12), y_max * 1.2)
+    pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
+    return (y_min - pad, y_max + pad)
+
+
+def _reordered_tab20_palette() -> list[str]:
+    tab20 = [mcolors.to_hex(color) for color in plt.get_cmap("tab20").colors]
+    reorder = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]
+    return [tab20[idx] for idx in reorder]
 
 
 @dataclass(frozen=True)
@@ -152,11 +179,6 @@ def _layer_idx(name: str) -> int:
     return int(match.group(1)) if (match := _LAYER_PATTERN.search(name)) else -1
 
 
-def _is_matrix_state(name: str) -> bool:
-    lowered = name.lower()
-    return "recurrent_state" in lowered or "kv_state" in lowered
-
-
 def _head_matrices(tensor: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
     arr = tensor.detach().float() # can be (1, 1, num_heads, h_dim, h_dim) or (num_heads, h_dim, h_dim)
     if arr.ndim < 2:
@@ -167,6 +189,51 @@ def _head_matrices(tensor: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
     if arr.ndim > 3:
         arr = arr.reshape(arr.shape[0], -1, arr.shape[-2], arr.shape[-1]).squeeze(1)
     return [(head_idx, arr[head_idx]) for head_idx in range(int(arr.shape[0]))]
+
+
+def _head_vectors(tensor: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
+    arr = tensor.detach().float()  # can be (1, 1, num_heads, h_dim) or (num_heads, h_dim)
+    if arr.ndim == 0:
+        return []
+    if arr.ndim == 1:
+        return [(0, arr)]
+    arr = arr.movedim(arr.ndim - 2, 0)
+    if arr.ndim > 2:
+        arr = arr.reshape(arr.shape[0], -1, arr.shape[-1]).squeeze(1)
+    return [(head_idx, arr[head_idx]) for head_idx in range(int(arr.shape[0]))]
+
+
+def _k_sum_norms_by_layer(state: Any) -> dict[tuple[int, int], float]:
+    out: dict[tuple[int, int], float] = {}
+    for name, tensor in _iter_hidden_tensors(state):
+        if "k_sum" not in name.lower():
+            continue
+        layer_idx = _layer_idx(name)
+        for head_idx, vector in _head_vectors(tensor):
+            out[(int(layer_idx), int(head_idx))] = float(torch.linalg.vector_norm(vector).item())
+    return out
+
+
+def _effective_hidden_state_tensor(
+    model: Any,
+    *,
+    tensor_name: str,
+    tensor: torch.Tensor,
+) -> torch.Tensor:
+    lowered_name = tensor_name.lower()
+    if "recurrent_state" not in lowered_name and "kv_state" not in lowered_name:
+        return tensor
+    backbone = getattr(model, "transformer_layers", None)
+    if backbone is None or backbone.__class__.__name__ != "LinearAttentionBackbone":
+        return tensor
+    layer_idx = _layer_idx(tensor_name)
+    if layer_idx < 0 or layer_idx >= len(backbone.layers):
+        return tensor
+    layer = backbone.layers[layer_idx]
+    if getattr(layer, "state_renormalization", None) in {None, "none"}:
+        return tensor
+    with torch.no_grad():
+        return layer._renormalize_state(tensor.detach().clone())
 
 
 def _effective_rank_from_singular_values(singular_values: torch.Tensor) -> float:
@@ -265,11 +332,31 @@ def run_hidden_state_tracking(
                         break
                     raise
                 extra = {"rep": int(rep), "seqlen": int(seqlen)}
+                k_sum_norms = _k_sum_norms_by_layer(state)
                 for name, tensor in _iter_hidden_tensors(state, tensor_name_patterns):
-                    if not _is_matrix_state(name):
+                    lowered_name = name.lower()
+                    if "recurrent_state" not in lowered_name and "kv_state" not in lowered_name:
                         continue
-                    for head_idx, matrix in _head_matrices(tensor):
+                    effective_tensor = _effective_hidden_state_tensor(
+                        model,
+                        tensor_name=name,
+                        tensor=tensor,
+                    )
+                    for head_idx, matrix in _head_matrices(effective_tensor):
                         metrics = _matrix_metrics(matrix)
+                        layer_idx = _layer_idx(name)
+                        kv_state_norm = float(metrics["frobenius_norm"])
+                        k_sum_norm = k_sum_norms.get((int(layer_idx), int(head_idx)), float("nan"))
+                        joint_hidden_state_norm = (
+                            float((kv_state_norm**2 + k_sum_norm**2) ** 0.5)
+                            if np.isfinite(k_sum_norm)
+                            else float("nan")
+                        )
+                        kv_over_ksum_ratio = (
+                            float(kv_state_norm / max(k_sum_norm, 1e-12))
+                            if np.isfinite(k_sum_norm)
+                            else float("nan")
+                        )
                         rows.append(
                             {
                                 "model": model_name,
@@ -278,134 +365,14 @@ def run_hidden_state_tracking(
                                 "shape": str(metrics["shape"]),
                                 "abs_max": float(metrics["abs_max"]),
                                 **{k: float(metrics[k]) for k in _MATRIX_METRICS},
-                                "layer_idx": _layer_idx(name),
+                                "kv_state_norm": kv_state_norm,
+                                "k_sum_norm": k_sum_norm,
+                                "joint_hidden_state_norm": joint_hidden_state_norm,
+                                "kv_over_ksum_ratio": kv_over_ksum_ratio,
+                                "layer_idx": layer_idx,
                                 "head_idx": int(head_idx),
                             }
                         )
-    return pd.DataFrame(rows)
-
-
-def _rows_from_cache_trajectory(*, model_name: str, token_idx: int, cache_params: Any) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for name, tensor in _iter_hidden_tensors(cache_params):
-        if not _is_matrix_state(name):
-            continue
-        for head_idx, matrix in _head_matrices(tensor):
-            metrics = _matrix_metrics(matrix)
-            rows.append(
-                {
-                    "model": model_name,
-                    "token_idx": int(token_idx),
-                    "tensor_name": name,
-                    "layer_idx": _layer_idx(name),
-                    "head_idx": int(head_idx),
-                    "abs_max": float(metrics["abs_max"]),
-                    **{k: float(metrics[k]) for k in _MATRIX_METRICS},
-                }
-            )
-    return rows
-
-
-def _fla_recurrent_state_trajectory(
-    backbone: Any,
-    embedded: torch.Tensor,
-    *,
-    model_name: str,
-) -> list[dict[str, Any]]:
-    prepared, _ = backbone._prepare_fla_input(embedded)
-    cache = None
-    rows: list[dict[str, Any]] = []
-    for token_idx in tqdm(range(int(prepared.shape[1])), total=int(prepared.shape[1]), desc=f"Recurrent-state trajectory ({model_name})"):
-        token = prepared[:, token_idx : token_idx + 1]
-        _, cache = backbone._run_fla(
-            token,
-            cache_params=cache,
-            cache_position_start=token_idx if cache is not None else None,
-            return_cache=True,
-        )
-        rows.extend(_rows_from_cache_trajectory(model_name=model_name, token_idx=token_idx + 1, cache_params=cache))
-    return rows
-
-
-def run_recurrent_state_trajectory_tracking(
-    *,
-    experiment: HiddenStateTrackingConfig | Mapping[str, Any],
-    models_to_compare: dict[str, Any],
-    device: str,
-    seqlen: int,
-    rep: int = 0,
-) -> pd.DataFrame:
-    cfg = experiment if isinstance(experiment, HiddenStateTrackingConfig) else HiddenStateTrackingConfig.from_mapping(experiment)
-    if seqlen < 1 or rep < 0:
-        raise ValueError("seqlen must be >= 1 and rep must be >= 0")
-    _set_data_generation_seed(cfg.data_generation_seed)
-    models, autocast_models = _device_runtime(models_to_compare, device)
-
-    base_batch = None
-    generator = create_seq_len_batch_generator(
-        task_variant="tabular_prior",
-        num_batches=rep + 1,
-        smallest_seqlen=seqlen,
-        largest_seqlen=seqlen,
-        num_features=cfg.num_features,
-        num_classes=cfg.num_classes,
-        number_of_test_samples=cfg.num_test_samples,
-        default_device=device,
-        task_kwargs={},
-    )
-    for current_rep, (candidate, _) in enumerate(generator):
-        if current_rep == rep:
-            base_batch = candidate
-            break
-    if base_batch is None:
-        raise RuntimeError(f"Unable to materialize repetition {rep} for seqlen={seqlen}.")
-
-    categorical_inds = categorical_mask_to_inds(base_batch.categorical_mask)
-    rows: list[dict[str, Any]] = []
-    for raw_name, model in models.items():
-        model_name = str(raw_name)
-        x = base_batch.x[:, :seqlen]
-        y = base_batch.y[:, :seqlen]
-        x_device = x.to(device)
-        y_device = y.to(device)
-        style = move_style_and_check_shape(base_batch.style, x, device)
-        y_style = move_y_style_and_check_shape(base_batch.y_style, y, device)
-        if not hasattr(model, "_prepare_batch_first_inputs") or not hasattr(model, "_build_embedded_input"):
-            raise TypeError(
-                "Trajectory tracking requires a TabularModel-like interface with "
-                "_prepare_batch_first_inputs and _build_embedded_input."
-            )
-        backbone = getattr(model, "transformer_layers", None)
-        if backbone is None or not hasattr(backbone, "_run_fla") or not hasattr(backbone, "_prepare_fla_input"):
-            raise TypeError("Trajectory tracking currently supports FLA backbones only.")
-
-        x_bf, y_bf, _ = model._prepare_batch_first_inputs(x_device, y_device, None)
-        assert x_bf is not None and y_bf is not None
-        embedded, _, _, _ = model._build_embedded_input(
-            x_bf,
-            y_bf,
-            single_eval_pos=int(y_bf.shape[1]),
-            style=style,
-            y_style=y_style,
-            categorical_inds=categorical_inds,
-            cache_trainset_representation=True,
-        )
-
-        try:
-            rows.extend(
-                _run_autocast(
-                    lambda: _fla_recurrent_state_trajectory(backbone, embedded, model_name=model_name),
-                    model_name=model_name,
-                    autocast_models=autocast_models,
-                )
-            )
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache()
-            raise
-        except RuntimeError as err:
-            if "out of memory" in str(err).lower():
-                torch.cuda.empty_cache()
-            raise
     return pd.DataFrame(rows)
 
 
@@ -415,6 +382,10 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
         ("layer_idx", -1),
         ("head_idx", -1),
         *((key, float("nan")) for key in _MATRIX_METRICS),
+        ("kv_state_norm", float("nan")),
+        ("k_sum_norm", float("nan")),
+        ("joint_hidden_state_norm", float("nan")),
+        ("kv_over_ksum_ratio", float("nan")),
     ):
         if col not in df.columns:
             df[col] = default
@@ -423,6 +394,7 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             "model", "tensor_name", "layer_idx", "head_idx", "seqlen",
             "abs_max_mean",
             "frobenius_norm_mean", "spectral_norm_mean", "effective_rank_mean", "stable_rank_mean", "n",
+            "kv_state_norm_mean", "k_sum_norm_mean", "joint_hidden_state_norm_mean", "kv_over_ksum_ratio_mean",
         ]
         return pd.DataFrame(columns=cols)
     group_cols = [c for c in ("model", "tensor_name", "layer_idx", "head_idx", "seqlen") if c in df.columns]
@@ -434,103 +406,16 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             spectral_norm_mean=("spectral_norm", "mean"),
             effective_rank_mean=("effective_rank", "mean"),
             stable_rank_mean=("stable_rank", "mean"),
+            kv_state_norm_mean=("kv_state_norm", "mean"),
+            k_sum_norm_mean=("k_sum_norm", "mean"),
+            joint_hidden_state_norm_mean=("joint_hidden_state_norm", "mean"),
+            kv_over_ksum_ratio_mean=("kv_over_ksum_ratio", "mean"),
             n=("rep", "nunique"),
         )
         .reset_index()
     )
     order = [c for c in ("model", "layer_idx", "head_idx", "tensor_name", "seqlen") if c in out.columns]
     return out.sort_values(order)
-
-
-def _short_tensor_label(name: str) -> str:
-    for prefix in ("state.backbone_state.", "state."):
-        if name.startswith(prefix):
-            name = name[len(prefix) :]
-            break
-    layer = _layer_idx(name)
-    if match := re.search(r"(?:layers|layer_states)\[\d+\]\.(.+)", name):
-        name = match.group(1)
-    name = name.replace("::", " ").replace("_", " ")
-    return f"L{layer} {name}" if layer >= 0 else name
-
-def plot_hidden_state_metric(
-    df: pd.DataFrame,
-    *,
-    metric: str,
-    title: str,
-    tensor_names: list[str] | None = None,
-    model: str | None = None,
-    log_x: bool = True,
-    run_alpha: float = 0.35,
-) -> None:
-    if df.empty:
-        print(f"No rows to plot for: {title}")
-        return
-    plot_df = df.copy()
-    if model is not None:
-        plot_df = plot_df[plot_df["model"] == model]
-    if tensor_names is not None:
-        plot_df = plot_df[plot_df["tensor_name"].isin(tensor_names)]
-    if plot_df.empty:
-        print(f"No matching rows for: {title}")
-        return
-
-    model_values = sorted(plot_df["model"].astype(str).unique().tolist())
-    split = model is None and len(model_values) > 1
-    panel_models = model_values if split else [model_values[0]]
-    fig, axes = create_panel_figure(
-        panel_count=len(panel_models),
-        figsize=(6.4 * len(panel_models), 5),
-        sharey=split,
-    )
-    palette = list(mcolors.TABLEAU_COLORS.values())
-    for idx, model_name in enumerate(panel_models):
-        ax = axes[idx if split else 0]
-        sub = plot_df if not split else plot_df[plot_df["model"] == model_name]
-        agg = sub.groupby(["tensor_name", "seqlen"], observed=True)[metric].mean().reset_index().sort_values(["tensor_name", "seqlen"])
-        names = agg["tensor_name"].astype(str).unique().tolist()
-        base = np.array(mcolors.to_rgb(palette[idx % len(palette)]))
-        shades = np.linspace(0.55, 0.05, num=max(len(names), 1))
-        colors = {name: tuple((1 - a) * base + a * np.ones(3)) for name, a in zip(names, shades, strict=False)}
-        for name, group in agg.groupby("tensor_name", observed=True):
-            color = colors[str(name)]
-            raw_group = sub[sub["tensor_name"] == name]
-            if "rep" in raw_group.columns:
-                for _, rep_df in raw_group.groupby("rep", observed=True, sort=True):
-                    rep_df = rep_df.sort_values("seqlen")
-                    ax.plot(
-                        rep_df["seqlen"],
-                        rep_df[metric],
-                        linewidth=0.55,
-                        color=color,
-                        alpha=run_alpha,
-                        marker=None,
-                        label="_nolegend_",
-                        zorder=2,
-                    )
-            ax.plot(
-                group["seqlen"],
-                group[metric],
-                marker="o",
-                linewidth=1.6,
-                markersize=3.5,
-                color=color,
-                label=_short_tensor_label(str(name)),
-                zorder=3,
-            )
-        if log_x:
-            ax.set_xscale("log")
-        ax.set_xlabel("Sequence length")
-        ax.set_ylabel(metric)
-        ax.set_title(str(model_name) if split else title)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc="best", fontsize=8, ncol=2)
-    if split:
-        fig.suptitle(title)
-        fig.tight_layout(rect=(0, 0, 1, 0.96))
-    else:
-        fig.tight_layout()
-
 
 def _plot_recurrent_metric(
     plot_df: pd.DataFrame,
@@ -544,6 +429,7 @@ def _plot_recurrent_metric(
     model: str | None = None,
     training_context_length: int | None = None,
     log_x: bool = True,
+    log_y: bool = False,
     plot_mode: Literal["individual_runs", "violin"] = "individual_runs",
     run_alpha: float = 0.35,
     distribution_alpha: float | None = 0.3,
@@ -562,7 +448,6 @@ def _plot_recurrent_metric(
     display_name_map = resolve_display_name_map(plot_df)
     metric_label = _METRIC_DISPLAY_NAMES.get(metric, metric.replace("_", " ").title())
     split = model is None and len(model_values) > 1
-    palette = list(mcolors.TABLEAU_COLORS.values())
     for group_value, group_df in plot_df.groupby(group_key, observed=True):
         panel_models = model_values if split else [model_values[0]]
         fig, axes = create_panel_figure(
@@ -570,10 +455,22 @@ def _plot_recurrent_metric(
             figsize=(6.4 * len(panel_models), 5),
             sharey=split,
         )
+        visible_axes: list[Any] = []
+        shared_x_left: float | None = None
+        shared_x_right: float | None = None
+        shared_y_limits: tuple[float, float] | None = None
+        if plot_mode == "violin":
+            finite_group_values = group_df[metric].to_numpy(dtype=float, copy=False)
+            finite_group_values = finite_group_values[np.isfinite(finite_group_values)]
+            if log_y:
+                finite_group_values = finite_group_values[finite_group_values > 0.0]
+            if finite_group_values.size > 0:
+                y_min = float(finite_group_values.min())
+                y_max = float(finite_group_values.max())
+                shared_y_limits = _compute_padded_y_limits(y_min, y_max, log_scale=log_y)
         for idx, model_name in enumerate(panel_models):
             ax = axes[idx if split else 0]
             sub = group_df if not split else group_df[group_df["model"] == model_name]
-            violin_values: list[np.ndarray] = []
             summary_fn = "median" if plot_mode == "violin" else "mean"
             agg = (
                 sub.groupby([line_key, "seqlen"], observed=True)[metric]
@@ -584,15 +481,26 @@ def _plot_recurrent_metric(
             if agg.empty:
                 ax.set_visible(False)
                 continue
+            visible_axes.append(ax)
             line_values = agg[line_key].dropna().unique().tolist()
-            colors = {value: palette[i % len(palette)] for i, value in enumerate(line_values)}
-            for line_idx, (line_value, line_df) in enumerate(agg.groupby(line_key, observed=True)):
+            tab20_reordered = _reordered_tab20_palette()
+            colors = {value: tab20_reordered[i % len(tab20_reordered)] for i, value in enumerate(line_values)}
+            violin_values: list[np.ndarray] = []
+            for line_idx, line_value in enumerate(line_values):
                 value = int(line_value)
                 label = f"{line_name}[{value}]" if value >= 0 else f"{line_name}[unknown]"
                 color = colors[line_value]
                 raw_line_df = sub[sub[line_key] == line_value]
                 if plot_mode == "violin":
-                    violin_values.append(raw_line_df[metric].to_numpy(dtype=float, copy=False))
+                    finite_line_values = pd.to_numeric(
+                        raw_line_df[metric],
+                        errors="coerce",
+                    ).to_numpy(dtype=float, copy=False)
+                    finite_line_values = finite_line_values[np.isfinite(finite_line_values)]
+                    if log_y:
+                        finite_line_values = finite_line_values[finite_line_values > 0.0]
+                    if finite_line_values.size > 0:
+                        violin_values.append(finite_line_values)
                 plot_grouped_runs_with_distribution(
                     ax=ax,
                     sub=raw_line_df,
@@ -625,10 +533,14 @@ def _plot_recurrent_metric(
                 if finite_violin_values.size > 0:
                     y_min = float(finite_violin_values.min())
                     y_max = float(finite_violin_values.max())
-                    pad = max((y_max - y_min) * 0.05, 1e-6) if y_max != y_min else max(abs(y_min) * 0.05, 1e-6)
-                    ax.set_ylim(y_min - pad, y_max + pad)
+                    ax.set_ylim(*_compute_padded_y_limits(y_min, y_max, log_scale=log_y))
             if log_x:
                 ax.set_xscale("log")
+            if log_y:
+                ax.set_yscale("log")
+            curr_x_left, curr_x_right = ax.get_xlim()
+            shared_x_left = curr_x_left if shared_x_left is None else min(shared_x_left, curr_x_left)
+            shared_x_right = curr_x_right if shared_x_right is None else max(shared_x_right, curr_x_right)
             if training_context_length is not None:
                 apply_pretraining_split_background(
                     ax,
@@ -644,6 +556,17 @@ def _plot_recurrent_metric(
             )
             ax.grid(True, alpha=0.3)
             ax.legend(loc="best", fontsize=8, ncol=2)
+        for ax in visible_axes:
+            if shared_x_left is not None and shared_x_right is not None:
+                ax.set_xlim(shared_x_left, shared_x_right)
+            if shared_y_limits is not None:
+                ax.set_ylim(*shared_y_limits)
+            if training_context_length is not None:
+                apply_pretraining_split_background(
+                    ax,
+                    boundary=float(training_context_length),
+                    boundary_label="Train context",
+                )
         if split:
             fig.suptitle(f"{title_prefix} | {group_name}[{int(group_value)}]")
             fig.tight_layout(rect=(0, 0, 1, 0.95))
@@ -659,6 +582,7 @@ def plot_recurrent_metric_per_head(
     model: str | None = None,
     training_context_length: int | None = None,
     log_x: bool = True,
+    log_y: bool = False,
     plot_mode: Literal["individual_runs", "violin"] = "individual_runs",
     run_alpha: float = 0.35,
     distribution_alpha: float | None = 0.3,
@@ -674,8 +598,10 @@ def plot_recurrent_metric_per_head(
     plot_df = df.copy()
     if model is not None:
         plot_df = plot_df[plot_df["model"] == model]
+    metric_values = pd.to_numeric(plot_df[metric], errors="coerce")
+    plot_df = plot_df[np.isfinite(metric_values)]
     if plot_df.empty:
-        print(f"No matching rows to plot for: {title_prefix}")
+        print(f"No finite rows to plot for: {title_prefix}")
         return
     _plot_recurrent_metric(
         plot_df,
@@ -688,11 +614,101 @@ def plot_recurrent_metric_per_head(
         model=model,
         training_context_length=training_context_length,
         log_x=log_x,
+        log_y=log_y,
         plot_mode=plot_mode,
         run_alpha=run_alpha,
         distribution_alpha=distribution_alpha,
         distribution_width_frac=distribution_width_frac,
     )
+
+
+def plot_avg_metric_per_layer_per_head(
+    df: pd.DataFrame,
+    *,
+    metric: str,
+    title_prefix: str,
+    model: str | None = None,
+) -> None:
+    if df.empty:
+        print(f"No rows to plot for: {title_prefix}")
+        return
+    missing = sorted({"model", "layer_idx", "head_idx", metric} - set(df.columns))
+    if missing:
+        print(f"Skipping {title_prefix}: missing columns {missing}")
+        return
+
+    plot_df = df.copy()
+    if model is not None:
+        plot_df = plot_df[plot_df["model"] == model]
+    plot_df[metric] = pd.to_numeric(plot_df[metric], errors="coerce")
+    plot_df["layer_idx"] = pd.to_numeric(plot_df["layer_idx"], errors="coerce")
+    plot_df["head_idx"] = pd.to_numeric(plot_df["head_idx"], errors="coerce")
+    plot_df = plot_df[
+        np.isfinite(plot_df[metric])
+        & np.isfinite(plot_df["layer_idx"])
+        & np.isfinite(plot_df["head_idx"])
+    ].copy()
+    plot_df = plot_df[(plot_df["layer_idx"] >= 0) & (plot_df["head_idx"] >= 0)].copy()
+    if plot_df.empty:
+        print(f"Skipping {title_prefix}: no finite rows.")
+        return
+
+    avg_metric_df = (
+        plot_df.groupby(["model", "head_idx", "layer_idx"], observed=True)[metric]
+        .mean()
+        .reset_index()
+        .sort_values(["model", "head_idx", "layer_idx"])
+    )
+    if avg_metric_df.empty:
+        print(f"Skipping {title_prefix}: no rows after aggregation.")
+        return
+
+    model_values = sorted(avg_metric_df["model"].astype(str).unique().tolist())
+    display_name_map = resolve_display_name_map(avg_metric_df)
+    split = model is None and len(model_values) > 1
+    panel_models = model_values if split else [model_values[0]]
+    fig, axes = create_panel_figure(
+        panel_count=len(panel_models),
+        figsize=(6.2 * len(panel_models), 4.8),
+        sharey=split,
+    )
+    head_values = sorted(avg_metric_df["head_idx"].astype(int).unique().tolist())
+    tab20_reordered = _reordered_tab20_palette()
+    colors = {head_idx: tab20_reordered[i % len(tab20_reordered)] for i, head_idx in enumerate(head_values)}
+    metric_label = _METRIC_DISPLAY_NAMES.get(metric, metric.replace("_", " ").title())
+    ylabel = f"Average {metric_label} Across Seq Len"
+
+    for idx, model_name in enumerate(panel_models):
+        ax = axes[idx if split else 0]
+        sub = avg_metric_df if not split else avg_metric_df[avg_metric_df["model"] == model_name]
+        if sub.empty:
+            ax.set_visible(False)
+            continue
+        for head_idx, head_df in sub.groupby("head_idx", observed=True):
+            ax.plot(
+                head_df["layer_idx"].astype(int),
+                head_df[metric],
+                marker="o",
+                linewidth=1.7,
+                color=colors[int(head_idx)],
+                label=f"head[{int(head_idx)}]",
+            )
+        ax.set_xlabel("Layer")
+        ax.set_ylabel(ylabel if idx == 0 else "")
+        ax.set_title(
+            display_name_map.get(str(model_name), str(model_name))
+            if split
+            else title_prefix
+        )
+        ax.set_xticks(sorted(sub["layer_idx"].astype(int).unique().tolist()))
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best", fontsize=8)
+
+    if split:
+        fig.suptitle(f"{title_prefix} (averaged across sequence lengths)")
+        fig.tight_layout(rect=(0, 0, 1, 0.97))
+    else:
+        fig.tight_layout()
 
 
 def plot_recurrent_metric_per_layer(
@@ -705,6 +721,7 @@ def plot_recurrent_metric_per_layer(
     head_indices: list[int] | tuple[int, ...] | None = None,
     training_context_length: int | None = None,
     log_x: bool = True,
+    log_y: bool = False,
     plot_mode: Literal["individual_runs", "violin"] = "individual_runs",
     run_alpha: float = 0.35,
     distribution_alpha: float | None = 0.3,
@@ -724,8 +741,10 @@ def plot_recurrent_metric_per_layer(
         plot_df = plot_df[plot_df["layer_idx"].isin({int(v) for v in layer_indices})]
     if head_indices is not None:
         plot_df = plot_df[plot_df["head_idx"].isin({int(v) for v in head_indices})]
+    metric_values = pd.to_numeric(plot_df[metric], errors="coerce")
+    plot_df = plot_df[np.isfinite(metric_values)]
     if plot_df.empty:
-        print(f"No matching rows to plot for: {title_prefix}")
+        print(f"No finite rows to plot for: {title_prefix}")
         return
     _plot_recurrent_metric(
         plot_df,
@@ -738,6 +757,7 @@ def plot_recurrent_metric_per_layer(
         model=model,
         training_context_length=training_context_length,
         log_x=log_x,
+        log_y=log_y,
         plot_mode=plot_mode,
         run_alpha=run_alpha,
         distribution_alpha=distribution_alpha,
