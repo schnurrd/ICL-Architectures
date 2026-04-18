@@ -957,6 +957,8 @@ def _maybe_patch_mamba2_with_stateless_recurrent(
 @contextmanager
 def _maybe_patch_linear_attn_with_stateless_recurrent(
     enabled: bool,
+    *,
+    include_self_term: bool = True,
 ):
     """Patch linear-attention kernels for stateless decode (GLA-style)."""
     if not enabled:
@@ -1011,7 +1013,8 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
             o = torch.einsum("blthk,bhkv->blthv", qf, h0)
         else:
             o = torch.einsum("bthk,bhkv->bthv", qf, h0)
-        o = o + (qf * kf).sum(-1, keepdim=True) * vf
+        if include_self_term:
+            o = o + (qf * kf).sum(-1, keepdim=True) * vf
 
         if normalize:
             if kf.ndim == 5:
