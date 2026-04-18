@@ -624,19 +624,19 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     #     "display_name": "Oracle Hidden State Optimization (Non-CausalLinear Attention)",
     #     "note": "with new linear attention backbone"
     # },
-    "Oracle_Hidden_State_Rebased_feat_dim_32_base": {
-        **BASED_MODELS["Rebased_feat_dim_32"],
-        "display_name": "Oracle Hidden State (Rebased)",
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 5e1, 
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 20,
-        "oracle_query_batch_size": 4000,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_verbose": True,
-    },
+    # "Oracle_Hidden_State_Rebased_feat_dim_32_base": {
+    #     **BASED_MODELS["Rebased_feat_dim_32"],
+    #     "display_name": "Oracle Hidden State (Rebased)",
+    #     "oracle_hidden_state_baseline": True,
+    #     "oracle_num_epochs": 400,
+    #     "oracle_lr": 5e1, 
+    #     "oracle_weight_decay": 1e-5,
+    #     "oracle_patience": 20,
+    #     "oracle_query_batch_size": 4000,
+    #     "oracle_selection_fraction": 0.1,
+    #     "oracle_evaluate_only_max_seqlen": True,
+    #     "oracle_verbose": True,
+    # },
 }
 
 CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
