@@ -909,6 +909,7 @@ class BidirectionalFLABackbone(FLABackbone):
         cache_chunk_size: int | None = None,
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
+        linear_attn_include_self_term: bool = True,
         state_fusion: str = "mean_output_mean_cache",
     ):
         super().__init__(
@@ -917,6 +918,7 @@ class BidirectionalFLABackbone(FLABackbone):
             cache_chunk_size=cache_chunk_size,
             state_passing=state_passing,
             state_passing_dropout=state_passing_dropout,
+            linear_attn_include_self_term=linear_attn_include_self_term,
         )
         self.state_fusion = state_fusion
 
@@ -1226,6 +1228,7 @@ class RebasedBackboneConfig(BackboneConfig):
                 for _ in range(self.nlayers)
             ]
         )
+        layers.apply(init_linear_attention_weights_like_fla)
         return LinearAttentionBackbone(
             layers,
             recompute_each_layer=self.recompute_layer,

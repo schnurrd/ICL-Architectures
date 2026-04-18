@@ -607,24 +607,23 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_verbose": False,
         "eval_autocast_dtype": "bf16",
     },
-    "Oracle_Hidden_State_Linear_Attention_Non_Causal": {
-        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
-        "display_name": "Oracle Hidden State (Linear Attention)",
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 3e1, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
-        "oracle_auto_scale_lr": False,
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 20,
-        "oracle_query_batch_size": 4000,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": False,
-        "oracle_verbose": False,
-        "oracle_verbose_every_n_epochs": 10,
-        "display_name": "Oracle Hidden State Optimization (Non-CausalLinear Attention)",
-        "note": "with new linear attention backbone"
-    },
-
+    # "Oracle_Hidden_State_Linear_Attention_Non_Causal": {
+    #     **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+    #     "display_name": "Oracle Hidden State (Linear Attention)",
+    #     "oracle_hidden_state_baseline": True,
+    #     "oracle_num_epochs": 400,
+    #     "oracle_lr": 3e1, # set lr by checking with oracle_verbose the relative state update sizes to be around 1e-2-1e-1
+    #     "oracle_auto_scale_lr": False,
+    #     "oracle_weight_decay": 1e-5,
+    #     "oracle_patience": 20,
+    #     "oracle_query_batch_size": 4000,
+    #     "oracle_selection_fraction": 0.1,
+    #     "oracle_evaluate_only_max_seqlen": False,
+    #     "oracle_verbose": False,
+    #     "oracle_verbose_every_n_epochs": 10,
+    #     "display_name": "Oracle Hidden State Optimization (Non-CausalLinear Attention)",
+    #     "note": "with new linear attention backbone"
+    # },
     "Oracle_Hidden_State_Rebased_feat_dim_32_base": {
         **BASED_MODELS["Rebased_feat_dim_32"],
         "display_name": "Oracle Hidden State (Rebased)",

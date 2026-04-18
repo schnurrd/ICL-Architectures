@@ -4,57 +4,20 @@ import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
-from pfns.model.attention_utils import (
-    build_mlp,
-)
+from pfns.model.linear_attention import LinearAttention
 from pfns.model.rebased_feature_map import BasedFeatureMap, RebasedFeatureMap
 
 
-def _build_flat_kv_state(
-    k: torch.Tensor,
-    v: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    # k: (batch_times_features, seq, heads, qk_dim)
-    # v: (batch_times_features, seq, heads, v_dim)
-    k_sum = k.sum(dim=1)
-    kv_state = torch.einsum("bshf,bshd->bhfd", k, v)
-    return kv_state, k_sum
-
-
-def _read_from_flat_kv_state(
-    q: torch.Tensor,
-    kv_state: torch.Tensor,
-    k_sum: torch.Tensor | None,
-    *,
-    eps: float,
-) -> torch.Tensor:
-    """Read from a cached KV state for flattened (batch * feature) sequences.
-
-    If k_sum is not None computes:
-        out = (q^T KV) / (q^T K_sum + eps)
-    else:
-        out = q^T KV
-    """
-    # q: (batch_times_features, seq, heads, qk_dim)
-    # kv_state: (batch_times_features, heads, qk_dim, v_dim)
-    # k_sum: (batch_times_features, heads, qk_dim)
-    num = torch.einsum("bshf,bhfd->bshd", q, kv_state)
-    if k_sum is None:
-        return num
-    denom = torch.einsum("bshf,bhf->bsh", q, k_sum)
-    return num / (denom.unsqueeze(-1) + eps)
-
-
-class RebasedLinearAttention(nn.Module):
-    """
-    PyTorch implementation of Rebased Linear Attention.
-    """
+class RebasedLinearAttention(LinearAttention):
+    """LinearAttention variant that swaps in based/rebased feature maps."""
 
     def __init__(
         self,
         d_model: int,
         num_heads: int,
-        dim_mlp_hidden: int,
+        mlp_hidden_dim: int | None = None,
+        *,
+        dim_mlp_hidden: int | None = None,
         dropout: float = 0.1,
         activation: str = "silu",
         feature_dim: int | None = None,
@@ -63,213 +26,130 @@ class RebasedLinearAttention(nn.Module):
         use_gamma: bool = True,
         use_beta: bool = True,
         normalize: bool = True,
+        causal: bool = False,
+        causal_train_only: bool = False,
+        causal_chunk_size: int | None = None,
+        normalize_q_sum: bool = False,
+        normalize_k_sum: bool = False,
+        use_k_sum_normalization: bool = True,
+        use_attention_norm: bool = True,
+        use_output_norm: bool = True,
+        use_mlp_norm: bool = True,
+        norm_type: str = "rmsnorm",
+        fuse_swiglu: bool = False,
+        state_renormalization: str | None = None,
+        learnable_state_renorm_scale: bool = True,
+        state_renormalization_target_norm: float | None = None,
         gradient_checkpointing: bool = False,
-        eps: float = 1e-5,
+        eps: float = 1e-6,
     ) -> None:
-        super().__init__()
-        
-        assert d_model % num_heads == 0, "d_model must be divisible by num_heads."
-
-        self.d_model = d_model
-        self.num_heads = num_heads
-        self.head_dim = d_model // num_heads
-        feature_map_name = feature_map.strip().lower().replace("-", "_")
-        effective_feature_dim = int(feature_dim) if feature_dim is not None else None
-        self.feature_dim = (
-            effective_feature_dim
-            if effective_feature_dim is not None
-            else self.head_dim
+        resolved_mlp_hidden_dim = (
+            mlp_hidden_dim if mlp_hidden_dim is not None else dim_mlp_hidden
         )
-        resolved_dense = bool(dense)
-        self.gradient_checkpointing = bool(gradient_checkpointing)
-        
-        self.eps = eps
-        self.dropout = nn.Dropout(dropout)
-
-        # Q, K: d_model -> to feature_dim * heads
-        self.q_proj = nn.Linear(d_model, num_heads * self.feature_dim)
-        self.k_proj = nn.Linear(d_model, num_heads * self.feature_dim)
-        # V : d_model -> d_model
-        self.v_proj = nn.Linear(d_model, d_model)
-        self.o_proj = nn.Linear(d_model, d_model)
-
-        if feature_map_name == "rebased":
-            self.feature_map = RebasedFeatureMap(
-                self.feature_dim,
-                use_gamma,
-                use_beta,
-                normalize,
-                dense=resolved_dense,
-            )
-        elif feature_map_name == "based":
-            self.feature_map = BasedFeatureMap(dense=resolved_dense)
-        else:
+        if resolved_mlp_hidden_dim is None:
             raise ValueError(
-                f"Unsupported feature_map: {feature_map!r}. "
-                "Expected one of: 'rebased', 'based'"
+                "RebasedLinearAttention requires `mlp_hidden_dim` or "
+                "`dim_mlp_hidden`."
             )
-        self.feature_map_name = feature_map_name
+        if activation not in {"swish", "silu"}:
+            raise ValueError(
+                "RebasedLinearAttention now mirrors LinearAttention's GatedMLP "
+                f"and only supports swish/silu activation, got {activation!r}."
+            )
+        if dropout != 0.1:
+            # Retained only for backward-compatible configs; the aligned
+            # implementation follows LinearAttention and does not use dropout.
+            pass
 
-        self.norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in range(2)])
-        self.mlp = build_mlp(d_model, dim_mlp_hidden, dropout, activation)
+        self.feature_map_name = feature_map.strip().lower().replace("-", "_")
+        self.rebased_dense = bool(dense)
+        self.rebased_use_gamma = bool(use_gamma)
+        self.rebased_use_beta = bool(use_beta)
+        self.rebased_normalize = bool(normalize)
+        self.gradient_checkpointing = bool(gradient_checkpointing)
 
-    def _apply_feature_map(self, x: torch.Tensor) -> torch.Tensor:
-        return (
-            checkpoint(self.feature_map, x, use_reentrant=False)
+        per_head_feature_dim = (
+            int(feature_dim) if feature_dim is not None else d_model // num_heads
+        )
+        key_dim = num_heads * per_head_feature_dim
+        if key_dim % d_model != 0:
+            expand_k = key_dim / d_model
+        else:
+            expand_k = key_dim // d_model
+
+        super().__init__(
+            d_model=d_model,
+            num_heads=num_heads,
+            expand_k=expand_k,
+            mlp_hidden_dim=resolved_mlp_hidden_dim,
+            use_mlp_norm=use_mlp_norm,
+            feature_map=self.feature_map_name,
+            causal=causal,
+            causal_train_only=causal_train_only,
+            causal_chunk_size=causal_chunk_size,
+            normalize_q_sum=normalize_q_sum,
+            normalize_k_sum=normalize_k_sum,
+            use_k_sum_normalization=use_k_sum_normalization,
+            use_attention_norm=use_attention_norm,
+            use_output_norm=use_output_norm,
+            norm_type=norm_type,
+            fuse_swiglu=fuse_swiglu,
+            state_renormalization=state_renormalization,
+            learnable_state_renorm_scale=learnable_state_renorm_scale,
+            state_renormalization_target_norm=state_renormalization_target_norm,
+            eps=eps,
+        )
+        if self.key_dim != key_dim:
+            raise ValueError(
+                "Computed key dimension does not match requested rebased "
+                f"feature_dim. Expected {key_dim}, got {self.key_dim}."
+            )
+        self.feature_dim = self.head_k_dim
+
+    def _build_feature_maps(
+        self,
+        feature_map: str,
+        head_k_dim: int,
+    ) -> tuple[nn.Module, nn.Module]:
+        if feature_map == "rebased":
+            return (
+                RebasedFeatureMap(
+                    head_dim=head_k_dim,
+                    use_gamma=self.rebased_use_gamma,
+                    use_beta=self.rebased_use_beta,
+                    normalize=self.rebased_normalize,
+                    dense=self.rebased_dense,
+                ),
+                RebasedFeatureMap(
+                    head_dim=head_k_dim,
+                    use_gamma=self.rebased_use_gamma,
+                    use_beta=self.rebased_use_beta,
+                    normalize=self.rebased_normalize,
+                    dense=self.rebased_dense,
+                ),
+            )
+        if feature_map == "based":
+            return (
+                BasedFeatureMap(dense=self.rebased_dense),
+                BasedFeatureMap(dense=self.rebased_dense),
+            )
+        raise ValueError(
+            f"Unsupported feature_map: {feature_map!r}. "
+            "Expected one of: 'rebased', 'based'."
+        )
+
+    def _apply_feature_map(
+        self,
+        x: torch.Tensor,
+        feature_map: nn.Module,
+        *,
+        normalize_sum: bool,
+    ) -> torch.Tensor:
+        x = (
+            checkpoint(feature_map, x, use_reentrant=False)
             if x.requires_grad and self.gradient_checkpointing
-            else self.feature_map(x)
+            else feature_map(x)
         )
-
-    def _prepare_input(
-        self,
-        x: torch.Tensor,
-    ) -> tuple[torch.Tensor, bool, int, int, int, int]:
-        is_three_dim = x.dim() == 3
-        if is_three_dim:
-            x = x.unsqueeze(2)
-        b, s, n, d = x.shape
-        return x, is_three_dim, b, s, n, d
-
-    def _project_qkv_with_feature_map(
-        self,
-        x: torch.Tensor,
-        *,
-        b: int,
-        s: int,
-        n: int,
-        d: int,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        x_norm = self.norms[0](x)
-        x_flat = x_norm.transpose(1, 2).reshape(b * n, s, d)
-
-        q = self.q_proj(x_flat).view(b * n, s, self.num_heads, self.feature_dim)
-        k = self.k_proj(x_flat).view(b * n, s, self.num_heads, self.feature_dim)
-        v = self.v_proj(x_flat).view(b * n, s, self.num_heads, self.head_dim)
-
-        q, k = self._apply_feature_map(q), self._apply_feature_map(k)
-
-        return q, k, v
-
-    def _apply_output_residual_and_mlp(
-        self,
-        x: torch.Tensor,
-        attn_out: torch.Tensor,
-        *,
-        b: int,
-        s: int,
-        n: int,
-        d: int,
-        is_three_dim: bool,
-    ) -> torch.Tensor:
-        attn_out = attn_out.reshape(b * n, s, self.num_heads * self.head_dim)
-        attn_out = self.dropout(self.o_proj(attn_out))
-        attn_out = attn_out.reshape(b, n, s, d).transpose(1, 2)
-
-        x = x + attn_out
-        x = x + self.mlp(self.norms[1](x))
-
-        if is_three_dim:
-            x = x.squeeze(2)
+        if normalize_sum:
+            x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
         return x
-
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        *,
-        single_eval_pos: int = None,
-        **kwargs,
-    ) -> torch.Tensor:
-        
-        assert single_eval_pos is not None, (
-            "single_eval_pos must be provided for RebasedLinearAttention."
-        )
-        x, is_three_dim, b, s, n, d = self._prepare_input(x)
-        assert 0 < single_eval_pos < s, (
-            f"single_eval_pos must be in the range [1, {s} - 1], got {single_eval_pos}."
-        )
-        q, k, v = self._project_qkv_with_feature_map(x, b=b, s=s, n=n, d=d)
-
-        q_train = q[:, :single_eval_pos]
-        k_train = k[:, :single_eval_pos]
-        v_train = v[:, :single_eval_pos]
-        
-        # A. Compute Train output (non-causal full attention over train prefix)
-        kv_state_train, k_sum_train = _build_flat_kv_state(k_train, v_train)
-        attn_out_train = _read_from_flat_kv_state(
-            q_train, kv_state_train, k_sum_train, eps=self.eps
-        )
-        
-        # B. Test Part
-        q_test = q[:, single_eval_pos:]
-        k_test = k[:, single_eval_pos:]
-        v_test = v[:, single_eval_pos:]
-        
-        # Test tokens attend only to the Train State
-        attn_out_test = _read_from_flat_kv_state(
-            q_test, 
-            kv_state_train, 
-            k_sum_train,
-            eps=self.eps,
-        )
-        
-        attn_out = torch.cat([attn_out_train, attn_out_test], dim=1)        
-
-        return self._apply_output_residual_and_mlp(
-            x,
-            attn_out,
-            b=b,
-            s=s,
-            n=n,
-            d=d,
-            is_three_dim=is_three_dim,
-        )
-
-    def incontext_fit(
-        self,
-        x: torch.Tensor,
-    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """Process the training context and return the cached KV state."""
-        x, is_three_dim, b, s, n, d = self._prepare_input(x)
-        q, k, v = self._project_qkv_with_feature_map(x, b=b, s=s, n=n, d=d)
-
-        kv_state, k_sum = _build_flat_kv_state(k, v)
-        attn_out = _read_from_flat_kv_state(q, kv_state, k_sum, eps=self.eps)
-        x = self._apply_output_residual_and_mlp(
-            x,
-            attn_out,
-            b=b,
-            s=s,
-            n=n,
-            d=d,
-            is_three_dim=is_three_dim,
-        )
-        return x, {"kv_state": kv_state, "k_sum": k_sum}
-
-    def incontext_predict(
-        self,
-        x: torch.Tensor,
-        state: dict[str, torch.Tensor],
-    ) -> torch.Tensor:
-        """Process test tokens using cached KV state from the training context."""
-        x, is_three_dim, b, s, n, d = self._prepare_input(x)
-        q, k, v = self._project_qkv_with_feature_map(x, b=b, s=s, n=n, d=d)
-
-        kv_state = state["kv_state"]
-        k_sum = state["k_sum"]
-        attn_out = _read_from_flat_kv_state(
-            q,
-            kv_state,
-            k_sum,
-            eps=self.eps,
-        )
-
-        return self._apply_output_residual_and_mlp(
-            x,
-            attn_out,
-            b=b,
-            s=s,
-            n=n,
-            d=d,
-            is_three_dim=is_three_dim,
-        )

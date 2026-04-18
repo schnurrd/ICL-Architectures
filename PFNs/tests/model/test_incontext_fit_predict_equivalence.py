@@ -151,10 +151,7 @@ def test_incontext_fit_predict_matches_forward_non_fla(
     ninp: int,
 ) -> None:
     torch.manual_seed(0)
-    if case_name == "rebased" and not torch.cuda.is_available():
-        pytest.skip("Rebased feature map path requires CUDA/Triton.")
-
-    device = torch.device("cuda" if case_name == "rebased" else "cpu")
+    device = torch.device("cuda" if case_name == "rebased" and torch.cuda.is_available() else "cpu")
     num_features = 4
     train_len = 7
 
