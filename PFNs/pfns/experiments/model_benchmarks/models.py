@@ -38,6 +38,7 @@ def load_models_for_benchmark(
             high_cardinality_categorical_threshold=model_config.get(
                 "high_cardinality_categorical_threshold"
             ),
+            make_causal=bool(model_config.get("make_causal", False)),
         )
         if model_config.get("oracle_hidden_state_baseline"):
             model = build_oracle_hidden_state_baseline(

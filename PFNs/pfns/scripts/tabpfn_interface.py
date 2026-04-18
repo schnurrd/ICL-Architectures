@@ -593,23 +593,47 @@ def _override_loaded_model_config(
     checkpoint_config: dict[str, Any],
     *,
     high_cardinality_categorical_threshold: int | None = None,
+    make_causal: bool = False,
 ) -> dict[str, Any]:
-    if high_cardinality_categorical_threshold is None:
+    if high_cardinality_categorical_threshold is None and not make_causal:
         return checkpoint_config
 
     config = dict(checkpoint_config)
     model_config = dict(config["model"])
-    encoder_config = model_config.get("encoder")
-    if encoder_config is None:
-        raise ValueError(
-            "Cannot override high_cardinality_categorical_threshold because the checkpoint has no encoder config."
-        )
+    if high_cardinality_categorical_threshold is not None:
+        encoder_config = model_config.get("encoder")
+        if encoder_config is None:
+            raise ValueError(
+                "Cannot override high_cardinality_categorical_threshold because the checkpoint has no encoder config."
+            )
 
-    encoder_config = dict(encoder_config)
-    encoder_config["high_cardinality_categorical_threshold"] = int(
-        high_cardinality_categorical_threshold
-    )
-    model_config["encoder"] = encoder_config
+        encoder_config = dict(encoder_config)
+        encoder_config["high_cardinality_categorical_threshold"] = int(
+            high_cardinality_categorical_threshold
+        )
+        model_config["encoder"] = encoder_config
+
+    if make_causal:
+        backbone_config = model_config.get("backbone")
+        if backbone_config is None:
+            raise ValueError(
+                "Cannot override make_causal because the checkpoint has no backbone config."
+            )
+
+        backbone_config = dict(backbone_config)
+        backbone_type = backbone_config.get("__config_type__")
+        if backbone_type != "pfns.model.backbones:LinearAttentionBackboneConfig":
+            raise ValueError(
+                "make_causal is only supported for checkpoints using "
+                "LinearAttentionBackboneConfig."
+            )
+
+        layer_kwargs = dict(backbone_config.get("layer_kwargs") or {})
+        layer_kwargs["causal"] = False
+        layer_kwargs["causal_train_only"] = True
+        backbone_config["layer_kwargs"] = layer_kwargs
+        model_config["backbone"] = backbone_config
+
     config["model"] = model_config
     return config
 
@@ -944,6 +968,7 @@ def load_model_workflow(
     base_path,
     device="cpu",
     high_cardinality_categorical_threshold: int | None = None,
+    make_causal: bool = False,
 ):
     """
     Loads a saved model from the specified position. This function only restores inference capabilities and
@@ -966,6 +991,7 @@ def load_model_workflow(
     config_dict = _override_loaded_model_config(
         checkpoint["config"],
         high_cardinality_categorical_threshold=high_cardinality_categorical_threshold,
+        make_causal=make_causal,
     )
     config: BaseConfig = MainConfig.from_dict(config_dict)
     
