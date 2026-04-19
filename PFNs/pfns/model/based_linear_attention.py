@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import torch
 from torch import nn
-from torch.utils.checkpoint import checkpoint
 
 from pfns.model.linear_attention import LinearAttention
 from pfns.model.rebased_feature_map import BasedFeatureMap, RebasedFeatureMap
 
 
-class RebasedLinearAttention(LinearAttention):
+class BasedLinearAttention(LinearAttention):
     """LinearAttention variant that swaps in based/rebased feature maps."""
 
     def __init__(
@@ -18,10 +17,8 @@ class RebasedLinearAttention(LinearAttention):
         mlp_hidden_dim: int | None = None,
         *,
         dim_mlp_hidden: int | None = None,
-        dropout: float = 0.1,
-        activation: str = "silu",
         feature_dim: int | None = None,
-        dense: bool = True,
+        dense: bool = False,
         feature_map: str = "rebased",
         use_gamma: bool = True,
         use_beta: bool = True,
@@ -31,7 +28,7 @@ class RebasedLinearAttention(LinearAttention):
         causal_chunk_size: int | None = None,
         normalize_q_sum: bool = False,
         normalize_k_sum: bool = False,
-        use_k_sum_normalization: bool = True,
+        use_k_sum_normalization: bool = False,
         use_attention_norm: bool = True,
         use_output_norm: bool = True,
         use_mlp_norm: bool = True,
@@ -40,7 +37,6 @@ class RebasedLinearAttention(LinearAttention):
         state_renormalization: str | None = None,
         learnable_state_renorm_scale: bool = True,
         state_renormalization_target_norm: float | None = None,
-        gradient_checkpointing: bool = False,
         eps: float = 1e-6,
     ) -> None:
         resolved_mlp_hidden_dim = (
@@ -48,25 +44,15 @@ class RebasedLinearAttention(LinearAttention):
         )
         if resolved_mlp_hidden_dim is None:
             raise ValueError(
-                "RebasedLinearAttention requires `mlp_hidden_dim` or "
+                "BasedLinearAttention requires `mlp_hidden_dim` or "
                 "`dim_mlp_hidden`."
             )
-        if activation not in {"swish", "silu"}:
-            raise ValueError(
-                "RebasedLinearAttention now mirrors LinearAttention's GatedMLP "
-                f"and only supports swish/silu activation, got {activation!r}."
-            )
-        if dropout != 0.1:
-            # Retained only for backward-compatible configs; the aligned
-            # implementation follows LinearAttention and does not use dropout.
-            pass
 
         self.feature_map_name = feature_map.strip().lower().replace("-", "_")
         self.rebased_dense = bool(dense)
         self.rebased_use_gamma = bool(use_gamma)
         self.rebased_use_beta = bool(use_beta)
         self.rebased_normalize = bool(normalize)
-        self.gradient_checkpointing = bool(gradient_checkpointing)
 
         per_head_feature_dim = (
             int(feature_dim) if feature_dim is not None else d_model // num_heads
@@ -101,7 +87,7 @@ class RebasedLinearAttention(LinearAttention):
         )
         if self.key_dim != key_dim:
             raise ValueError(
-                "Computed key dimension does not match requested rebased "
+                "Computed key dimension does not match requested based "
                 f"feature_dim. Expected {key_dim}, got {self.key_dim}."
             )
         self.feature_dim = self.head_k_dim
@@ -145,11 +131,7 @@ class RebasedLinearAttention(LinearAttention):
         *,
         normalize_sum: bool,
     ) -> torch.Tensor:
-        x = (
-            checkpoint(feature_map, x, use_reentrant=False)
-            if x.requires_grad and self.gradient_checkpointing
-            else feature_map(x)
-        )
+        x = feature_map(x)
         if normalize_sum:
             x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
         return x

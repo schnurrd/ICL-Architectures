@@ -72,7 +72,7 @@ from pfns.model.fla_cache_utils import (
     shallow_copy as _shallow_copy_fla,
 )
 
-from pfns.model.rebased_linear_attention import RebasedLinearAttention
+from pfns.model.based_linear_attention import BasedLinearAttention
 from pfns.model.tabular_model import LayerStack
 # Registry mapping model types to their config and model classes
 FLA_MODEL_REGISTRY = {
@@ -1198,10 +1198,10 @@ class RebasedBackboneConfig(BackboneConfig):
     nlayers: int = 6
     mlp_hidden_dim: int = 200
     num_heads: int = 2
-    activation: str = "silu"
-    dropout: float = 0.1
     recompute_layer: bool = False
-    recompute_every_n_layers: int | None = None
+    recompute_every_n_layers: int | None = 1
+    use_final_norm: bool = False
+    initializer_range: float = 0.02
     layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
 
 
@@ -1217,20 +1217,29 @@ class RebasedBackboneConfig(BackboneConfig):
 
         layers = nn.ModuleList(
             [
-                RebasedLinearAttention(
+                BasedLinearAttention(
                     d_model=ninp,
                     num_heads=self.num_heads,
-                    dim_mlp_hidden=self.mlp_hidden_dim,
-                    dropout=self.dropout,
-                    activation=self.activation,
+                    mlp_hidden_dim=self.mlp_hidden_dim,
                     **(self.layer_kwargs or {}),
                 )
                 for _ in range(self.nlayers)
             ]
         )
-        layers.apply(init_linear_attention_weights_like_fla)
+        layers.apply(
+            lambda module: init_linear_attention_weights_like_fla(
+                module,
+                initializer_range=self.initializer_range,
+            )
+        )
+        final_norm = build_norm(
+            ninp,
+            enabled=self.use_final_norm,
+            norm_type=str((self.layer_kwargs or {}).get("norm_type", "rmsnorm")),
+        )
         return LinearAttentionBackbone(
             layers,
+            final_norm=final_norm,
             recompute_each_layer=self.recompute_layer,
             recompute_every_n_layers=self.recompute_every_n_layers,
         )

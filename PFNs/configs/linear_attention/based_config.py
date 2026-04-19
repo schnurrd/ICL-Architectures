@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Config selector for Rebased backbone training profiles.
+Config selector for (Re)Based backbone training profiles.
 """
 
 from __future__ import annotations
@@ -44,12 +44,12 @@ MAX_NUM_FEATURES = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
 # Training speed on different gpus:
 # -> In this model compiled is faster than non compiled (feature dim 32)
 #    - RTX 5070 (bf16):   2.25it/s, 4.7GB
-#    - RTX 2080Ti (fp32): 
+#    - RTX 2080Ti (fp32):
 #    - A5000:     (bf16):
 
 # Based Model speed with 12.79M parameters
 #    - RTX 5070 (bf16):   2.4it/s, 6.8 GB
-#    - RTX 2080Ti (fp32): 
+#    - RTX 2080Ti (fp32):
 #    - A5000:     (bf16):
 
 TRAINING_PROFILES = {
@@ -87,12 +87,14 @@ def get_config(
     lr: float | None = None,
     aggregate_k_gradients: int | None = None,
     interleave_x_y_pairs: bool = False,
+    nlayers: int | None = None,
     feature_positional_embedding: str | None = None,
     feature_map: str = "rebased",
     feature_dim: int | None = None,
-    dense: bool = True,
+    dense: bool = False,
+    use_final_norm: bool = True,
+    initializer_range: float = 0.02,
     eps: float = 1e-5,
-    gradient_checkpointing: bool = False,
     recompute_every_n_layers: int | None = None,
 ) -> MainConfig:
     """
@@ -133,6 +135,9 @@ def get_config(
         if aggregate_k_gradients is not None
         else profile["aggregate_k_gradients"]
     )
+    resolved_nlayers = 12 if nlayers is None else int(nlayers)
+    if resolved_nlayers <= 0:
+        raise ValueError(f"nlayers must be >= 1, got {resolved_nlayers}.")
     resolved_feature_dim = 32 if feature_dim is None else int(feature_dim)
 
     resolved_feature_map = feature_map.strip().lower().replace("-", "_")
@@ -142,7 +147,8 @@ def get_config(
         )
     resolved_dense = bool(dense)
     resolved_eps = float(eps)
-    resolved_gradient_checkpointing = bool(gradient_checkpointing)
+    resolved_use_final_norm = bool(use_final_norm)
+    resolved_initializer_range = float(initializer_range)
     resolved_recompute_every_n_layers = (
         None if recompute_every_n_layers is None else int(recompute_every_n_layers)
     )
@@ -190,21 +196,17 @@ def get_config(
         # Model size 12.79M
         emsize=320,
         backbone=RebasedBackboneConfig(
-            nlayers=18,
+            nlayers=resolved_nlayers,
             mlp_hidden_dim=320 * 2,
             num_heads=4,
-            activation="silu",
-            dropout=0.0,
-            recompute_layer=(
-                resolved_gradient_checkpointing
-                and resolved_recompute_every_n_layers is not None
-            ),
+            use_final_norm=resolved_use_final_norm,
+            initializer_range=resolved_initializer_range,
+            recompute_layer=resolved_recompute_every_n_layers is not None,
             recompute_every_n_layers=resolved_recompute_every_n_layers,
             layer_kwargs={
                 "feature_dim": resolved_feature_dim,
                 "feature_map": resolved_feature_map,
                 "dense": resolved_dense,
-                "gradient_checkpointing": resolved_gradient_checkpointing,
                 "use_gamma": True,
                 "use_beta": True,
                 "normalize": True,
@@ -242,24 +244,27 @@ def get_config(
         wandb_extras.append(f"agg{resolved_aggregate_k}")
     if interleave_x_y_pairs:
         wandb_extras.append("interleaved")
+    if nlayers is not None:
+        wandb_extras.append(f"layers{resolved_nlayers}")
     wandb_extras.append(f"fm_{resolved_feature_map}")
     if feature_dim is not None:
         wandb_extras.append(f"fd_{resolved_feature_dim}")
     wandb_extras.append(f"dense_{int(resolved_dense)}")
+    if not resolved_use_final_norm:
+        wandb_extras.append("finalnorm_0")
+    if resolved_initializer_range != 0.02:
+        wandb_extras.append(f"init_{resolved_initializer_range:g}")
     if eps != 1e-5:
         wandb_extras.append(f"eps_{resolved_eps:g}")
-    if gradient_checkpointing:
-        wandb_extras.append("gc_1")
     if (
-        resolved_gradient_checkpointing
-        and resolved_recompute_every_n_layers is not None
+        resolved_recompute_every_n_layers is not None
         and resolved_recompute_every_n_layers != 1
     ):
         wandb_extras.append(f"recompn_{resolved_recompute_every_n_layers}")
     wandb_extras.append(f"fpe_{feature_positional_embedding}")
     wandb_suffix = f"_{'_'.join(wandb_extras)}" if wandb_extras else ""
     wandb_name = (
-        f"rebased_{training_setup}"
+        f"based_{training_setup}"
         f"{wandb_suffix}"
         f"_config_{config_index}_matched"
     )

@@ -16,14 +16,16 @@ class _UpperTriCache(nn.Module):
         self,
         x: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        i, j = torch.triu_indices(
-            x.shape[-1],
-            x.shape[-1],
-            1,
-            device=x.device,
-        )
         diag = x.square()
-        offdiag = x[..., i] * x[..., j]
+        head_dim = x.shape[-1]
+        if head_dim <= 1:
+            return diag, x[..., :0]
+
+        offdiag_chunks = [
+            x[..., row : row + 1] * x[..., row + 1 :]
+            for row in range(head_dim - 1)
+        ]
+        offdiag = torch.cat(offdiag_chunks, dim=-1)
         return diag, offdiag
 
 
@@ -64,7 +66,7 @@ class RebasedFeatureMap(_UpperTriCache):
         use_gamma: bool | None = True,
         use_beta: bool | None = True,
         normalize: bool | None = True,
-        dense: bool = True,
+        dense: bool = False,
     ) -> None:
         super().__init__()
         self.head_dim = head_dim
@@ -118,7 +120,7 @@ class BasedFeatureMap(_UpperTriCache):
 
     def __init__(
         self,
-        dense: bool = True,
+        dense: bool = False,
     ) -> None:
         super().__init__()
         self.dense = dense
@@ -136,7 +138,7 @@ class BasedFeatureMap(_UpperTriCache):
             x2 = _dense_pairwise_flat(x)
             ones = torch.ones_like(x[..., :1])
             return torch.cat([ones, x, x2 * self.inv_sqrt2], dim=-1)
-    
+
         # Exact basis with d(d+1)/2 quadratic terms.
         x2_diag, x2_offdiag = self._diag_and_offdiag_products(x)
         x2 = torch.cat([x2_diag, x2_offdiag * math.sqrt(2.0)], dim=-1)
