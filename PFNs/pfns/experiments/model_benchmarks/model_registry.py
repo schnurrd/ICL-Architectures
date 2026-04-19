@@ -221,6 +221,10 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
       "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
       "display_name": "Linear Attention\n(Non-Causal)",
     },
+    "Linear_Attention_Non_Causal_with_k_sum_norm": {
+      "wandb_run_id": "linear_attention/runs/nnon9bb8", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal w. k-sum Norm)",
+    },
     "Linear_Attention_Non_Causal_fro_norm": {
       "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
       "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
@@ -247,7 +251,7 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Comb_ST_fro_norm": {
       "wandb_run_id": "linear_attention/runs/rrakg728", # new default implementation
       "display_name": "Linear Attention\n(Comb_ST) w. Fro Norm",
-      "note": "ep 131/200"
+      "note": "ep 165/200"
     },
     "Linear_Attention_FLA_Comb_ST": { 
         "wandb_run_id": "icl_arch/fla_models/hqzpuaso",
