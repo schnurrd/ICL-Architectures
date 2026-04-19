@@ -129,6 +129,18 @@ def _assert_incontext_fit_predict_matches_forward(
             id="linear_attention_causal",
         ),
         pytest.param(
+            "linear_attention_causal_train_only",
+            LinearAttentionBackboneConfig(
+                nlayers=2,
+                nhead=2,
+                mlp_hidden_dim=64,
+                layer_kwargs={"causal_train_only": True, "norm_type": "layernorm"},
+            ),
+            False,
+            32,
+            id="linear_attention_causal_train_only",
+        ),
+        pytest.param(
             "rebased",
             RebasedBackboneConfig(
                 nlayers=2,
@@ -139,6 +151,19 @@ def _assert_incontext_fit_predict_matches_forward(
             False,
             32,
             id="rebased",
+        ),
+        pytest.param(
+            "rebased_causal_train_only",
+            RebasedBackboneConfig(
+                nlayers=2,
+                mlp_hidden_dim=64,
+                num_heads=2,
+                dropout=0.0,
+                layer_kwargs={"causal_train_only": True},
+            ),
+            False,
+            32,
+            id="rebased_causal_train_only",
         ),
     ],
 )
@@ -151,7 +176,10 @@ def test_incontext_fit_predict_matches_forward_non_fla(
     ninp: int,
 ) -> None:
     torch.manual_seed(0)
-    device = torch.device("cuda" if case_name == "rebased" and torch.cuda.is_available() else "cpu")
+    is_rebased = isinstance(backbone_cfg, RebasedBackboneConfig)
+    if is_rebased and not torch.cuda.is_available():
+        pytest.skip("Rebased equivalence test requires CUDA / Failed on Github Actions CPU runner.")
+    device = torch.device("cuda" if is_rebased else "cpu")
     num_features = 4
     train_len = 7
 
