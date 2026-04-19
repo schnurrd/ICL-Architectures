@@ -28,7 +28,8 @@ class BasedLinearAttention(LinearAttention):
         causal_chunk_size: int | None = None,
         normalize_q_sum: bool = False,
         normalize_k_sum: bool = False,
-        use_k_sum_normalization: bool = False,
+        use_k_sum_normalization: bool = True,
+        use_query_scale: bool = False,
         use_attention_norm: bool = True,
         use_output_norm: bool = True,
         use_mlp_norm: bool = True,
@@ -91,6 +92,7 @@ class BasedLinearAttention(LinearAttention):
                 f"feature_dim. Expected {key_dim}, got {self.key_dim}."
             )
         self.feature_dim = self.head_k_dim
+        self.use_query_scale = use_query_scale
 
     def _build_feature_maps(
         self,

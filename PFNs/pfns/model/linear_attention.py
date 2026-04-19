@@ -86,6 +86,7 @@ class LinearAttention(nn.Module):
         normalize_q_sum: bool = False,
         normalize_k_sum: bool = False,
         use_k_sum_normalization: bool = False,
+        use_query_scale: bool = True,
         # Attention/output blocks.
         use_attention_norm: bool = True,
         use_output_norm: bool = True,
@@ -134,6 +135,7 @@ class LinearAttention(nn.Module):
         self.head_k_dim = self.key_dim // self.num_heads
         self.head_v_dim = self.value_dim // self.num_heads
         self.query_scale = self.head_k_dim ** -0.5
+        self.use_query_scale = bool(use_query_scale)
 
         self.causal = causal
         self.causal_train_only = causal_train_only
@@ -209,6 +211,11 @@ class LinearAttention(nn.Module):
             x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
         return x
 
+    def _scale_queries(self, q: torch.Tensor) -> torch.Tensor:
+        if not self.use_query_scale:
+            return q
+        return q * self.query_scale
+
     def _project_qkv(
         self,
         x: torch.Tensor,
@@ -255,7 +262,7 @@ class LinearAttention(nn.Module):
             self.feature_map_q,
             normalize_sum=self.normalize_q_sum,
         )
-        q = q * self.query_scale
+        q = self._scale_queries(q)
         k = self._apply_feature_map(
             k,
             self.feature_map_k,
@@ -387,7 +394,7 @@ class LinearAttention(nn.Module):
             self.feature_map_q,
             normalize_sum=self.normalize_q_sum,
         )
-        q_test = q_test * self.query_scale
+        q_test = self._scale_queries(q_test)
         attn_test = self._read_from_kv_state(
             q_test,
             kv_state,
@@ -466,7 +473,7 @@ class LinearAttention(nn.Module):
                 self.feature_map_q,
                 normalize_sum=self.normalize_q_sum,
             )
-            q = q * self.query_scale
+            q = self._scale_queries(q)
             attn = self._read_from_kv_state(
                 q,
                 state["kv_state"],

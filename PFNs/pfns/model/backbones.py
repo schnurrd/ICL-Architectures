@@ -1026,6 +1026,7 @@ class LinearAttentionBackboneConfig(BackboneConfig):
     nlayers: int = 6
     nhead: int = 2
     mlp_hidden_dim: int = 200
+    use_query_scale: bool = True
     recompute_layer: bool = False
     recompute_every_n_layers: int = 1
     use_final_norm: bool = False
@@ -1048,6 +1049,7 @@ class LinearAttentionBackboneConfig(BackboneConfig):
             "d_model": ninp,
             "num_heads": self.nhead,
             "mlp_hidden_dim": self.mlp_hidden_dim,
+            "use_query_scale": self.use_query_scale,
             **layer_kwargs,
         }
         layers = nn.ModuleList([
