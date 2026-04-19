@@ -5,12 +5,28 @@ import math
 import os
 import random
 import re
+from pathlib import Path
 
 import numpy as np
 
 import torch
 from torch import nn
 from torch.optim.lr_scheduler import LambdaLR
+
+
+def find_project_root(start: str | Path) -> Path:
+    """Walk upward from `start` until the ICL-Architectures project root is found."""
+    start_path = Path(start).resolve()
+    candidates = (start_path, *start_path.parents)
+    for path in candidates:
+        if (path / ".git").exists() and (path / "PFNs").exists():
+            return path
+    raise RuntimeError(f"Could not find repo root from {start_path}.")
+
+
+def build_exp_outputs_path(start: str | Path, *parts: str) -> Path:
+    """Build a path under the project-level `exp_outputs` directory."""
+    return find_project_root(start) / "exp_outputs" / Path(*parts)
 
 
 # copied from huggingface

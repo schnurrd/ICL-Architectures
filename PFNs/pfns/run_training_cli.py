@@ -18,9 +18,13 @@ from pfns.run_evaluation_cli import (
     summarize_results,
     compute_per_dataset_stats,
 )
-from pfns.utils import get_default_device
+from pfns.utils import find_project_root, get_default_device
 from pfns.run_logger import WandbConfig, create_run_manager, download_model_from_wandb
 import wandb
+
+REPO_ROOT = find_project_root(__file__)
+DEFAULT_CHECKPOINT_PREFIX = str(REPO_ROOT / "PFNs" / "models_diff")
+DEFAULT_WANDB_DIR = str(REPO_ROOT / "wandb")
 
 
 def _normalize_wandb_run_path(path: str) -> str | None:
@@ -76,7 +80,7 @@ def parse_args():
     parser.add_argument(
         "--checkpoint-save-load-prefix",
         type=str,
-        default="PFNs/models_diff",
+        default=DEFAULT_CHECKPOINT_PREFIX,
         help="Path to save/load checkpoint (and default wandb dir).",
     )
 
@@ -366,6 +370,9 @@ def main():
             config,
             train_mixed_precision_dtype=args.train_mixed_precision_dtype,
         )
+
+    if config.wandb and not config.wandb.dir:
+        config = _update_wandb(config, dir=DEFAULT_WANDB_DIR)
 
     # --- Initialize wandb ---
     run_manager = create_run_manager(config.wandb, full_config=config.to_dict(), run_id=config.wandb_run_id)

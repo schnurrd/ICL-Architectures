@@ -27,7 +27,6 @@ from pfns.experiments.model_benchmarks.model_registry import (
     get_models_from_families,
     get_models_from_names,
 )
-from pfns.experiments.model_benchmarks.path_utils import build_repo_output_root
 from pfns.experiments.model_benchmarks.real_world_presets import (
     DEFAULT_REAL_WORLD_PRESET,
     REAL_WORLD_PRESET_CHOICES,
@@ -46,7 +45,7 @@ from pfns.run_evaluation_cli import (
     run_real_world_model_from_config,
     summarize_results,
 )
-from pfns.utils import get_default_device
+from pfns.utils import build_exp_outputs_path, get_default_device
 
 DEFAULT_BASELINE: dict[str, int] = {
     "n_jobs": 4,
@@ -193,7 +192,7 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=build_repo_output_root(__file__, "real_world_eval"),
+        default=build_exp_outputs_path(__file__, "real_world_eval"),
     )
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--verbose", action="store_true", help="Verbose dataset-level logging.")

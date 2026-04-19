@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from pfns.utils import get_default_device
+from pfns.utils import build_exp_outputs_path, get_default_device
 
 from pfns.experiments.model_benchmarks.evaluation import evaluate_models_over_seqlens
 from pfns.experiments.model_benchmarks.fixed_batches import resolve_fixed_batches
@@ -16,7 +16,6 @@ from pfns.experiments.model_benchmarks.io import (
     save_results_bundle,
     upload_results_bundle_to_wandb,
 )
-from pfns.experiments.model_benchmarks.path_utils import build_repo_output_root
 from pfns.experiments.model_benchmarks.models import load_models_for_benchmark
 from pfns.experiments.model_benchmarks.model_registry import get_all_models
 from pfns.experiments.model_benchmarks.model_registry import (
@@ -157,7 +156,7 @@ TASK_KWARGS = (
     else {}
 )
 
-OUTPUT_ROOT = build_repo_output_root(__file__, "seq_len")
+OUTPUT_ROOT = build_exp_outputs_path(__file__, "seq_len")
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 print(f"Results are stored in: {OUTPUT_ROOT}")
