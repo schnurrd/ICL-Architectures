@@ -221,6 +221,10 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
       "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
       "display_name": "Linear Attention\n(Non-Causal)",
     },
+    "Linear_Attention_Non_Causal_updated": {
+      "wandb_run_id": "linear_attention/runs/tn6h2qyb", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal updated)",
+    },
     "Linear_Attention_Non_Causal_with_k_sum_norm": {
       "wandb_run_id": "linear_attention/runs/nnon9bb8", # new default implementation
       "display_name": "Linear Attention\n(Non-Causal w. k-sum Norm)",
@@ -255,6 +259,10 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention_FLA_Comb_ST": { 
         "wandb_run_id": "icl_arch/fla_models/hqzpuaso",
         "display_name": "Linear Attention (FLA; Comb ST)",
+    },
+    "Linear_Attention_Comb_ST_old_setup": { 
+        "wandb_run_id": "linear_attention/runs/7kig0n7a", # with layernorm, no output norm an k_sum_normalization
+        "display_name": "Linear Attention (Comb ST old setup)",
     },
 }
 
