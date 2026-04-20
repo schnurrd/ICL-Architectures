@@ -221,14 +221,14 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
       "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
       "display_name": "Linear Attention\n(Non-Causal)",
     },
-    "Linear_Attention_Non_Causal_updated": {
+    "Linear_Attention_Non_Causal_updated": {  # Beats Non-Causal version from before
       "wandb_run_id": "linear_attention/runs/tn6h2qyb", # new default implementation
       "display_name": "Linear Attention\n(Non-Causal updated)",
     },
-    "Linear_Attention_Non_Causal_with_k_sum_norm": {
-      "wandb_run_id": "linear_attention/runs/nnon9bb8", # new default implementation
-      "display_name": "Linear Attention\n(Non-Causal w. k-sum Norm)",
-    },
+    # "Linear_Attention_Non_Causal_with_k_sum_norm": { # worse/equal than without k_sum_norm
+    #   "wandb_run_id": "linear_attention/runs/nnon9bb8", # new default implementation
+    #   "display_name": "Linear Attention\n(Non-Causal w. k-sum Norm)",
+    # },
     "Linear_Attention_Non_Causal_fro_norm": {
       "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
       "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
@@ -260,11 +260,11 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "icl_arch/fla_models/hqzpuaso",
         "display_name": "Linear Attention (FLA; Comb ST)",
     },
-    "Linear_Attention_FLA_Comb_ST_wo_self_term": { 
+    "Linear_Attention_FLA_Comb_ST_wo_self_term": { # slightly better ce and roc, and less degradation at long seq lens
         "wandb_run_id": "icl_arch/fla_models/o404kcbf",
         "display_name": "Linear Attention (FLA; Comb ST) w/o Self-Term",
     },
-    "Linear_Attention_Comb_ST_old_setup": { 
+    "Linear_Attention_Comb_ST_old_setup": { # slightly worse acc and ce but slightly better roc auc then new default
         "wandb_run_id": "linear_attention/runs/7kig0n7a", # with layernorm, no output norm an k_sum_normalization
         "display_name": "Linear Attention (Comb ST old setup)",
     },

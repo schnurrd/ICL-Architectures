@@ -50,6 +50,9 @@ _METRIC_DISPLAY_NAMES = {
     "k_sum_norm": "K-Sum Norm",
     "joint_hidden_state_norm": "Joint Hidden-State Norm",
     "kv_over_ksum_ratio": "KV-over-K-Sum Ratio",
+    "state_cosine_to_reference": "State Cosine to Reference",
+    "state_top_subspace_to_reference": "Top Singular Subspace to Reference",
+    "state_renorm_scale": "State Renorm Scale",
     "output_norm": "Output Norm",
 }
 
@@ -280,14 +283,34 @@ def _matrix_metrics(matrix: torch.Tensor) -> dict[str, float | tuple[int, ...] |
     }
 
 
+def _top_subspace_similarity(
+    matrix: torch.Tensor,
+    reference: torch.Tensor,
+    *,
+    rank: int = 8,
+) -> float:
+    u, _, vh = torch.linalg.svd(matrix.float(), full_matrices=False)
+    u_ref, _, vh_ref = torch.linalg.svd(reference.float(), full_matrices=False)
+    k = min(int(rank), u.shape[1], u_ref.shape[1], vh.shape[0], vh_ref.shape[0])
+    if k <= 0:
+        return float("nan")
+    left = torch.linalg.matrix_norm(u[:, :k].T @ u_ref[:, :k], ord="fro").square() / k
+    right = torch.linalg.matrix_norm(vh[:k] @ vh_ref[:k].T, ord="fro").square() / k
+    return float(((left + right) / 2).item())
+
+
 def run_hidden_state_tracking(
     *,
     experiment: HiddenStateTrackingConfig | Mapping[str, Any],
     models_to_compare: dict[str, Any],
     device: str,
     tensor_name_patterns: list[str] | tuple[str, ...] | None = None,
+    reference_seqlen: int | None = None,
+    reference_subspace_rank: int = 8,
 ) -> pd.DataFrame:
     cfg = experiment if isinstance(experiment, HiddenStateTrackingConfig) else HiddenStateTrackingConfig.from_mapping(experiment)
+    if reference_seqlen is not None and int(reference_seqlen) not in cfg.seqlen_list:
+        raise ValueError(f"reference_seqlen={reference_seqlen} must be in seqlen_list.")
     _set_data_generation_seed(cfg.data_generation_seed)
     models, autocast_models = _device_runtime(models_to_compare, device)
     rows: list[dict[str, Any]] = []
@@ -307,6 +330,8 @@ def run_hidden_state_tracking(
         categorical_inds = categorical_mask_to_inds(base_batch.categorical_mask)
         for raw_name, model in models.items():
             model_name = str(raw_name)
+            state_matrices: dict[tuple[int, str, int, int], torch.Tensor] = {}
+            state_row_indices: dict[tuple[int, str, int, int], int] = {}
             for seqlen in cfg.sorted_seqlens:
                 x = base_batch.x[:, :seqlen]
                 y = base_batch.y[:, :seqlen]
@@ -357,22 +382,49 @@ def run_hidden_state_tracking(
                             if np.isfinite(k_sum_norm)
                             else float("nan")
                         )
-                        rows.append(
-                            {
-                                "model": model_name,
-                                **extra,
-                                "tensor_name": name,
-                                "shape": str(metrics["shape"]),
-                                "abs_max": float(metrics["abs_max"]),
-                                **{k: float(metrics[k]) for k in _MATRIX_METRICS},
-                                "kv_state_norm": kv_state_norm,
-                                "k_sum_norm": k_sum_norm,
-                                "joint_hidden_state_norm": joint_hidden_state_norm,
-                                "kv_over_ksum_ratio": kv_over_ksum_ratio,
-                                "layer_idx": layer_idx,
-                                "head_idx": int(head_idx),
-                            }
-                        )
+                        row = {
+                            "model": model_name,
+                            **extra,
+                            "tensor_name": name,
+                            "shape": str(metrics["shape"]),
+                            "abs_max": float(metrics["abs_max"]),
+                            **{k: float(metrics[k]) for k in _MATRIX_METRICS},
+                            "kv_state_norm": kv_state_norm,
+                            "k_sum_norm": k_sum_norm,
+                            "joint_hidden_state_norm": joint_hidden_state_norm,
+                            "kv_over_ksum_ratio": kv_over_ksum_ratio,
+                            "layer_idx": layer_idx,
+                            "head_idx": int(head_idx),
+                        }
+                        if reference_seqlen is not None:
+                            row["reference_seqlen"] = int(reference_seqlen)
+                            row["state_cosine_to_reference"] = float("nan") # add a placeholder
+                            row["state_top_subspace_to_reference"] = float("nan")
+                            key = (int(seqlen), name, int(layer_idx), int(head_idx))
+                            state_matrices[key] = matrix.detach().float().cpu()
+                            state_row_indices[key] = len(rows)
+                        rows.append(row)
+            if reference_seqlen is not None:
+                ref_by_state = {
+                    key[1:]: matrix
+                    for key, matrix in state_matrices.items()
+                    if key[0] == int(reference_seqlen)
+                } # extract reference matrices for the reference seqlen -> num_layer x num_head many matrices
+                for key, matrix in state_matrices.items():
+                    reference = ref_by_state.get(key[1:])
+                    if reference is None:
+                        continue
+                    cosine = torch.nn.functional.cosine_similarity(
+                        matrix.reshape(1, -1),
+                        reference.reshape(1, -1),
+                        dim=-1,
+                    ).item()
+                    rows[state_row_indices[key]]["state_cosine_to_reference"] = float(cosine)
+                    rows[state_row_indices[key]]["state_top_subspace_to_reference"] = _top_subspace_similarity(
+                        matrix,
+                        reference,
+                        rank=reference_subspace_rank,
+                    )
     return pd.DataFrame(rows)
 
 
@@ -386,6 +438,8 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
         ("k_sum_norm", float("nan")),
         ("joint_hidden_state_norm", float("nan")),
         ("kv_over_ksum_ratio", float("nan")),
+        ("state_cosine_to_reference", float("nan")),
+        ("state_top_subspace_to_reference", float("nan")),
     ):
         if col not in df.columns:
             df[col] = default
@@ -395,6 +449,8 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             "abs_max_mean",
             "frobenius_norm_mean", "spectral_norm_mean", "effective_rank_mean", "stable_rank_mean", "n",
             "kv_state_norm_mean", "k_sum_norm_mean", "joint_hidden_state_norm_mean", "kv_over_ksum_ratio_mean",
+            "state_cosine_to_reference_mean",
+            "state_top_subspace_to_reference_mean",
         ]
         return pd.DataFrame(columns=cols)
     group_cols = [c for c in ("model", "tensor_name", "layer_idx", "head_idx", "seqlen") if c in df.columns]
@@ -410,12 +466,42 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             k_sum_norm_mean=("k_sum_norm", "mean"),
             joint_hidden_state_norm_mean=("joint_hidden_state_norm", "mean"),
             kv_over_ksum_ratio_mean=("kv_over_ksum_ratio", "mean"),
+            state_cosine_to_reference_mean=("state_cosine_to_reference", "mean"),
+            state_top_subspace_to_reference_mean=("state_top_subspace_to_reference", "mean"),
             n=("rep", "nunique"),
         )
         .reset_index()
     )
     order = [c for c in ("model", "layer_idx", "head_idx", "tensor_name", "seqlen") if c in out.columns]
     return out.sort_values(order)
+
+
+def collect_state_renorm_scales(
+    *,
+    models_to_compare: dict[str, Any],
+    device: str,
+) -> pd.DataFrame:
+    models, _ = _device_runtime(models_to_compare, device)
+    rows = []
+    for model_name, model in models.items():
+        backbone = getattr(model, "transformer_layers", None)
+        layers = getattr(backbone, "layers", [])
+        for layer_idx, layer in enumerate(layers):
+            log_scale = getattr(layer, "state_renorm_log_scale", None)
+            if log_scale is None:
+                continue
+            scale = log_scale.detach().float().exp().cpu()
+            for head_idx, value in enumerate(scale):
+                rows.append(
+                    {
+                        "model": str(model_name),
+                        "layer_idx": int(layer_idx),
+                        "head_idx": int(head_idx),
+                        "state_renorm_scale": float(value.item()),
+                    }
+                )
+    return pd.DataFrame(rows)
+
 
 def _plot_recurrent_metric(
     plot_df: pd.DataFrame,
@@ -689,6 +775,73 @@ def plot_avg_metric_per_layer_per_head(
         fig.tight_layout(rect=(0, 0, 1, 0.97))
     else:
         fig.tight_layout()
+
+
+def plot_metric_layer_seqlen_heatmap(
+    df: pd.DataFrame,
+    *,
+    metric: str,
+    title_prefix: str,
+    model: str | None = None,
+    training_context_length: int | None = None,
+    cmap: str = "viridis",
+) -> None:
+    if df.empty:
+        print(f"No rows to plot for: {title_prefix}")
+        return
+    missing = sorted({"model", "layer_idx", "seqlen", metric} - set(df.columns))
+    if missing:
+        print(f"Skipping {title_prefix}: missing columns {missing}")
+        return
+
+    plot_df = df.copy()
+    if model is not None:
+        plot_df = plot_df[plot_df["model"] == model]
+    plot_df[metric] = pd.to_numeric(plot_df[metric], errors="coerce")
+    plot_df = plot_df[np.isfinite(plot_df[metric]) & (plot_df["layer_idx"] >= 0)]
+    if plot_df.empty:
+        print(f"No finite rows to plot for: {title_prefix}")
+        return
+
+    heatmap_df = (
+        plot_df.groupby(["model", "layer_idx", "seqlen"], observed=True)[metric]
+        .mean()
+        .reset_index()
+    )
+    model_values = sorted(heatmap_df["model"].astype(str).unique().tolist())
+    display_name_map = resolve_display_name_map(heatmap_df)
+    split = model is None and len(model_values) > 1
+    panel_models = model_values if split else [model_values[0]]
+    fig, axes = create_panel_figure(
+        panel_count=len(panel_models),
+        figsize=(6.2 * len(panel_models), 4.8),
+        sharey=True,
+    )
+    fig.subplots_adjust(right=0.92, wspace=0.08)
+    vmin = float(heatmap_df[metric].min())
+    vmax = float(heatmap_df[metric].max())
+
+    for idx, model_name in enumerate(panel_models):
+        ax = axes[idx if split else 0]
+        sub = heatmap_df if not split else heatmap_df[heatmap_df["model"] == model_name]
+        table = sub.pivot(index="layer_idx", columns="seqlen", values=metric).sort_index()
+        image = ax.imshow(table.to_numpy(), aspect="auto", origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
+        ax.set_xticks(range(len(table.columns)))
+        ax.set_xticklabels([str(int(v)) for v in table.columns], rotation=45, ha="right")
+        ax.set_yticks(range(len(table.index)))
+        ax.set_yticklabels([str(int(v)) for v in table.index])
+        if training_context_length in set(int(v) for v in table.columns):
+            ax.axvline(list(table.columns).index(training_context_length), color="white", linestyle="--", linewidth=1.2)
+        ax.set_xlabel("Sequence Length")
+        ax.set_ylabel("Layer" if idx == 0 else "")
+        ax.set_title(display_name_map.get(str(model_name), str(model_name)) if split else title_prefix)
+    cbar_ax = fig.add_axes([0.94, 0.18, 0.012, 0.66])
+    fig.colorbar(image, cax=cbar_ax, label=_METRIC_DISPLAY_NAMES.get(metric, metric))
+    if split:
+        fig.suptitle(title_prefix)
+        fig.tight_layout(rect=(0, 0, 0.92, 0.95))
+    else:
+        fig.tight_layout(rect=(0, 0, 0.92, 1))
 
 
 def plot_recurrent_metric_per_layer(
