@@ -260,6 +260,10 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "icl_arch/fla_models/hqzpuaso",
         "display_name": "Linear Attention (FLA; Comb ST)",
     },
+    "Linear_Attention_FLA_Comb_ST_wo_self_term": { 
+        "wandb_run_id": "icl_arch/fla_models/o404kcbf",
+        "display_name": "Linear Attention (FLA; Comb ST) w/o Self-Term",
+    },
     "Linear_Attention_Comb_ST_old_setup": { 
         "wandb_run_id": "linear_attention/runs/7kig0n7a", # with layernorm, no output norm an k_sum_normalization
         "display_name": "Linear Attention (Comb ST old setup)",
