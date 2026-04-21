@@ -20,7 +20,18 @@ from pfns.experiments.model_benchmarks.plotting import build_model_style_map, pl
 from pfns.model.backbones import LinearAttentionBackboneConfig
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-USE_BF16 = DEVICE.type == 'cuda' and torch.cuda.is_bf16_supported()
+
+
+def supports_bf16(device: torch.device) -> bool:
+    return (
+        device.type == 'cuda'
+        and torch.cuda.is_available()
+        and torch.cuda.is_bf16_supported()
+        and torch.cuda.get_device_capability(device)[0] >= 8
+    )
+
+
+USE_BF16 = supports_bf16(DEVICE)
 DTYPE = torch.bfloat16 if USE_BF16 else torch.float32
 
 SAVE_DIR = Path('trained_simple_iid_linear_attention')
@@ -743,7 +754,7 @@ def apply_args(args: argparse.Namespace) -> None:
     global EVAL_CONTEXT_LENGTHS, EVAL_BATCH_SIZE, EVAL_BATCHES
 
     DEVICE = torch.device('cuda' if args.device == 'auto' and torch.cuda.is_available() else ('cpu' if args.device == 'auto' else args.device))
-    USE_BF16 = DEVICE.type == 'cuda' and torch.cuda.is_bf16_supported()
+    USE_BF16 = supports_bf16(DEVICE)
     DTYPE = torch.bfloat16 if USE_BF16 else torch.float32
 
     SEED = args.seed
