@@ -1,3 +1,6 @@
+"""WIP notebook that copies the simple_linear_attention_seq_len.ipynb experiment notebook and exposes it as a script and has wandb support"""
+
+
 from __future__ import annotations
 
 import argparse
@@ -227,11 +230,11 @@ def make_linear_attention_model(*, causal_train_only: bool, device: torch.device
 
 
 MODEL_CONFIGS = [
-    # {
-    #     'name': 'non_causal',
-    #     'causal_train_only': False,
-    #     'display_name': 'Non-causal train context',
-    # },
+    {
+        'name': 'non_causal',
+        'causal_train_only': False,
+        'display_name': 'Non-causal train context',
+    },
     {
         'name': 'causal_train_only',
         'causal_train_only': True,

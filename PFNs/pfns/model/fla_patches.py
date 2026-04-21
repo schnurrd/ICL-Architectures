@@ -133,6 +133,8 @@ def _maybe_patch_shortconv_forward_pytorch(enabled: bool):
 @contextmanager
 def _maybe_patch_gla_with_stateless_recurrent(
     enabled: bool,
+    *,
+    include_self_term: bool = True,
 ):
     if not enabled:
         yield
@@ -182,9 +184,10 @@ def _maybe_patch_gla_with_stateless_recurrent(
         q = q * scale
         qg = q * gk.exp()
         term1 = torch.einsum("bthk,bhkv->bthv", qg, h0)
-        qk = (q * k).sum(-1, keepdim=True)
-        term2 = qk * v
-        o = term1 + term2
+        o = term1
+        if include_self_term:
+            qk = (q * k).sum(-1, keepdim=True)
+            o = o + qk * v
 
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, 1, *o.shape[2:])
@@ -206,7 +209,11 @@ def _maybe_patch_gla_with_stateless_recurrent(
 
 
 @contextmanager
-def _maybe_patch_gla_with_stateless_recurrent_vmap(enabled: bool):
+def _maybe_patch_gla_with_stateless_recurrent_vmap(
+    enabled: bool,
+    *,
+    include_self_term: bool = True,
+):
     if not enabled:
         yield
         return
@@ -262,8 +269,10 @@ def _maybe_patch_gla_with_stateless_recurrent_vmap(enabled: bool):
                 k_i = k[:, :, i]
                 v_i = v[:, :, i]
                 gk_i = gk[:, :, i].exp()
-                kv_i = k_i[..., None] * v_i[..., None, :]
-                o[:, :, i] = (q_i[..., None] * (initial_state * gk_i[..., None] + kv_i)).sum(-2)
+                state_i = initial_state * gk_i[..., None]
+                if include_self_term:
+                    state_i = state_i + k_i[..., None] * v_i[..., None, :]
+                o[:, :, i] = (q_i[..., None] * state_i).sum(-2)
 
             return o.transpose(1, 2).to(dtype)
         
@@ -300,7 +309,11 @@ def _maybe_patch_gla_with_stateless_recurrent_vmap(enabled: bool):
 
 
 @contextmanager
-def _maybe_patch_gla_with_stateless_recurrent_causal(enabled: bool):
+def _maybe_patch_gla_with_stateless_recurrent_causal(
+    enabled: bool,
+    *,
+    include_self_term: bool = True,
+):
     if not enabled:
         yield
         return
@@ -338,9 +351,10 @@ def _maybe_patch_gla_with_stateless_recurrent_causal(enabled: bool):
         q = q * scale
         qg = q * gk.exp()
         term1 = torch.einsum("bthk,bhkv->bthv", qg, h0)
-        qk = (q * k).sum(-1, keepdim=True)
-        term2 = qk * v
-        o = term1 + term2
+        o = term1
+        if include_self_term:
+            qk = (q * k).sum(-1, keepdim=True)
+            o = o + qk * v
 
         final_state = initial_state if output_final_state else None
         return o.to(dtype), final_state
@@ -362,6 +376,8 @@ def _maybe_patch_gla_with_stateless_recurrent_causal(enabled: bool):
 @contextmanager
 def _maybe_patch_kda_with_stateless_recurrent(
     enabled: bool,
+    *,
+    include_self_term: bool = True,
 ):
     if not enabled:
         yield
@@ -454,14 +470,12 @@ def _maybe_patch_kda_with_stateless_recurrent(
         else:
             k_s0 = torch.einsum("bthk,bhkv->bthv", k_decayed, s0)
             
-        delta = v - k_s0
-        
-        qk_dot = (q * k).sum(dim=-1, keepdim=True) # (..., H, 1)
-        scaling = beta.unsqueeze(-1) * qk_dot      # (..., H, 1)
-        
-        o_update = delta * scaling
-
-        o = o_base + o_update
+        o = o_base
+        if include_self_term:
+            delta = v - k_s0
+            qk_dot = (q * k).sum(dim=-1, keepdim=True) # (..., H, 1)
+            scaling = beta.unsqueeze(-1) * qk_dot      # (..., H, 1)
+            o = o + delta * scaling
 
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, *o.shape[2:])
@@ -483,6 +497,8 @@ def _maybe_patch_kda_with_stateless_recurrent(
 @contextmanager
 def _maybe_patch_deltanet_with_stateless_recurrent(
     enabled: bool,
+    *,
+    include_self_term: bool = True,
 ):
     if not enabled:
         yield
@@ -539,11 +555,11 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
 
         term1 = torch.einsum("bthd,bhdm->bthm", q, s0)
 
-        qk = (q * k).sum(-1, keepdim=True)
-        scaled_qk = qk * beta
-        term2 = scaled_qk * v - scaled_qk * s0k
-        
-        o = term1 + term2
+        o = term1
+        if include_self_term:
+            qk = (q * k).sum(-1, keepdim=True)
+            scaled_qk = qk * beta
+            o = o + scaled_qk * v - scaled_qk * s0k
 
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, 1, *o.shape[2:])
@@ -567,6 +583,8 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
 @contextmanager
 def _maybe_patch_gated_deltanet_with_stateless_recurrent(
     enabled: bool,
+    *,
+    include_self_term: bool = True,
 ):
     if not enabled:
         yield
@@ -650,15 +668,15 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
         k_s0 = torch.einsum("btlhk,bhkv->btlhv", k_decayed, s0)
 
         
-        k_0 = k[:, :, 0]
-        v_0 = v[:, :, 0]
-        beta_0 = beta[:, :, 0]
-        k_s0_0 = k_s0[:, :, 0]
+        if include_self_term:
+            k_0 = k[:, :, 0]
+            v_0 = v[:, :, 0]
+            beta_0 = beta[:, :, 0]
+            k_s0_0 = k_s0[:, :, 0]
 
-        u_0 = v_0 - k_s0_0
-        
-        qk_score = (q * k_0).sum(dim=-1, keepdim=True)
-        o = o + (u_0 * (beta_0.unsqueeze(-1) * qk_score))
+            u_0 = v_0 - k_s0_0
+            qk_score = (q * k_0).sum(dim=-1, keepdim=True)
+            o = o + (u_0 * (beta_0.unsqueeze(-1) * qk_score))
 
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, 1, *o.shape[2:])
@@ -682,6 +700,8 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
 @contextmanager
 def _maybe_patch_mesanet_with_stateless_recurrent(
     enabled: bool,
+    *,
+    include_self_term: bool = True,
 ):
     if not enabled:
         yield
@@ -778,8 +798,11 @@ def _maybe_patch_mesanet_with_stateless_recurrent(
 
         decay = g.exp().unsqueeze(-1).unsqueeze(-1)
         k_beta = k * beta.unsqueeze(-1)
-        h_kk = prev_h_kk.unsqueeze(1) * decay + k_beta.unsqueeze(-1) * k.unsqueeze(-2)
-        h_kv = prev_h_kv.unsqueeze(1) * decay + k_beta.unsqueeze(-1) * v.unsqueeze(-2)
+        h_kk = prev_h_kk.unsqueeze(1) * decay
+        h_kv = prev_h_kv.unsqueeze(1) * decay
+        if include_self_term:
+            h_kk = h_kk + k_beta.unsqueeze(-1) * k.unsqueeze(-2)
+            h_kv = h_kv + k_beta.unsqueeze(-1) * v.unsqueeze(-2)
 
         lamb = lamb.view(1, 1, self.num_heads, self.head_k_dim)
         diag_h = torch.diagonal(h_kk, dim1=-2, dim2=-1)
@@ -820,6 +843,8 @@ def _maybe_patch_mesanet_with_stateless_recurrent(
 @contextmanager
 def _maybe_patch_mamba2_with_stateless_recurrent(
     enabled: bool,
+    *,
+    include_self_term: bool = True,
 ):
     """
     Patch Mamba2 forward for stateless parallel evaluation with cached state.
@@ -933,12 +958,14 @@ def _maybe_patch_mamba2_with_stateless_recurrent(
         # Avoids materializing (batch, flat_len, seq_len, heads, head_dim, state_size) tensor
         C_scaled = C * A_bar  # broadcasts A_bar over ssm_state_size
         y_from_h0 = torch.einsum('bflhs,bhds->bflhd', C_scaled, h0)  # contract over ssm_state_size
-        CB_sum = (C * B_bar).sum(dim=-1)  # (cache_batch, flat_len, seq_len, num_heads)
-        y_from_x = CB_sum.unsqueeze(-1) * x  # (cache_batch, flat_len, seq_len, num_heads, head_dim)
-        y = y_from_h0 + y_from_x
+        y = y_from_h0
+        if include_self_term:
+            CB_sum = (C * B_bar).sum(dim=-1)  # (cache_batch, flat_len, seq_len, num_heads)
+            y_from_x = CB_sum.unsqueeze(-1) * x  # (cache_batch, flat_len, seq_len, num_heads, head_dim)
+            y = y + y_from_x
         
         # D skip connection
-        if self.D is not None:
+        if include_self_term and self.D is not None:
             y = y + self.D.float().view(1, 1, 1, -1, 1) * x
         
         # Reshape and apply output projection with gating
