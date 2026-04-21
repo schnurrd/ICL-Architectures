@@ -1,4 +1,4 @@
-"""WIP notebook that copies the simple_linear_attention_seq_len.ipynb experiment notebook and exposes it as a script and has wandb support"""
+"""WIP notebook that copies the minimal_linear_attention_seq_len_generalization.ipynb experiment notebook and exposes it as a script and has wandb support"""
 
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def supports_bf16(device: torch.device) -> bool:
 USE_BF16 = supports_bf16(DEVICE)
 DTYPE = torch.bfloat16 if USE_BF16 else torch.float32
 
-SAVE_DIR = Path('trained_simple_iid_linear_attention')
+SAVE_DIR = Path('trained_minimal_linear_attention_seq_len_generalization')
 CHECKPOINT_DIR = SAVE_DIR / 'model_checkpoints'
 
 SEED = 0
@@ -646,7 +646,7 @@ def run_experiment(
     run_dir: Path,
     *,
     use_wandb: bool = False,
-    wandb_project: str = 'simple_linear_attention_seq_len',
+    wandb_project: str = 'minimal_linear_attention_seq_len_generalization',
     wandb_entity: str | None = None,
 ) -> None:
     global SAVE_DIR, CHECKPOINT_DIR
@@ -714,7 +714,7 @@ def run_experiment(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output-root', type=Path, default=Path('simple_linear_attention_runs'))
+    parser.add_argument('--output-root', type=Path, default=Path('minimal_linear_attention_seq_len_generalization_runs'))
     parser.add_argument('--run-name', type=str, default=None)
     parser.add_argument('--device', type=str, default='auto')
     parser.add_argument('--seed', type=int, default=SEED)
@@ -723,7 +723,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--compile-model', action='store_true')
     parser.add_argument('--log-every', type=int, default=LOG_EVERY)
     parser.add_argument('--wandb', action='store_true')
-    parser.add_argument('--wandb-project', type=str, default='simple_linear_attention_seq_len')
+    parser.add_argument('--wandb-project', type=str, default='minimal_linear_attention_seq_len_generalization')
     parser.add_argument('--wandb-entity', type=str, default=None)
 
     parser.add_argument('--train-steps', type=int, default=TRAIN_STEPS)
