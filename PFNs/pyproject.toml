@@ -33,7 +33,7 @@ dependencies=[
         'einops>=0.8.1',
         'tabicl',
         'tabpfn',
-        'flash-linear-attention',
+        'flash-linear-attention==0.4.2',
         'pre-commit>=3.5.0',
         'black==24.4.2',
         'usort==1.0.8.post1',

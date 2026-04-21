@@ -60,7 +60,10 @@ def parse_args():
     parser.add_argument(
         "config_file",
         type=str,
-        help="Path to the Python configuration file that defines a 'config' variable",
+        help=(
+            "Path to the Python configuration file that defines either a "
+            "'config' variable or a 'get_config(...)' function"
+        ),
     )
 
     parser.add_argument(

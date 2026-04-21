@@ -12,7 +12,7 @@ openml
 xgboost
 catboost
 tabicl
-flash-linear-attention
+flash-linear-attention==0.4.2
 tabpfn
 wandb
 causal-conv1d

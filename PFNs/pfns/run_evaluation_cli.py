@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Evaluate TabPFN against baselines on OpenML benchmarks.
+Evaluate trained TabPFN-style models on OpenML benchmarks.
 
 Usage:
     python run_evaluation.py --model_path <path> --benchmark opencc
