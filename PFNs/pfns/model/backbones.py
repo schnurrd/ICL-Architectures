@@ -369,7 +369,7 @@ class FLABackboneConfig(BackboneConfig):
     bidirectional_state_fusion: str = "mean_output_mean_cache"
     state_passing: bool = False
     state_passing_dropout: float = 0.1
-    linear_attn_include_self_term: bool = True
+    include_self_term: bool = False
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_init_mode: MimeticInitMode = "gate_only"
@@ -448,14 +448,13 @@ class FLABackboneConfig(BackboneConfig):
             )
 
         backbone_cls = BidirectionalFLABackbone if self.bidirectional else FLABackbone
-
         backbone_kwargs = dict(
             fla_model=fla_model,
             sequence_mode=self.sequence_mode,
             cache_chunk_size=self.cache_chunk_size,
             state_passing=self.state_passing,
             state_passing_dropout=self.state_passing_dropout,
-            linear_attn_include_self_term=self.linear_attn_include_self_term,
+            include_self_term=self.include_self_term,
         )
         if self.bidirectional:
             backbone_kwargs["state_fusion"] = self.bidirectional_state_fusion
@@ -483,7 +482,7 @@ class FLABackbone(Backbone):
         cache_chunk_size: int | None = None,
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
-        linear_attn_include_self_term: bool = True,
+        include_self_term: bool = True,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
@@ -492,7 +491,7 @@ class FLABackbone(Backbone):
         ), "Mamba2 does not support state_passing."
         self.sequence_mode = resolve_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
-        self.linear_attn_include_self_term = bool(linear_attn_include_self_term)
+        self.include_self_term = bool(include_self_term)
         self.state_passing = (
             FLAStatePassing(dropout_prob=state_passing_dropout)
             if state_passing
@@ -739,17 +738,16 @@ class FLABackbone(Backbone):
             (GatedDeltaNetModel, _maybe_patch_gated_deltanet_with_stateless_recurrent),
             (MesaNetModel, _maybe_patch_mesanet_with_stateless_recurrent),
             (Mamba2Model, _maybe_patch_mamba2_with_stateless_recurrent),
+            (LinearAttentionModel, _maybe_patch_linear_attn_with_stateless_recurrent),
         )
         for model_type, ctx_factory in patch_registry:
             if isinstance(model, model_type):
-                contexts.append(ctx_factory(use_custom_recurrent))
-        if isinstance(model, LinearAttentionModel):
-            contexts.append(
-                _maybe_patch_linear_attn_with_stateless_recurrent(
-                    use_custom_recurrent,
-                    include_self_term=self.linear_attn_include_self_term,
+                contexts.append(
+                    ctx_factory(
+                        use_custom_recurrent,
+                        include_self_term=self.include_self_term,
+                    )
                 )
-            )
         return contexts
 
     def _supports_custom_recurrent(self) -> bool:
@@ -909,7 +907,7 @@ class BidirectionalFLABackbone(FLABackbone):
         cache_chunk_size: int | None = None,
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
-        linear_attn_include_self_term: bool = True,
+        include_self_term: bool = True,
         state_fusion: str = "mean_output_mean_cache",
     ):
         super().__init__(
@@ -918,7 +916,7 @@ class BidirectionalFLABackbone(FLABackbone):
             cache_chunk_size=cache_chunk_size,
             state_passing=state_passing,
             state_passing_dropout=state_passing_dropout,
-            linear_attn_include_self_term=linear_attn_include_self_term,
+            include_self_term=include_self_term,
         )
         self.state_fusion = state_fusion
 

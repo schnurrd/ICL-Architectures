@@ -121,6 +121,10 @@ class BaseConfig:
         # This is a config object
         data = dict(data)
         config_type = data.pop("__config_type__")
+        if config_type == "pfns.model.backbones:FLABackboneConfig":
+            legacy_include_self_term = data.pop("linear_attn_include_self_term", None)
+            if legacy_include_self_term is not None and "include_self_term" not in data:
+                data["include_self_term"] = legacy_include_self_term
         for legacy_key in LEGACY_CONFIG_KEYS_TO_DROP.get(config_type, set()):
             data.pop(legacy_key, None)
 

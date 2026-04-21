@@ -281,12 +281,12 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/8i52q6vb"
     },
     "Rebased_feat_dim_32": {
-        "display_name": "Rebased $\\phi$ with 32-dim features", # todo retrain and delete rerun
-        "wandb_run_id": "fla_models/runs/7z1vh7vl"
+        "display_name": "Rebased $\\phi$ with 32-dim features", 
+        "wandb_run_id": "fla_models/runs/on6k2nl3"
     },
     "Based_feat_dim_32": {
         "display_name": "Based $\\phi$ with 32-dim features",
-        "wandb_run_id": "fla_models/runs/syqbsc40"
+        "wandb_run_id": "fla_models/runs/wnyl21ly"
     },
 }
 
