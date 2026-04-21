@@ -284,6 +284,7 @@ def pretrain_model(
     progress = tqdm(range(1, TRAIN_STEPS + 1), desc=f'train {name}')
     for step in progress:
         model.train()
+        train_model.train()
         generator = make_generator(SEED + step, device)
         context_len = sample_train_context_len(generator)
         seq_len = context_len + TEST_LEN
@@ -337,7 +338,6 @@ def experiment_signature() -> dict[str, Any]:
         'lr': LR,
         'weight_decay': WEIGHT_DECAY,
         'grad_clip_norm': GRAD_CLIP_NORM,
-        'compile_model': COMPILE_MODEL,
         'log_every': LOG_EVERY,
         'prior_mlp_hidden_size': PRIOR_MLP_HIDDEN_SIZE,
         'prior_mlp_max_hidden_layers': PRIOR_MLP_MAX_HIDDEN_LAYERS,
