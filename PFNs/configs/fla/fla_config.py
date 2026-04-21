@@ -369,9 +369,7 @@ def get_config(
     resolved_emsize = int(
         resolved_config_kwargs.get("hidden_size", model_settings["emsize"])
     )
-    resolved_include_self_term = (
-        False if model_type == "linear_attn" else bool(include_self_term)
-    )
+    resolved_include_self_term = bool(include_self_term)
 
     backbone_kwargs = {
         "model_type": model_type,
