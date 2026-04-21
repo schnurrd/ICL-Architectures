@@ -275,6 +275,14 @@ def apply_pretraining_split_background(
     return True
 
 
+def _format_boundary_label(boundary: float) -> str:
+    if boundary >= 1000.0 and float(boundary).is_integer() and int(boundary) % 1000 == 0:
+        return f"{int(boundary / 1000)}k"
+    if float(boundary).is_integer():
+        return f"{int(boundary):,}"
+    return f"{boundary:g}"
+
+
 def add_pretraining_split_legend(
     ax: Any,
     *,
@@ -285,18 +293,19 @@ def add_pretraining_split_legend(
     boundary_color: str = SPLIT_BOUNDARY_COLOR,
     boundary_linestyle: str = SPLIT_BOUNDARY_LINESTYLE,
 ) -> Any:
+    boundary_label = _format_boundary_label(boundary)
     region_handles = [
         mpatches.Patch(
             facecolor=pretrain_region_color,
             alpha=region_alpha,
             edgecolor="none",
-            label=f"Pre-training range (<={int(boundary / 1000)}k)",
+            label=f"Pre-training range (<={boundary_label})",
         ),
         mpatches.Patch(
             facecolor=generalization_region_color,
             alpha=region_alpha,
             edgecolor="none",
-            label=f"Generalization range (>{int(boundary / 1000)}k)",
+            label=f"Generalization range (>{boundary_label})",
         ),
         mlines.Line2D(
             [],
@@ -304,7 +313,7 @@ def add_pretraining_split_legend(
             color=boundary_color,
             linestyle=boundary_linestyle,
             linewidth=1.5,
-            label=f"Pre-training limit ({int(boundary / 1000)}k)",
+            label=f"Pre-training limit ({boundary_label})",
         ),
     ]
     range_legend = ax.legend(
@@ -530,6 +539,8 @@ def plot_curves_from_df(
     append_max_hidden_state_size: bool = False,
     hidden_state_size_df: pd.DataFrame | None = None,
     hidden_state_size_col: str = "context_size_mb",
+    show_pretraining_split: bool | None = None,
+    pretrain_boundary: float = PRETRAIN_MAX_X,
     figsize: tuple[float, float] | None = None,
     dpi: int = 400,
 ):
@@ -579,7 +590,11 @@ def plot_curves_from_df(
 
     # Fixed pre-training / generalization split styling.
     metric_keys = {metric_key for metric_key, _ in specs}
-    show_split = _uses_pretraining_split(metric_keys)
+    show_split = (
+        _uses_pretraining_split(metric_keys)
+        if show_pretraining_split is None
+        else show_pretraining_split
+    )
 
     for idx, (metric_key, metric_name) in enumerate(specs):
         ax = axes[idx]
@@ -587,7 +602,7 @@ def plot_curves_from_df(
         present_models = subset_metric["model"].astype(str).unique().tolist()
         model_names = [name for name in style_map if name in present_models]
         model_names.extend(name for name in present_models if name not in model_names)
-        pretrain_boundary = float(PRETRAIN_MAX_X)
+        panel_pretrain_boundary = float(pretrain_boundary)
         x_values = subset_metric[x_col].to_numpy(dtype=np.float64, copy=False)
         finite_x_values = x_values[np.isfinite(x_values)]
         positive_x_values = finite_x_values[finite_x_values > 0.0]
@@ -704,10 +719,10 @@ def plot_curves_from_df(
             ax.invert_yaxis()
 
         if show_split:
-            apply_pretraining_split_background(ax, boundary=pretrain_boundary)
+            apply_pretraining_split_background(ax, boundary=panel_pretrain_boundary)
 
     if show_split:
-        add_pretraining_split_legend(axes[0], boundary=PRETRAIN_MAX_X)
+        add_pretraining_split_legend(axes[0], boundary=pretrain_boundary)
 
     apply_shared_legend_layout(fig, axes, layout=model_legend_layout, fontsize=11)
 
