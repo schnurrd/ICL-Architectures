@@ -303,9 +303,9 @@ class LinearAttention(nn.Module):
         # k: (batch_times_features, seq, heads, qk_dim)
         # v: (batch_times_features, seq, heads, v_dim)
         kv_state = torch.einsum("bshf,bshd->bhfd", k, v)
-        k_sum = k.sum(dim=1)
-        if not self.use_k_sum_normalization:
-            k_sum = None
+        k_sum = None
+        if self.use_k_sum_normalization:
+            k_sum = k.sum(dim=1)
         return self._read_from_kv_state(q, kv_state, k_sum), kv_state, k_sum
 
     def _causal_attention(

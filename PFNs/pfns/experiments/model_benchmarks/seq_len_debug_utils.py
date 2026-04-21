@@ -785,6 +785,8 @@ def plot_metric_layer_seqlen_heatmap(
     model: str | None = None,
     training_context_length: int | None = None,
     cmap: str = "viridis",
+    color_scale: Literal["linear", "log_reference_gap"] = "linear",
+    reference_value: float = 1.0,
 ) -> None:
     if df.empty:
         print(f"No rows to plot for: {title_prefix}")
@@ -818,30 +820,80 @@ def plot_metric_layer_seqlen_heatmap(
         sharey=True,
     )
     fig.subplots_adjust(right=0.92, wspace=0.08)
-    vmin = float(heatmap_df[metric].min())
-    vmax = float(heatmap_df[metric].max())
+
+    if color_scale not in {"linear", "log_reference_gap"}:
+        raise ValueError("color_scale must be 'linear' or 'log_reference_gap'.")
+
+    metric_label = _METRIC_DISPLAY_NAMES.get(metric, metric)
+    heatmap_value_col = "_heatmap_value"
+    metric_values = heatmap_df[metric].astype(float)
+    heatmap_cmap = cmap
+    cbar_label = metric_label
+    heatmap_df[heatmap_value_col] = metric_values
+    image_kwargs: dict[str, Any] = {
+        "vmin": float(metric_values.min()),
+        "vmax": float(metric_values.max()),
+    }
+
+    if color_scale == "log_reference_gap":
+        gap_values = (reference_value - metric_values).clip(lower=0.0)
+        positive_values = gap_values[gap_values > 0].to_numpy()
+        if positive_values.size:
+            min_positive = float(np.nanmin(positive_values))
+            max_positive = float(np.nanmax(positive_values))
+            floor = max(
+                min_positive / 2.0,
+                max_positive / 1_000_000.0,
+                np.finfo(float).tiny,
+            )
+            heatmap_df[heatmap_value_col] = gap_values.clip(lower=floor)
+            image_kwargs = {
+                "norm": mcolors.LogNorm(vmin=floor, vmax=max(max_positive, floor * 10.0))
+            }
+            if isinstance(cmap, str) and not cmap.endswith("_r"):
+                heatmap_cmap = f"{cmap}_r"
+            cbar_label = f"{reference_value:g} - {metric_label} (log scale)"
 
     for idx, model_name in enumerate(panel_models):
         ax = axes[idx if split else 0]
         sub = heatmap_df if not split else heatmap_df[heatmap_df["model"] == model_name]
-        table = sub.pivot(index="layer_idx", columns="seqlen", values=metric).sort_index()
-        image = ax.imshow(table.to_numpy(), aspect="auto", origin="lower", cmap=cmap, vmin=vmin, vmax=vmax)
+        table = (
+            sub.pivot(index="layer_idx", columns="seqlen", values=heatmap_value_col)
+            .sort_index()
+            .sort_index(axis=1)
+        )
+        image = ax.imshow(
+            table.to_numpy(),
+            aspect="auto",
+            origin="lower",
+            cmap=heatmap_cmap,
+            **image_kwargs,
+        )
         ax.set_xticks(range(len(table.columns)))
         ax.set_xticklabels([str(int(v)) for v in table.columns], rotation=45, ha="right")
         ax.set_yticks(range(len(table.index)))
         ax.set_yticklabels([str(int(v)) for v in table.index])
         if training_context_length in set(int(v) for v in table.columns):
-            ax.axvline(list(table.columns).index(training_context_length), color="white", linestyle="--", linewidth=1.2)
+            ax.axvline(
+                list(table.columns).index(training_context_length),
+                color="white",
+                linestyle="--",
+                linewidth=1.2,
+            )
         ax.set_xlabel("Sequence Length")
         ax.set_ylabel("Layer" if idx == 0 else "")
-        ax.set_title(display_name_map.get(str(model_name), str(model_name)) if split else title_prefix)
-    cbar_ax = fig.add_axes([0.94, 0.18, 0.012, 0.66])
-    fig.colorbar(image, cax=cbar_ax, label=_METRIC_DISPLAY_NAMES.get(metric, metric))
+        ax.set_title(
+            display_name_map.get(str(model_name), str(model_name))
+            if split
+            else title_prefix
+        )
     if split:
         fig.suptitle(title_prefix)
         fig.tight_layout(rect=(0, 0, 0.92, 0.95))
     else:
         fig.tight_layout(rect=(0, 0, 0.92, 1))
+    cbar_ax = fig.add_axes([0.94, 0.18, 0.012, 0.66])
+    fig.colorbar(image, cax=cbar_ax, label=cbar_label)
 
 
 def plot_recurrent_metric_per_layer(

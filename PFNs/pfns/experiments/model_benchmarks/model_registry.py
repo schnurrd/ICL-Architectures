@@ -248,6 +248,11 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
       "display_name": "Linear Attention\n(Causal) w. Fro Norm From Non-Causal",
       "make_causal": True,
     },
+    "Linear_Attention_Non_Causal_fro_norm_from_causal": {
+      "wandb_run_id": "linear_attention/runs/rrakg728", # new default implementation
+      "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm From Causal",
+      "make_non_causal": True,
+    },
     "Linear_Attention_Comb_ST": {
       "wandb_run_id": "linear_attention/runs/3jq88aqt", # new default implementation
       "display_name": "Linear Attention\n(Comb_ST)",
