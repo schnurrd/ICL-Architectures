@@ -209,171 +209,6 @@ def _maybe_patch_gla_with_stateless_recurrent(
 
 
 @contextmanager
-def _maybe_patch_gla_with_stateless_recurrent_vmap(
-    enabled: bool,
-    *,
-    include_self_term: bool = True,
-):
-    if not enabled:
-        yield
-        return
-    import fla.layers.gla as gla_layer
-    # from fla.ops.gla.naive import naive_recurrent_gla
-    
-    def _stateless_gla_kernel_with_vmap(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        gk: torch.Tensor | None = None,
-        g: torch.Tensor | None = None,
-        gv: torch.Tensor | None = None,
-        initial_state: torch.Tensor | None = None,
-        output_final_state: bool = False,
-        reverse: bool = False,
-        cu_seqlens: torch.LongTensor | None = None,
-        **kwargs: tp.Any,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        assert not kwargs, f"Unsupported extra args: {sorted(kwargs)}"
-        assert gv is None, "naive_recurrent_gla does not support gv."
-        assert not reverse, "naive_recurrent_gla does not support reverse processing."
-        assert cu_seqlens is None, "naive_recurrent_gla does not support cu_seqlens."
-        if gk is None:
-            gk = g
-        assert gk is not None, "gk is required for naive_recurrent_gla."
-        assert initial_state is not None, "stateless mode requires an initial_state."
-        cache_batch = initial_state.shape[0]
-        orig_batch = q.shape[0]
-        assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
-        flat_len = orig_batch // cache_batch
-        dtype = q.dtype
-        q = q.view(cache_batch, flat_len, *q.shape[1:])
-        k = k.view(cache_batch, flat_len, *k.shape[1:])
-        v = v.view(cache_batch, flat_len, *v.shape[1:])
-        gk = gk.view(cache_batch, flat_len, *gk.shape[1:])
-        
-        def naive_recurrent_gla(
-            q: torch.Tensor,
-            k: torch.Tensor,
-            v: torch.Tensor,
-            gk: torch.Tensor,
-            initial_state: torch.Tensor
-        ):
-            dtype = q.dtype
-            q, k, v, gk = map(lambda x: x.transpose(1, 2).float(), (q, k, v, gk))
-            B, H, T, K, V = *q.shape, v.shape[-1]
-            o = torch.zeros_like(v)
-            scale = K ** -0.5
-
-            for i in range(T):
-                q_i = q[:, :, i] * scale
-                k_i = k[:, :, i]
-                v_i = v[:, :, i]
-                gk_i = gk[:, :, i].exp()
-                state_i = initial_state * gk_i[..., None]
-                if include_self_term:
-                    state_i = state_i + k_i[..., None] * v_i[..., None, :]
-                o[:, :, i] = (q_i[..., None] * state_i).sum(-2)
-
-            return o.transpose(1, 2).to(dtype)
-        
-        # def step(q_t, k_t, v_t, gk_t):
-        #     o1, _ = naive_recurrent_gla(
-        #         q_t, 
-        #         k_t, 
-        #         v_t, 
-        #         gk_t, 
-        #         initial_state, 
-        #         False
-        #     )
-        #     return o1
-
-        # 4. vmap over flat_len (dim 1)
-        o = torch.vmap(naive_recurrent_gla, in_dims=(1, 1, 1, 1, None), out_dims=1)(q, k, v, gk, initial_state)
-
-        o = o.reshape(orig_batch, *o.shape[2:])
-        h = initial_state if output_final_state else None
-        return o.to(dtype), h
-    
-    original_fused_recurrent = gla_layer.fused_recurrent_gla
-    original_chunked = gla_layer.chunk_gla
-    original_fused_chunked = gla_layer.fused_chunk_gla
-    gla_layer.fused_recurrent_gla = _stateless_gla_kernel_with_vmap
-    gla_layer.fused_chunk_gla = _stateless_gla_kernel_with_vmap
-    gla_layer.chunk_gla = _stateless_gla_kernel_with_vmap
-    try:
-        yield
-    finally:
-        gla_layer.fused_recurrent_gla = original_fused_recurrent
-        gla_layer.chunk_gla = original_chunked
-        gla_layer.fused_chunk_gla = original_fused_chunked
-
-
-@contextmanager
-def _maybe_patch_gla_with_stateless_recurrent_causal(
-    enabled: bool,
-    *,
-    include_self_term: bool = True,
-):
-    if not enabled:
-        yield
-        return
-    import fla.layers.gla as gla_layer
-
-    def _stateless_gla_kernel_causal(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        gk: torch.Tensor | None = None,
-        g: torch.Tensor | None = None,
-        gv: torch.Tensor | None = None,
-        scale: int | None = None,
-        initial_state: torch.Tensor | None = None,
-        output_final_state: bool = False,
-        reverse: bool = False,
-        cu_seqlens: torch.LongTensor | None = None,
-        **kwargs: tp.Any,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        assert not kwargs, f"Unsupported extra args: {sorted(kwargs)}"
-        assert gv is None, "naive_recurrent_gla does not support gv."
-        assert not reverse, "naive_recurrent_gla does not support reverse processing."
-        assert cu_seqlens is None, "naive_recurrent_gla does not support cu_seqlens."
-        if gk is None:
-            gk = g
-        assert gk is not None, "gk is required for naive_recurrent_gla."
-        assert initial_state is not None, "stateless mode requires an initial_state."
-        if scale is None:
-            scale = k.shape[-1] ** -0.5
-
-        dtype = q.dtype
-        q, k, v, gk = (t.float() for t in (q, k, v, gk))
-        h0 = initial_state.float()
-
-        q = q * scale
-        qg = q * gk.exp()
-        term1 = torch.einsum("bthk,bhkv->bthv", qg, h0)
-        o = term1
-        if include_self_term:
-            qk = (q * k).sum(-1, keepdim=True)
-            o = o + qk * v
-
-        final_state = initial_state if output_final_state else None
-        return o.to(dtype), final_state
-
-    original_fused_recurrent = gla_layer.fused_recurrent_gla
-    original_chunked = gla_layer.chunk_gla
-    original_fused_chunked = gla_layer.fused_chunk_gla
-    gla_layer.fused_recurrent_gla = _stateless_gla_kernel_causal
-    gla_layer.fused_chunk_gla = _stateless_gla_kernel_causal
-    gla_layer.chunk_gla = _stateless_gla_kernel_causal
-    try:
-        yield
-    finally:
-        gla_layer.fused_recurrent_gla = original_fused_recurrent
-        gla_layer.chunk_gla = original_chunked
-        gla_layer.fused_chunk_gla = original_fused_chunked
-
-
-@contextmanager
 def _maybe_patch_kda_with_stateless_recurrent(
     enabled: bool,
     *,
@@ -965,7 +800,7 @@ def _maybe_patch_mamba2_with_stateless_recurrent(
             y = y + y_from_x
         
         # D skip connection
-        if include_self_term and self.D is not None:
+        if self.D is not None:
             y = y + self.D.float().view(1, 1, 1, -1, 1) * x
         
         # Reshape and apply output projection with gating
@@ -1017,6 +852,7 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
         assert indices is None, "stateless linear_attn patch does not support indices."
         assert initial_state is not None, "stateless linear_attn patch requires initial_state."
         assert q.shape[1] == 1, "stateless linear_attn patch only supports decode-like T=1."
+        assert not normalize, ("stateless linear_attn patch does not support normalize=True")
 
         dtype = q.dtype
         if scale is None:
@@ -1042,14 +878,6 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
             o = torch.einsum("bthk,bhkv->bthv", qf, h0)
         if include_self_term:
             o = o + (qf * kf).sum(-1, keepdim=True) * vf
-
-        if normalize:
-            if kf.ndim == 5:
-                k_cum = kf.cumsum(dim=2)
-            else:
-                k_cum = kf.cumsum(dim=1)
-            z = (qf * k_cum).sum(-1, keepdim=True)
-            o = o / (z + 1e-10)
 
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, *o.shape[2:])

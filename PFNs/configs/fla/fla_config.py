@@ -226,7 +226,7 @@ def get_config(
     bidirectional_state_fusion: str = "mean_output_mean_cache",
     state_passing: bool = False,
     state_passing_dropout: float = 0.1,
-    linear_attn_include_self_term: bool = True,
+    include_self_term: bool = True,
     task_variant: str = "tabular_prior",
     # Training
     training_setup: str = "high",
@@ -369,6 +369,9 @@ def get_config(
     resolved_emsize = int(
         resolved_config_kwargs.get("hidden_size", model_settings["emsize"])
     )
+    resolved_include_self_term = (
+        False if model_type == "linear_attn" else bool(include_self_term)
+    )
 
     backbone_kwargs = {
         "model_type": model_type,
@@ -379,7 +382,7 @@ def get_config(
         "bidirectional_state_fusion": bidirectional_state_fusion,
         "state_passing": bool(state_passing),
         "state_passing_dropout": float(state_passing_dropout),
-        "linear_attn_include_self_term": bool(linear_attn_include_self_term),
+        "include_self_term": resolved_include_self_term,
         "mimetic_init": mimetic_init,
         "mimetic_init_mode": mimetic_init_mode,
         "mimetic_init_layer_indices": mimetic_init_layer_indices,

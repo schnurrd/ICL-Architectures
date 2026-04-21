@@ -165,6 +165,7 @@ def build_fla_backbone(
     bidirectional: bool = False,
     bidirectional_share_weights: bool = True,
     bidirectional_state_fusion: str = "mean_output_mean_cache",
+    include_self_term: bool = True,
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -183,6 +184,7 @@ def build_fla_backbone(
         bidirectional=bidirectional,
         bidirectional_share_weights=bidirectional_share_weights,
         bidirectional_state_fusion=bidirectional_state_fusion,
+        include_self_term=bool(include_self_term),
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)
