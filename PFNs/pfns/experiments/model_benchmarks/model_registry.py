@@ -134,6 +134,10 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "DeltaNet Combined Single Target",
         "wandb_run_id": "fla_models/runs/q67a0x92", 
     },
+    "DeltaNet_Comb_ST_no_self_attn": {
+        "display_name": "DeltaNet Combined Single Target (No Self-Attention)",
+        "wandb_run_id": "fla_models/runs/4vxeqnat", 
+    },
     "DeltaNet_Comb_ST_short_conv": {
         "display_name": "DeltaNet Combined Single Target (Short Conv)",
         "wandb_run_id": "fla_models/runs/nluohjzz", # second model nluohjzz
