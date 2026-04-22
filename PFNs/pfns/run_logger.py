@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import torch
 
@@ -8,6 +9,7 @@ import typing as tp
 from dataclasses import dataclass
 
 from . import base_config
+from .utils import build_exp_outputs_path
 
 
 @dataclass(frozen=True)
@@ -214,7 +216,15 @@ def download_model_from_wandb(
     run = api.run(run_path)
     
     if destination_path is None:
-        destination_path = run.config['train_state_dict_save_path']
+        run_id = run_path.rstrip("/").split("/")[-1]
+        destination_path = str(
+            build_exp_outputs_path(
+                Path(__file__),
+                "wandb_model_checkpoints",
+                run_id,
+                "checkpoint.pt",
+            )
+        )
     
     destination_dir = os.path.dirname(destination_path)
     latest_model_artifact = next(
