@@ -718,7 +718,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--run-name', type=str, default=None)
     parser.add_argument('--device', type=str, default='auto')
     parser.add_argument('--seed', type=int, default=SEED)
-    parser.add_argument('--models', choices=('causal', 'non_causal', 'both'), default='causal')
+    parser.add_argument('--models', choices=('causal', 'non_causal', 'both'), default='both')
     parser.add_argument('--force-retrain', action='store_true')
     parser.add_argument('--compile-model', action='store_true')
     parser.add_argument('--log-every', type=int, default=LOG_EVERY)

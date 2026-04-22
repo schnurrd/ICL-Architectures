@@ -257,6 +257,10 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
       "wandb_run_id": "linear_attention/runs/3jq88aqt", # new default implementation
       "display_name": "Linear Attention\n(Comb_ST)",
     },
+    "Linear_Attention_Comb_ST_updated": {
+      "wandb_run_id": "linear_attention/runs/mwelekke", # new default implementation
+      "display_name": "Linear Attention\n(Comb_ST updated)",
+    },
     "Linear_Attention_Comb_ST_fro_norm": {
       "wandb_run_id": "linear_attention/runs/rrakg728", # new default implementation
       "display_name": "Linear Attention\n(Comb_ST) w. Fro Norm",
@@ -277,7 +281,7 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
 
 BASED_MODELS: dict[str, dict[str, Any]] = {
     "Rebased_feat_dim_80": {
-        "display_name": "Rebased $\\phi$ with 80-dim features", # todo retrain and delete rerun
+        "display_name": "Rebased $\\phi$ with 80-dim features",
         "wandb_run_id": "fla_models/runs/8i52q6vb"
     },
     "Rebased_feat_dim_32": {
