@@ -20,6 +20,7 @@ from tqdm.auto import tqdm
 
 from pfns.experiments.model_benchmarks.benchmark_batch_generators import _set_data_generation_seed as seed_everything
 from pfns.experiments.model_benchmarks.plotting import build_model_style_map, plot_curves_from_df
+from pfns.scripts.tabular_metrics import auc_metric
 from pfns.model.backbones import LinearAttentionBackboneConfig
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -263,6 +264,20 @@ def forward_loss_from_context_and_queries(
     return loss, logits
 
 
+def mean_task_roc_auc(targets: torch.Tensor, probabilities: torch.Tensor) -> float:
+    auc_values: list[float] = []
+    for task_targets, task_probabilities in zip(targets, probabilities):
+        task_auc = auc_metric(
+            task_targets.detach().cpu(),
+            task_probabilities.detach().cpu(),
+            multi_class='ovr',
+        )
+        task_auc_float = float(task_auc.cpu() if torch.is_tensor(task_auc) else task_auc)
+        if pd.notna(task_auc_float):
+            auc_values.append(task_auc_float)
+    return float('nan') if not auc_values else sum(auc_values) / len(auc_values)
+
+
 def sample_train_context_len(generator: torch.Generator) -> int:
     return int(
         torch.randint(
@@ -458,12 +473,15 @@ def evaluate_sequence_lengths(
     for batch_idx in progress:
         generator = make_generator(SEED + 100_000 + batch_idx, device)
         task = sample_latent_tasks(EVAL_BATCH_SIZE, device, generator=generator)
-        context_x, context_y = sample_examples_for_tasks(
+        x, y = sample_examples_for_tasks(
             task,
-            max_context_len,
+            max_context_len + TEST_LEN,
             generator=generator,
         )
-        query_x, query_y = sample_examples_for_tasks(task, TEST_LEN, generator=generator)
+        context_x = x[:, :max_context_len]
+        context_y = y[:, :max_context_len]
+        query_x = x[:, max_context_len:]
+        query_y = y[:, max_context_len:]
         targets = query_y.long()
 
         for context_len in EVAL_CONTEXT_LENGTHS:
@@ -478,10 +496,13 @@ def evaluate_sequence_lengths(
                     query_x=query_x,
                     query_y=query_y,
                 )
+                probabilities = logits.float().softmax(dim=-1)
                 accuracy = (logits.argmax(dim=-1) == targets).float().mean()
+                roc_auc = mean_task_roc_auc(targets, probabilities)
                 for metric, value in (
                     ('ce', loss.detach()),
                     ('acc', accuracy.detach()),
+                    ('roc_auc', roc_auc),
                 ):
                     rows.append(
                         {
@@ -490,10 +511,10 @@ def evaluate_sequence_lengths(
                             'seqlen': int(context_len),
                             'rep': int(batch_idx),
                             'metric': metric,
-                            'value': float(value.cpu()),
+                            'value': float(value.cpu() if torch.is_tensor(value) else value),
                         }
                     )
-                del loss, logits, accuracy
+                del loss, logits, probabilities, accuracy
     return pd.DataFrame(rows)
 
 
@@ -507,6 +528,7 @@ def plot_sequence_length_results(
         specs=[
             ('ce', 'Cross Entropy'),
             ('acc', 'Accuracy'),
+            ('roc_auc', 'ROC AUC'),
         ],
         style_map=style_map,
         x_col='seqlen',
@@ -522,28 +544,25 @@ def plot_sequence_length_results(
     )
 
 def build_normalized_score_df(results_df: pd.DataFrame) -> pd.DataFrame:
-    metric_directions = {
-        'ce': 'lower',
-        'acc': 'higher',
-    }
-    score_df = results_df[results_df['metric'].isin(metric_directions)].copy()
-    grouped_values = score_df.groupby(['rep', 'metric'], observed=True)['value']
+    higher_is_better = {'acc', 'roc_auc'}
+    normalized_metrics = {'ce', *higher_is_better}
+    score_df = results_df[results_df['metric'].isin(normalized_metrics)].copy()
+
+    score_df['oriented_value'] = score_df['value']
+    lower_is_better = ~score_df['metric'].isin(higher_is_better)
+    score_df.loc[lower_is_better, 'oriented_value'] *= -1
+
+    # Normalize within each eval repetition and metric across all models and sequence lengths.
+    grouped_values = score_df.groupby(['rep', 'metric'], observed=True)['oriented_value']
     min_values = grouped_values.transform('min')
     max_values = grouped_values.transform('max')
-    denominators = max_values - min_values
-    score_df['normalized_metric_score'] = 0.5
+    value_ranges = max_values - min_values
 
-    non_tied = denominators != 0
-    lower_is_better = score_df['metric'].map(metric_directions) == 'lower'
-    score_df.loc[non_tied & lower_is_better, 'normalized_metric_score'] = (
-        (max_values - score_df['value']) / denominators
-    )[non_tied & lower_is_better]
-    score_df.loc[non_tied & ~lower_is_better, 'normalized_metric_score'] = (
-        (score_df['value'] - min_values) / denominators
-    )[non_tied & ~lower_is_better]
-    score_df['value'] = score_df['normalized_metric_score']
+    score_df['value'] = (score_df['oriented_value'] - min_values) / value_ranges
+    valid_ties = score_df['oriented_value'].notna() & value_ranges.eq(0)
+    score_df.loc[valid_ties, 'value'] = 0.5
     score_df['metric'] = 'normalized_' + score_df['metric'].astype(str)
-    return score_df.drop(columns=['normalized_metric_score'])
+    return score_df.drop(columns=['oriented_value']).dropna(subset=['value'])
 
 
 def plot_normalized_sequence_length_scores(
@@ -555,13 +574,14 @@ def plot_normalized_sequence_length_scores(
     return plot_curves_from_df(
         normalized_df,
         specs=[
-            ('normalized_ce', 'Cross Entropy'),
-            ('normalized_acc', 'Accuracy'),
+            ('normalized_ce', 'Norm. CE score'),
+            ('normalized_acc', 'Norm. ACC score'),
+            ('normalized_roc_auc', 'Norm. ROC AUC score'),
         ],
         style_map=style_map,
         x_col='seqlen',
         x_label='Context length',
-        title_suffix=' across models and sequence lengths',
+        title_suffix=' across models and seq len',
         error_bars='ci95',
         error_style='band',
         log_x=True,
