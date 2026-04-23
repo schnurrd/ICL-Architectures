@@ -58,6 +58,7 @@ GRAD_CLIP_NORM = 1.0
 FORCE_RETRAIN = True
 COMPILE_MODEL = False
 LOG_EVERY = 100
+LOG_RESAMPLING = True
 
 # Prior distribution hyperparameters
 PRIOR_MLP_HIDDEN_SIZE = 32
@@ -203,7 +204,8 @@ def sample_train_test_examples_for_tasks(
         ).sum(dim=1).gt(0).all(dim=1)
         if train_has_all_classes.all():
             break
-        print('Regenerating batch because at least one task is missing a class in the training portion')
+        if LOG_RESAMPLING:
+            print('Regenerating batch because at least one task is missing a class in the training portion')
 
     x = x.to(DTYPE)
     y = y.to(DTYPE)
@@ -426,7 +428,6 @@ def pretrain_model(
 def experiment_signature() -> dict[str, Any]:
     return {
         'seed': SEED,
-        'device': str(DEVICE),
         'dtype': str(DTYPE).replace('torch.', ''),
         'num_features': NUM_FEATURES,
         'max_train_context_len': MAX_TRAIN_CONTEXT_LEN,
@@ -439,7 +440,6 @@ def experiment_signature() -> dict[str, Any]:
         'lr': LR,
         'weight_decay': WEIGHT_DECAY,
         'grad_clip_norm': GRAD_CLIP_NORM,
-        'log_every': LOG_EVERY,
         'prior_mlp_hidden_size': PRIOR_MLP_HIDDEN_SIZE,
         'prior_mlp_max_hidden_layers': PRIOR_MLP_MAX_HIDDEN_LAYERS,
         'prior_activations': tuple(PRIOR_ACTIVATIONS),
@@ -448,10 +448,6 @@ def experiment_signature() -> dict[str, Any]:
         'shuffle_class_ids': SHUFFLE_CLASS_IDS,
         'quantile_boundary_noise': QUANTILE_BOUNDARY_NOISE,
         'quantile_boundaries_fit_on': 'train',
-        'eval_context_lengths': tuple(EVAL_CONTEXT_LENGTHS),
-        'eval_batch_size': EVAL_BATCH_SIZE,
-        'eval_batches': EVAL_BATCHES,
-        'models': [dict(model_cfg) for model_cfg in MODEL_CONFIGS],
     }
 
 
@@ -865,6 +861,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--force-retrain', action='store_true')
     parser.add_argument('--compile-model', action='store_true')
     parser.add_argument('--log-every', type=int, default=LOG_EVERY)
+    parser.add_argument('--no-log-resampling', dest='log_resampling', action='store_false')
+    parser.set_defaults(log_resampling=LOG_RESAMPLING)
     parser.add_argument('--wandb', action='store_true')
     parser.add_argument('--wandb-project', type=str, default='minimal_linear_attention_seq_len_generalization')
     parser.add_argument('--wandb-entity', type=str, default=None)
@@ -892,6 +890,7 @@ def parse_args() -> argparse.Namespace:
 def apply_args(args: argparse.Namespace) -> None:
     global DEVICE, USE_BF16, DTYPE
     global SEED, FORCE_RETRAIN, COMPILE_MODEL, LOG_EVERY
+    global LOG_RESAMPLING
     global TRAIN_STEPS, BATCH_SIZE, MAX_TRAIN_CONTEXT_LEN, TEST_LEN
     global HIDDEN_SIZE, NUM_LAYERS, NUM_HEADS, LR, WEIGHT_DECAY, GRAD_CLIP_NORM
     global PRIOR_MLP_HIDDEN_SIZE, PRIOR_MLP_MAX_HIDDEN_LAYERS, PRIOR_ACTIVATIONS
@@ -906,6 +905,7 @@ def apply_args(args: argparse.Namespace) -> None:
     FORCE_RETRAIN = args.force_retrain
     COMPILE_MODEL = args.compile_model
     LOG_EVERY = max(0, int(args.log_every))
+    LOG_RESAMPLING = bool(args.log_resampling)
 
     TRAIN_STEPS = args.train_steps
     BATCH_SIZE = args.batch_size
