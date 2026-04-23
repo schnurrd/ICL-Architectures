@@ -878,6 +878,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--prior-hidden-size', type=int, default=PRIOR_MLP_HIDDEN_SIZE)
     parser.add_argument('--prior-max-hidden-layers', type=int, default=PRIOR_MLP_MAX_HIDDEN_LAYERS)
     parser.add_argument('--prior-activations', type=_parse_str_tuple, default=PRIOR_ACTIVATIONS)
+    parser.add_argument('--num-classes', type=int, default=NUM_CLASSES)
+    parser.add_argument('--quantile-boundary-noise', type=float, default=QUANTILE_BOUNDARY_NOISE)
+    parser.add_argument('--no-shuffle-class-ids', dest='shuffle_class_ids', action='store_false')
+    parser.set_defaults(shuffle_class_ids=SHUFFLE_CLASS_IDS)
     parser.add_argument('--eval-context-lengths', type=_parse_int_tuple, default=EVAL_CONTEXT_LENGTHS)
     parser.add_argument('--eval-batch-size', type=int, default=EVAL_BATCH_SIZE)
     parser.add_argument('--eval-batches', type=int, default=EVAL_BATCHES)
@@ -891,6 +895,7 @@ def apply_args(args: argparse.Namespace) -> None:
     global TRAIN_STEPS, BATCH_SIZE, MAX_TRAIN_CONTEXT_LEN, TEST_LEN
     global HIDDEN_SIZE, NUM_LAYERS, NUM_HEADS, LR, WEIGHT_DECAY, GRAD_CLIP_NORM
     global PRIOR_MLP_HIDDEN_SIZE, PRIOR_MLP_MAX_HIDDEN_LAYERS, PRIOR_ACTIVATIONS
+    global NUM_CLASSES, SHUFFLE_CLASS_IDS, QUANTILE_BOUNDARY_NOISE
     global PRIOR_ACTIVATION_MODULES
     global EVAL_CONTEXT_LENGTHS, EVAL_BATCH_SIZE, EVAL_BATCHES
 
@@ -918,6 +923,9 @@ def apply_args(args: argparse.Namespace) -> None:
     PRIOR_MLP_HIDDEN_SIZE = args.prior_hidden_size
     PRIOR_MLP_MAX_HIDDEN_LAYERS = args.prior_max_hidden_layers
     PRIOR_ACTIVATIONS = tuple(args.prior_activations)
+    NUM_CLASSES = int(args.num_classes)
+    SHUFFLE_CLASS_IDS = bool(args.shuffle_class_ids)
+    QUANTILE_BOUNDARY_NOISE = float(args.quantile_boundary_noise)
     unknown_activations = sorted(set(PRIOR_ACTIVATIONS) - set(ACTIVATION_MAP))
     if unknown_activations:
         raise ValueError(f'Unknown prior activations: {unknown_activations}')
