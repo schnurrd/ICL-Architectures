@@ -47,27 +47,30 @@ SEED = 0
 NUM_FEATURES = 4
 MAX_TRAIN_CONTEXT_LEN = 256
 TEST_LEN = 100
-TRAIN_STEPS = 30_000
-BATCH_SIZE = 64
-HIDDEN_SIZE = 64
-NUM_LAYERS = 12
+TRAIN_STEPS = 100_000
+BATCH_SIZE = 16
+HIDDEN_SIZE = 128
+NUM_LAYERS = 16
 NUM_HEADS = 4
 LR = 3e-4
 WEIGHT_DECAY = 1e-2
 GRAD_CLIP_NORM = 1.0
-FORCE_RETRAIN = False
+FORCE_RETRAIN = True
 COMPILE_MODEL = False
-LOG_EVERY = 0
+LOG_EVERY = 100
 
 # Prior distribution hyperparameters
 PRIOR_MLP_HIDDEN_SIZE = 32
 PRIOR_MLP_MAX_HIDDEN_LAYERS = 5
 PRIOR_ACTIVATIONS = ('tanh', 'relu', 'gelu')
+NUM_CLASSES = 10
+SHUFFLE_CLASS_IDS = True
+QUANTILE_BOUNDARY_NOISE = 0.03
 
 # Evaluation config
-EVAL_CONTEXT_LENGTHS = (128, 256, 512, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000)
+EVAL_CONTEXT_LENGTHS = (224, 256, 288, 320, 384, 448, 512, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000)
 EVAL_BATCH_SIZE = 8
-EVAL_BATCHES = 100
+EVAL_BATCHES = 50
 
 ACTIVATION_MAP = {
     'tanh': nn.Tanh,
@@ -135,38 +138,92 @@ def sample_latent_tasks(
                 num_hidden_layers=depth,
                 activation_module=PRIOR_ACTIVATION_MODULES[activation_id],
             )
-            models.append(model.to(device=device, dtype=DTYPE).requires_grad_(False))
+            models.append(model.to(device=device, dtype=torch.float32).requires_grad_(False))
     return models
-def sample_examples_for_tasks(
+def sample_train_test_examples_for_tasks(
     task_models: list[PriorMLP],
-    seq_len: int,
+    context_len: int,
+    test_len: int,
     *,
     generator: torch.Generator | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if not task_models:
         raise ValueError('task_models must not be empty')
+    if context_len < 1:
+        raise ValueError('context_len must be >= 1')
+    if context_len < NUM_CLASSES:
+        raise ValueError('context_len must be >= NUM_CLASSES to contain every class at least once')
+    if test_len < 0:
+        raise ValueError('test_len must be >= 0')
     batch_size = len(task_models)
-    x = torch.randn(
-        batch_size,
-        seq_len,
-        NUM_FEATURES,
-        device=DEVICE,
-        dtype=DTYPE,
+    seq_len = context_len + test_len
+    while True:
+        x = torch.randn(
+            batch_size,
+            seq_len,
+            NUM_FEATURES,
+            device=DEVICE,
+            dtype=torch.float32,
+            generator=generator,
+        )
+        logits = torch.stack([model(x_i) for model, x_i in zip(task_models, x)])
+
+        quantile_positions = torch.arange(1, NUM_CLASSES, device=DEVICE, dtype=torch.float32) / NUM_CLASSES
+        quantile_positions = quantile_positions + torch.empty(
+            batch_size,
+            NUM_CLASSES - 1,
+            device=DEVICE,
+            dtype=torch.float32,
+        ).uniform_(
+            -QUANTILE_BOUNDARY_NOISE,
+            QUANTILE_BOUNDARY_NOISE,
+            generator=generator,
+        )
+        quantile_positions = quantile_positions.clamp(1e-4, 1 - 1e-4)
+
+        sorted_train_logits = logits[:, :context_len].float().sort(dim=1).values
+        train_quantile_index = quantile_positions * (context_len - 1)
+        lower_index = train_quantile_index.floor().long()
+        upper_index = train_quantile_index.ceil().long()
+        interpolation_weight = train_quantile_index.frac()
+        lower_logits = torch.gather(sorted_train_logits, 1, lower_index)
+        upper_logits = torch.gather(sorted_train_logits, 1, upper_index)
+        logit_boundaries = torch.lerp(lower_logits, upper_logits, interpolation_weight)
+        logit_boundaries = logit_boundaries.sort(dim=1).values
+
+        y = (logits.float().unsqueeze(-1) > logit_boundaries.unsqueeze(1)).sum(dim=-1).long()
+
+        if SHUFFLE_CLASS_IDS:
+            for task_idx in range(batch_size):
+                class_perm = torch.randperm(NUM_CLASSES, device=DEVICE, generator=generator)
+                y[task_idx] = class_perm[y[task_idx]]
+
+        train_has_all_classes = F.one_hot(
+            y[:, :context_len], num_classes=NUM_CLASSES
+        ).sum(dim=1).gt(0).all(dim=1)
+        if train_has_all_classes.all():
+            break
+        print('Regenerating batch because at least one task is missing a class in the training portion')
+
+    x = x.to(DTYPE)
+    y = y.to(DTYPE)
+    return x[:, :context_len], y[:, :context_len], x[:, context_len:], y[:, context_len:]
+
+def sample_prior_train_test_examples(
+    batch_size: int,
+    context_len: int,
+    test_len: int,
+    *,
+    device: torch.device,
+    generator: torch.Generator,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    task = sample_latent_tasks(batch_size, device, generator=generator)
+    return sample_train_test_examples_for_tasks(
+        task,
+        context_len,
+        test_len,
         generator=generator,
     )
-    logits = torch.stack([model(x_i) for model, x_i in zip(task_models, x)])
-    # ensure that we are not to much unbalanced by construction 
-    balance_quantiles = torch.empty(
-        batch_size,
-        1,
-        device=DEVICE,
-        dtype=logits.dtype,
-    ).uniform_(0.4, 0.6, generator=generator)
-    sorted_logits = logits.float().sort(dim=1).values
-    threshold_indices = (balance_quantiles * (seq_len - 1)).round().long()
-    thresholds = sorted_logits.gather(1, threshold_indices).to(logits.dtype)
-    y = (logits > thresholds).to(DTYPE)
-    return x, y
 
 
 class SimpleLinearAttentionPFN(nn.Module):
@@ -178,7 +235,7 @@ class SimpleLinearAttentionPFN(nn.Module):
         self.decoder = nn.Sequential(
             nn.Linear(HIDDEN_SIZE, HIDDEN_SIZE * 2),
             nn.GELU(),
-            nn.Linear(HIDDEN_SIZE * 2, 2),
+            nn.Linear(HIDDEN_SIZE * 2, NUM_CLASSES),
         )
 
     def forward(
@@ -260,15 +317,26 @@ def forward_loss_from_context_and_queries(
     with torch.autocast(device_type=DEVICE.type, dtype=torch.bfloat16, enabled=USE_BF16):
         logits = model(context_x=context_x, context_y=context_y, query_x=query_x)
     targets = query_y.long()
-    loss = F.cross_entropy(logits.float().reshape(-1, 2), targets.reshape(-1))
+    loss = F.cross_entropy(logits.float().reshape(-1, NUM_CLASSES), targets.reshape(-1))
     return loss, logits
 
 
 def mean_task_roc_auc(targets: torch.Tensor, probabilities: torch.Tensor) -> float:
     auc_values: list[float] = []
     for task_targets, task_probabilities in zip(targets, probabilities):
+        task_targets = task_targets.long()
+        present_classes = torch.unique(task_targets, sorted=True)
+        if present_classes.numel() < 2:
+            continue
+
+        remapped_targets = torch.searchsorted(present_classes, task_targets)
+        task_probabilities = task_probabilities.float()[:, present_classes]
+        task_probabilities = task_probabilities / task_probabilities.sum(
+            dim=-1, keepdim=True
+        ).clamp_min(1e-12)
+
         task_auc = auc_metric(
-            task_targets.detach().cpu(),
+            remapped_targets.detach().cpu(),
             task_probabilities.detach().cpu(),
             multi_class='ovr',
         )
@@ -316,18 +384,22 @@ def pretrain_model(
         train_model.train()
         generator = make_generator(SEED + step, device)
         context_len = sample_train_context_len(generator)
-        seq_len = context_len + TEST_LEN
 
-        task = sample_latent_tasks(BATCH_SIZE, device, generator=generator)
-        x, y = sample_examples_for_tasks(task, seq_len, generator=generator)
+        train_x, train_y, query_x, query_y = sample_prior_train_test_examples(
+            BATCH_SIZE,
+            context_len,
+            TEST_LEN,
+            device=device,
+            generator=generator,
+        )
 
         optimizer.zero_grad(set_to_none=True)
         loss, logits = forward_loss_from_context_and_queries(
             train_model,
-            context_x=x[:, :context_len],
-            context_y=y[:, :context_len],
-            query_x=x[:, context_len:],
-            query_y=y[:, context_len:],
+            context_x=train_x,
+            context_y=train_y,
+            query_x=query_x,
+            query_y=query_y,
         )
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
@@ -335,7 +407,7 @@ def pretrain_model(
 
         if LOG_EVERY and (step == 1 or step % LOG_EVERY == 0 or step == TRAIN_STEPS):
             with torch.no_grad():
-                targets = y[:, context_len:].long()
+                targets = query_y.long()
                 accuracy = (logits.argmax(dim=-1) == targets).float().mean().item()
             row = {
                 'step': float(step),
@@ -371,6 +443,11 @@ def experiment_signature() -> dict[str, Any]:
         'prior_mlp_hidden_size': PRIOR_MLP_HIDDEN_SIZE,
         'prior_mlp_max_hidden_layers': PRIOR_MLP_MAX_HIDDEN_LAYERS,
         'prior_activations': tuple(PRIOR_ACTIVATIONS),
+        'prior_dtype': 'float32',
+        'num_classes': NUM_CLASSES,
+        'shuffle_class_ids': SHUFFLE_CLASS_IDS,
+        'quantile_boundary_noise': QUANTILE_BOUNDARY_NOISE,
+        'quantile_boundaries_fit_on': 'train',
         'eval_context_lengths': tuple(EVAL_CONTEXT_LENGTHS),
         'eval_batch_size': EVAL_BATCH_SIZE,
         'eval_batches': EVAL_BATCHES,
@@ -471,17 +548,15 @@ def evaluate_sequence_lengths(
     max_context_len = max(EVAL_CONTEXT_LENGTHS)
     progress = tqdm(range(EVAL_BATCHES), desc='eval sequence lengths')
     for batch_idx in progress:
-        generator = make_generator(SEED + 100_000 + batch_idx, device)
-        task = sample_latent_tasks(EVAL_BATCH_SIZE, device, generator=generator)
-        x, y = sample_examples_for_tasks(
-            task,
-            max_context_len + TEST_LEN,
+        seed = SEED + 100_000 + batch_idx
+        generator = make_generator(seed, device)
+        context_x, context_y, query_x, query_y = sample_prior_train_test_examples(
+            EVAL_BATCH_SIZE,
+            max_context_len,
+            TEST_LEN,
+            device=device,
             generator=generator,
         )
-        context_x = x[:, :max_context_len]
-        context_y = y[:, :max_context_len]
-        query_x = x[:, max_context_len:]
-        query_y = y[:, max_context_len:]
         targets = query_y.long()
 
         for context_len in EVAL_CONTEXT_LENGTHS:
@@ -533,14 +608,17 @@ def plot_sequence_length_results(
         style_map=style_map,
         x_col='seqlen',
         x_label='Context length',
-        title_suffix=' on IID queries',
-        error_bars='ci95',
-        error_style='band',
+        title_suffix=' on queries',
+        plot_mode='individual_runs',
+        rep_col='rep',
+        distribution_style='none',
+        show_run_lines=True,
+        run_alpha=0.25,
         log_x=True,
         show_pretraining_split=True,
         pretrain_boundary=MAX_TRAIN_CONTEXT_LEN,
         model_legend_layout='bottom',
-        figsize=(12, 4.8),
+        figsize=(15, 4.8),
     )
 
 def build_normalized_score_df(results_df: pd.DataFrame) -> pd.DataFrame:
@@ -560,6 +638,8 @@ def build_normalized_score_df(results_df: pd.DataFrame) -> pd.DataFrame:
 
     score_df['value'] = (score_df['oriented_value'] - min_values) / value_ranges
     valid_ties = score_df['oriented_value'].notna() & value_ranges.eq(0)
+    if valid_ties.any():
+        print(f"Warning: Found {valid_ties.sum()} cases with zero value range during normalization. Setting their scores to 0.5.")
     score_df.loc[valid_ties, 'value'] = 0.5
     score_df['metric'] = 'normalized_' + score_df['metric'].astype(str)
     return score_df.drop(columns=['oriented_value']).dropna(subset=['value'])
@@ -588,8 +668,32 @@ def plot_normalized_sequence_length_scores(
         show_pretraining_split=True,
         pretrain_boundary=MAX_TRAIN_CONTEXT_LEN,
         model_legend_layout='bottom',
-        figsize=(12, 4.8),
+        figsize=(15, 4.8),
     )
+
+
+def build_seq_len_table(results_df: pd.DataFrame) -> pd.DataFrame:
+    return (
+        results_df.groupby(['display_name', 'seqlen', 'metric'], observed=True)['value']
+        .mean()
+        .reset_index()
+        .pivot_table(
+            index='seqlen',
+            columns=['display_name', 'metric'],
+            values='value',
+            observed=True,
+        )
+    )
+
+
+def flatten_table_for_logging(table: pd.DataFrame) -> pd.DataFrame:
+    flat = table.reset_index()
+    if isinstance(flat.columns, pd.MultiIndex):
+        flat.columns = [
+            '_'.join(str(part) for part in col if part not in ('', None)).strip('_')
+            for col in flat.columns.to_flat_index()
+        ]
+    return flat
 
 
 def _parse_int_tuple(value: str) -> tuple[int, ...]:
@@ -637,6 +741,8 @@ def _log_run_to_wandb(
     run_dir: Path,
     run_name: str,
     config: dict[str, Any],
+    raw_table_df: pd.DataFrame,
+    normalized_table_df: pd.DataFrame,
     project: str,
     entity: str | None,
 ) -> None:
@@ -650,12 +756,22 @@ def _log_run_to_wandb(
     )
     try:
         wandb.save(str(run_dir / 'args.json'), base_path=str(run_dir))
+        for filename in (
+            'seq_len_results.csv',
+            'seq_len_normalized_results.csv',
+            'seq_len_raw_table.csv',
+            'seq_len_normalized_table.csv',
+            'training_history.csv',
+        ):
+            wandb.save(str(run_dir / filename), base_path=str(run_dir))
         wandb.log(
             {
                 'plots/seq_len_raw': wandb.Image(str(run_dir / 'plots' / 'seq_len_raw.png')),
                 'plots/seq_len_normalized': wandb.Image(
                     str(run_dir / 'plots' / 'seq_len_normalized.png')
                 ),
+                'tables/seq_len_raw': wandb.Table(dataframe=raw_table_df),
+                'tables/seq_len_normalized': wandb.Table(dataframe=normalized_table_df),
             }
         )
     finally:
@@ -709,8 +825,13 @@ def run_experiment(
     seq_len_fig.savefig(plots_dir / 'seq_len_raw.png', dpi=180, bbox_inches='tight')
     plt.close(seq_len_fig)
 
+    raw_seq_len_table = build_seq_len_table(seq_len_results_df)
+    raw_seq_len_table.to_csv(SAVE_DIR / 'seq_len_raw_table.csv')
+
     normalized_seq_len_scores_df = build_normalized_score_df(seq_len_results_df)
     normalized_seq_len_scores_df.to_csv(SAVE_DIR / 'seq_len_normalized_results.csv', index=False)
+    normalized_seq_len_table = build_seq_len_table(normalized_seq_len_scores_df)
+    normalized_seq_len_table.to_csv(SAVE_DIR / 'seq_len_normalized_table.csv')
     normalized_seq_len_fig, _ = plot_normalized_sequence_length_scores(
         seq_len_results_df,
         style_map=style_map,
@@ -727,6 +848,8 @@ def run_experiment(
             run_dir=SAVE_DIR,
             run_name=SAVE_DIR.name,
             config=config,
+            raw_table_df=flatten_table_for_logging(raw_seq_len_table),
+            normalized_table_df=flatten_table_for_logging(normalized_seq_len_table),
             project=wandb_project,
             entity=wandb_entity,
         )
@@ -760,7 +883,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--prior-hidden-size', type=int, default=PRIOR_MLP_HIDDEN_SIZE)
     parser.add_argument('--prior-max-hidden-layers', type=int, default=PRIOR_MLP_MAX_HIDDEN_LAYERS)
     parser.add_argument('--prior-activations', type=_parse_str_tuple, default=PRIOR_ACTIVATIONS)
-
     parser.add_argument('--eval-context-lengths', type=_parse_int_tuple, default=EVAL_CONTEXT_LENGTHS)
     parser.add_argument('--eval-batch-size', type=int, default=EVAL_BATCH_SIZE)
     parser.add_argument('--eval-batches', type=int, default=EVAL_BATCHES)
