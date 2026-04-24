@@ -717,11 +717,16 @@ def _set_model_configs(model_selection: str) -> None:
         MODEL_CONFIGS = [configs[model_selection]]
 
 
-def _make_run_dir(output_root: Path, run_name: str | None) -> Path:
+def _make_run_dir(output_root: Path, run_name: str | None, *, resume_run: bool = False) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     name = run_name or f"run_seed{SEED}_{timestamp}"
     run_dir = output_root / name
-    run_dir.mkdir(parents=True, exist_ok=False)
+    if resume_run:
+        if run_name is None:
+            raise ValueError('--resume-run requires --run-name so the existing run directory is unambiguous')
+        run_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        run_dir.mkdir(parents=True, exist_ok=False)
     return run_dir
 
 
@@ -808,6 +813,9 @@ def run_experiment(
     ]
     pd.DataFrame(history_rows).to_csv(SAVE_DIR / 'training_history.csv', index=False)
 
+    if DEVICE.type == 'cuda':
+        torch.cuda.empty_cache()
+
     seq_len_results_df = evaluate_sequence_lengths(models, device=DEVICE)
     seq_len_results_df.to_csv(SAVE_DIR / 'seq_len_results.csv', index=False)
 
@@ -855,8 +863,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--device', type=str, default='auto')
     parser.add_argument('--seed', type=int, default=SEED)
     parser.add_argument('--models', choices=('causal', 'non_causal', 'both'), default='both')
-    parser.add_argument('--force-retrain', action='store_true')
+    parser.add_argument('--force-retrain', dest='force_retrain', action='store_true')
+    parser.add_argument('--no-force-retrain', dest='force_retrain', action='store_false')
+    parser.set_defaults(force_retrain=FORCE_RETRAIN)
     parser.add_argument('--compile-model', action='store_true')
+    parser.add_argument('--resume-run', action='store_true')
     parser.add_argument('--log-every', type=int, default=LOG_EVERY)
     parser.add_argument('--no-log-resampling', dest='log_resampling', action='store_false')
     parser.set_defaults(log_resampling=LOG_RESAMPLING)
@@ -940,7 +951,7 @@ def apply_args(args: argparse.Namespace) -> None:
 def main() -> None:
     args = parse_args()
     apply_args(args)
-    run_dir = _make_run_dir(args.output_root, args.run_name)
+    run_dir = _make_run_dir(args.output_root, args.run_name, resume_run=args.resume_run)
     run_experiment(
         run_dir,
         use_wandb=args.wandb,
