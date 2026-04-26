@@ -112,6 +112,8 @@ def parse_cli_args():
     )
     parser.add_argument(
         "--exclude-oracles",
+        "--exclude-oracle-models",
+        dest="exclude_oracle_models",
         action="store_true",
         help="Exclude oracle hidden-state baseline models from the selected registry models.",
     )
