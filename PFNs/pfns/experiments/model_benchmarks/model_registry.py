@@ -452,18 +452,6 @@ STATE_PASSING_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
-
-MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
-    "mimetic:GLA_Comb_ST_Ref": {
-        "display_name": "GLA Comb ST",
-        "wandb_run_id": "fla_models/runs/2v2xw7d2",
-    },
-    "mimetic:GLA_Comb_ST_Open_Gates": {
-        "display_name": "Mimetic GLA Comb ST",
-        "wandb_run_id": "fla_models/runs/i8vmztxo",
-    },
-}
-
 SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
     "subsampled:DeltaNet_Comb_ST": {
         "display_name": "DeltaNet Comb ST",
@@ -671,56 +659,6 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     # },
 }
 
-CAUSAL_LINEAR_ATTENTION_EXPERIMENTS: dict[str, dict[str, Any]] = {
-    # "Linear_Attention_Causal_Comb_ST_small_1l": {
-    #     "wandb_run_id": "linear_attention/runs/cz4o41ap",
-    # },
-    # "Linear_Attention_Causal_Comb_ST_small_2l": {
-    #     "wandb_run_id": "linear_attention/runs/q95rrgsf",
-    # },
-    # "Linear_Attention_Causal_Comb_ST_small_4l": {
-    #     "wandb_run_id": "linear_attention/runs/0xl6owda",
-    # },
-    # "Linear_Attention_Causal_Comb_ST_small_8l": {
-    #     "wandb_run_id": "linear_attention/runs/uo3uos24",
-    # },
-    
-    # "Linear_Attention_Causal_Comb_ST_high_1l": {
-    #     "wandb_run_id": "linear_attention/runs/hh407jv1",
-    # },
-    # "Linear_Attention_Causal_Comb_ST_high_2l": {
-    #     "wandb_run_id": "linear_attention/runs/lwt3i9xh",
-    # },
-    # "Linear_Attention_Causal_Comb_ST_high_4l": {
-    #     "wandb_run_id": "linear_attention/runs/uurehyuk",
-    # },
-    # "Linear_Attention_Causal_Comb_ST_high_8l": {
-    #     "wandb_run_id": "linear_attention/runs/23pi6hz5",
-    # },
-        
-    # "Linear_Attention_Non_Causal_Comb_ST_small_2l": {
-    #     "wandb_run_id": "linear_attention/runs/djan9ch8",
-    # },
-    # "Linear_Attention_Non_Causal_Comb_ST_small_4l": {
-    #     "wandb_run_id": "linear_attention/runs/icx2zvxg",
-    # },    
-    # "Linear_Attention_Non_Causal_Comb_ST_small_8l": {
-    #     "wandb_run_id": "linear_attention/runs/167zifq4",
-    # },
-    # "Linear_Attention_Non_Causal_Comb_ST_small_16l": {
-    #     "wandb_run_id": "linear_attention/runs/79032l1a",
-    # },
-    # "Linear_Attention_Non_Causal_Comb_ST_mid_8l": {
-    #     "wandb_run_id": "linear_attention/runs/mqgoa9bm",
-    # },
-    # "Linear_Attention_Non_Causal_Comb_ST_mid_8l": {
-    #     "wandb_run_id": "linear_attention/runs/mqgoa9bm",
-    # },
-    # "Linear_Attention_Non_Causal_Comb_ST_high_8l": {
-    #     "wandb_run_id": "linear_attention/runs/qcmexzis",
-    # },
-}
-
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
 
 BASELINE_MODEL_NAMES: tuple[str, ...] = (
@@ -755,7 +693,6 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "subsampled": SUBSAMPLED_MODELS,
     "bidirectional": BIDIRECTIONAL_MODELS,
     "state_passing": STATE_PASSING_MODELS,
-    "causal_linear_attention_experiments": CAUSAL_LINEAR_ATTENTION_EXPERIMENTS,
     "fla_models": {
         **KDA_MODELS,
         **GLA_MODELS,

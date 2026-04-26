@@ -12,8 +12,10 @@ from typing import Any
 from pfns.scripts.tabpfn_interface import TabPFNClassifier
 from pfns.evaluation.baselines import get_baselines
 from pfns.evaluation.evaluate import evaluate_on_openml
-from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
-from pfns.datasets.tabular_datasets import get_benchmark_suite_dids
+from pfns.experiments.model_benchmarks.real_world_benchmarks import (
+    BENCHMARK_CHOICES,
+    get_real_world_benchmark_dataset_ids,
+)
 from pfns.experiments.model_benchmarks.oracle_hidden_state_baseline import build_oracle_hidden_state_baseline
 from pfns.experiments.model_benchmarks.plotting import resolve_display_name_map
 from pfns.utils import get_default_device
@@ -26,13 +28,6 @@ SUMMARY_METRIC_DEFAULTS: dict[str, dict[str, Any]] = {
     "predict_time": {"label": "Pred (s)", "direction": "down", "precision": 2, "show_std": False},
 }
 TIMING_METRICS = {"fit_time", "predict_time"}
-BENCHMARK_CHOICES = [
-    "opencc",
-    "test",
-    "openml_large_dataset",
-    "tabarena_full",
-    "tabarena_medium",
-]
 def _resolve_summary_metrics(
     metric_specs: list[str | dict[str, Any]] | tuple[str | dict[str, Any], ...] | None,
 ) -> list[dict[str, Any]]:
@@ -85,25 +80,7 @@ def run_evaluation(
     if device is None:
         device = get_default_device()
 
-    if benchmark == "opencc":
-        dataset_ids = OPENCC_BENCHMARK
-    elif benchmark == "openml_large_dataset":
-        dataset_ids = [1461]
-    elif benchmark == "tabarena_full":
-        dataset_ids = get_benchmark_suite_dids(
-            suite_id=457, # TabArena suite
-            max_features=None,
-        )
-    elif benchmark == "tabarena_medium":
-        dataset_ids = get_benchmark_suite_dids(
-            suite_id=457, # TabArena suite
-            min_samples=10_000,
-            max_samples=None,
-            max_features=None,
-        )
-    else:
-        supported = ", ".join(BENCHMARK_CHOICES)
-        raise ValueError(f"Benchmark must be one of: {supported}.")
+    dataset_ids = get_real_world_benchmark_dataset_ids(benchmark)
 
     resolved_runner = runner or model_config.get("runner")
     if resolved_runner is None:
