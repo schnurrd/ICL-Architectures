@@ -13,7 +13,6 @@ from pfns.scripts.tabpfn_interface import TabPFNClassifier
 from pfns.evaluation.baselines import get_baselines
 from pfns.evaluation.evaluate import evaluate_on_openml
 from pfns.datasets.tabular_datasets import open_cc_dids as OPENCC_BENCHMARK
-from pfns.datasets.tabular_datasets import test_dids_classification as TEST_BENCHMARK
 from pfns.datasets.tabular_datasets import get_benchmark_suite_dids
 from pfns.experiments.model_benchmarks.oracle_hidden_state_baseline import build_oracle_hidden_state_baseline
 from pfns.experiments.model_benchmarks.plotting import resolve_display_name_map
@@ -88,8 +87,6 @@ def run_evaluation(
 
     if benchmark == "opencc":
         dataset_ids = OPENCC_BENCHMARK
-    elif benchmark == "test":
-        dataset_ids = TEST_BENCHMARK
     elif benchmark == "openml_large_dataset":
         dataset_ids = [1461]
     elif benchmark == "tabarena_full":

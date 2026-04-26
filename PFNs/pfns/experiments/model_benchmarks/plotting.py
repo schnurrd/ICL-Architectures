@@ -543,6 +543,7 @@ def plot_curves_from_df(
     pretrain_boundary: float = PRETRAIN_MAX_X,
     figsize: tuple[float, float] | None = None,
     dpi: int = 400,
+    show: bool = True,
 ):
     """Generic plotting function used by notebook-level plot wrappers."""
     if df.empty:
@@ -726,5 +727,6 @@ def plot_curves_from_df(
 
     apply_shared_legend_layout(fig, axes, layout=model_legend_layout, fontsize=11)
 
-    plt.show()
+    if show:
+        plt.show()
     return fig, axes

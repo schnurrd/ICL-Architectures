@@ -286,7 +286,7 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
 BASED_MODELS: dict[str, dict[str, Any]] = {
     "Rebased_feat_dim_80": {
         "display_name": "Rebased $\\phi$ with 80-dim features",
-        "wandb_run_id": "fla_models/runs/8i52q6vb"
+        "wandb_run_id": "fla_models/runs/2s9ngyny"
     },
     "Rebased_feat_dim_32": {
         "display_name": "Rebased $\\phi$ with 32-dim features", 
@@ -376,11 +376,11 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     },
     # "equal_params:DeltaNet_Int_MT": {
     #     "display_name": "DeltaNet (Int MT)",
-    #     "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic on obsession 0  to check variance
+    #     "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic
     # },
     # "equal_params:Gated_DeltaNet_Int_MT": {
     #     "display_name": "Gated DeltaNet (Int MT)",
-    #     "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5 on obsession 0 to check variance
+    #     "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5
     # },
     "equal_params:KDA_Comb_ST": {
         "display_name": "Kimi Delta\nAttention",
