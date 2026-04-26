@@ -68,10 +68,10 @@ MODEL_SETTINGS = {
             "hidden_size": 320, # default 2048
             "use_short_conv": False, # typically true but we don't have temporal data
             "num_heads": 4, # default 16
-            # "head_dim": 80, # currently 128
+            "head_dim": 80, # currently 128
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
-            "num_hidden_layers": 8, # default 24
+            "num_hidden_layers": 11, # default 24
             "norm_eps": 1e-6, # default 1e-6
             "use_cache": True,
             "vocab_size": 1, # dummy value, not used default 32000
