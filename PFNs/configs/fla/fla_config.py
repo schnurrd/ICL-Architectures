@@ -57,7 +57,7 @@ TRAINING_PROFILES = {
 
 MODEL_SETTINGS = {
     # KDA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/kda/configuration_kda.py#L10
-    # Model size: 12.09 M
+    # Model size: 12.60 M
     # Training speed on different gpus (uncompiled, single target): 
     #    - RTX 5070 (bf16):   16it/s, 3.4GiB (single target); 19it/s, 2.2GiB (multi target); 10it/s, 3.7GiB (multi target, interleaved)
     #    - RTX 2080Ti:        4it/s, 6.2GB (non-compiled), 
@@ -99,7 +99,7 @@ MODEL_SETTINGS = {
         },
     },
     # Mamba2 Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/mamba2/configuration_mamba2.py#L21
-    # Model size: 12.86 M
+    # Model size: 12.49 M
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   7it/s, 4.3GB (single target); 5it/s (single target, interleaved); 15it/s, 2GB (multi target); 8it/s, 2.9GiB (multi target, interleaved)
     #    - RTX 2080Ti:  it/s
@@ -109,10 +109,11 @@ MODEL_SETTINGS = {
         "config_kwargs": {
             "hidden_size": 320, # default 2048
             "num_hidden_layers": 18, # default 48
-            "state_size": 128, # default 128
+            "state_size": 96, # default 128
             "conv_kernel": 4, # default 4
             "expand": 2, # default 2, --> num_heads self.expand * hidden_size // head_dim
-            "head_dim": 128, # default
+            "head_dim": 64, # default
+            "norm_eps": 1e-6, # default 1e-5
             "vocab_size": 1, # dummy value, not used default 32000
             "use_cache": True,
             "cache_chunk_size": 16,  
@@ -139,7 +140,7 @@ MODEL_SETTINGS = {
         },
     },
     # Gated DeltaNet Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gated_deltanet/configuration_gated_deltanet.py#L7
-    # Model size: 12.93 M
+    # Model size: 12.50 M
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   14it/s, 2.9GB (single target); 24it/s, 1.9GB (multi target); 15it/s, 3.5GiB (multi target, interleaved)
     #    - RTX 2080Ti:  it/s
@@ -149,7 +150,8 @@ MODEL_SETTINGS = {
         "config_kwargs": {
             "attn_mode": "chunk",
             "hidden_size": 320,
-            "num_hidden_layers": 10, # default 21
+            "num_hidden_layers": 12, # default 21
+            "expand_v": 1.0, # default 2.0
             "num_heads": 4, # default 6
             "head_dim": 64, # default 256
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
@@ -161,7 +163,6 @@ MODEL_SETTINGS = {
         },
     },
     # Linear Attention Config: https://github.com/fla-org/flash-linear-attention/blob/main/fla/models/linear_attn/configuration_linear_attn.py
-    # Model size: depends on layer count; this preset matches existing hidden size/head choices in this repo.
     "linear_attn": {
         "emsize": 320,
         "config_kwargs": {
