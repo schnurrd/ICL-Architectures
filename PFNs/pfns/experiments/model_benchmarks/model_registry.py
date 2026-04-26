@@ -594,21 +594,21 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_verbose": False,
         "eval_autocast_dtype": "bf16",
     },
-    "Oracle_Hidden_State_DeltaNet_Comb_ST_state_init": {
-        **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 3e-3,
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 20,
-        "oracle_query_batch_size": 4000,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_random_init_hidden_state": True,
-        "oracle_verbose": False,
-        "eval_autocast_dtype": "bf16",
-    },
+    # "Oracle_Hidden_State_DeltaNet_Comb_ST_state_init": {
+    #     **DELTANET_MODELS["DeltaNet_Comb_ST"],
+    #     "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
+    #     "oracle_hidden_state_baseline": True,
+    #     "oracle_num_epochs": 400,
+    #     "oracle_lr": 3e-3,
+    #     "oracle_weight_decay": 1e-5,
+    #     "oracle_patience": 20,
+    #     "oracle_query_batch_size": 4000,
+    #     "oracle_selection_fraction": 0.1,
+    #     "oracle_evaluate_only_max_seqlen": True,
+    #     "oracle_random_init_hidden_state": True,
+    #     "oracle_verbose": False,
+    #     "eval_autocast_dtype": "bf16",
+    # },
     # "Oracle_Hidden_State_DeltaNet_Comb_ST_state_init_v2": {
     #     **DELTANET_MODELS["DeltaNet_Comb_ST"],
     #     "display_name": "Oracle Hidden State (DeltaNet) New Base with State Init",
@@ -828,6 +828,23 @@ def get_baseline_models() -> dict[str, dict[str, Any]]:
             "display_name": name,
         }
         for name in BASELINE_MODEL_NAMES
+    }
+
+
+def is_oracle_model(model_name: str, model_config: dict[str, Any]) -> bool:
+    return (
+        bool(model_config.get("oracle_hidden_state_baseline"))
+        or model_name in ORACLE_HIDDEN_STATE_MODELS
+    )
+
+
+def exclude_oracle_models(
+    model_configs: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    return {
+        model_name: model_config
+        for model_name, model_config in model_configs.items()
+        if not is_oracle_model(model_name, model_config)
     }
 
 

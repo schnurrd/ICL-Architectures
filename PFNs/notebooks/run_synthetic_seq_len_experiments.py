@@ -20,6 +20,7 @@ from pfns.experiments.model_benchmarks.models import load_models_for_benchmark
 from pfns.experiments.model_benchmarks.model_registry import get_all_models
 from pfns.experiments.model_benchmarks.model_registry import (
     MODEL_FAMILIES,
+    exclude_oracle_models,
     get_autocast_models_from_registry,
     get_forward_models_from_registry,
     get_models_from_families,
@@ -110,6 +111,11 @@ def parse_cli_args():
         ),
     )
     parser.add_argument(
+        "--exclude-oracles",
+        action="store_true",
+        help="Exclude oracle hidden-state baseline models from the selected registry models.",
+    )
+    parser.add_argument(
         "--seqlen-list",
         nargs="+",
         type=_parse_seqlen_value,
@@ -184,6 +190,13 @@ if CLI_ARGS.models:
     all_models_to_compare = get_models_from_names(CLI_ARGS.models)
 else:
     all_models_to_compare = get_all_models()
+if CLI_ARGS.exclude_oracle_models:
+    num_models_before_filter = len(all_models_to_compare)
+    all_models_to_compare = exclude_oracle_models(all_models_to_compare)
+    print(
+        "Excluded oracle models: "
+        f"{num_models_before_filter - len(all_models_to_compare)}"
+    )
 all_model_items = list(all_models_to_compare.items())
 models_to_compare = dict(all_model_items[CLI_ARGS.run_index::CLI_ARGS.num_runs])
 if not models_to_compare:

@@ -22,6 +22,7 @@ from pfns.experiments.model_benchmarks.io import (
 )
 from pfns.experiments.model_benchmarks.model_registry import (
     MODEL_FAMILIES,
+    exclude_oracle_models,
     get_all_models,
     get_baseline_models,
     get_models_from_families,
@@ -119,6 +120,11 @@ def parse_cli_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--include-baselines",
         action="store_true",
         help="Include all available baseline models.",
+    )
+    parser.add_argument(
+        "--exclude-oracles",
+        action="store_true",
+        help="Exclude oracle hidden-state baseline models from the selected registry models.",
     )
     parser.add_argument(
         "--baseline-models",
@@ -314,6 +320,13 @@ def main() -> None:
     print(f"Sharding config: num_runs={args.num_runs}, run_index={args.run_index}")
 
     all_models_to_compare = _resolve_selected_models(args)
+    if args.exclude_oracle_models:
+        num_models_before_filter = len(all_models_to_compare)
+        all_models_to_compare = exclude_oracle_models(all_models_to_compare)
+        print(
+            "Excluded oracle models: "
+            f"{num_models_before_filter - len(all_models_to_compare)}"
+        )
     all_model_items = list(all_models_to_compare.items())
     models_to_compare = dict(all_model_items[args.run_index::args.num_runs])
     if not models_to_compare:
