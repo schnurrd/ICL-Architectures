@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -62,18 +63,21 @@ def seq_len_bundle_is_compatible(
     expected_metadata: dict[str, Any],
 ) -> bool:
     """Check if a cached seq-len bundle can be reused for the given model."""
-    has_model = (
-        model_name in bundle.get("metric_table", {})
-        and model_name in bundle.get("timing_table", {})
-    )
+    has_model = model_name in bundle.get(
+        "metric_table", {}
+    ) and model_name in bundle.get("timing_table", {})
     bundle_metadata = bundle.get("metadata", {})
     bundle_only_numerical = bool(
         bundle_metadata.get(
             "only_numerical_features",
-            bundle_metadata.get("task_kwargs", {}).get("only_numerical_features", False),
+            bundle_metadata.get("task_kwargs", {}).get(
+                "only_numerical_features", False
+            ),
         )
     )
-    expected_only_numerical = bool(expected_metadata.get("only_numerical_features", False))
+    expected_only_numerical = bool(
+        expected_metadata.get("only_numerical_features", False)
+    )
     if bundle_only_numerical != expected_only_numerical:
         return False
 
@@ -174,7 +178,9 @@ def single_model_seq_len_result_from_bundle(
         "schema_version": bundle.get("bundle_metadata", {}).get("schema_version"),
         "metric_table": {model_name: bundle["metric_table"][model_name]},
         "timing_table": {model_name: bundle["timing_table"][model_name]},
-        "memory_table": {model_name: bundle.get("memory_table", {}).get(model_name, {})},
+        "memory_table": {
+            model_name: bundle.get("memory_table", {}).get(model_name, {})
+        },
         "oom_errors": {model_name: bundle.get("oom_errors", {}).get(model_name, [])},
         "metadata": bundle.get("metadata", {}),
     }
@@ -211,7 +217,9 @@ def merge_seq_len_model_results(
             "timing": int(len(timing_df)),
             "memory": int(len(memory_df)),
         },
-        "per_model_bundle_paths": {name: str(path) for name, path in bundle_paths.items()},
+        "per_model_bundle_paths": {
+            name: str(path) for name, path in bundle_paths.items()
+        },
     }
 
     return {
@@ -234,13 +242,13 @@ def aggregate_real_world_results_from_bundles(
 
     for model_name, model_bundle in bundles_by_model.items():
         bundle = model_bundle.get("bundle", model_bundle)
-        model_results = bundle.get("dataframes", {}).get("results", pd.DataFrame()).copy()
+        model_results = (
+            bundle.get("dataframes", {}).get("results", pd.DataFrame()).copy()
+        )
         if model_results.empty:
             continue
         if "model" not in model_results.columns:
-            raise RuntimeError(
-                "Missing required column 'model' in aggregated results."
-            )
+            raise RuntimeError("Missing required column 'model' in aggregated results.")
         model_results = model_results[model_results["model"].astype(str) == model_name]
         if model_results.empty:
             continue
@@ -248,7 +256,9 @@ def aggregate_real_world_results_from_bundles(
         results_by_model[model_name] = model_results
 
     if not result_frames:
-        raise RuntimeError("Compatible bundles were found, but no result rows matched the selected models.")
+        raise RuntimeError(
+            "Compatible bundles were found, but no result rows matched the selected models."
+        )
 
     all_results = pd.concat(result_frames, ignore_index=True)
     if all_results.empty:
@@ -257,14 +267,18 @@ def aggregate_real_world_results_from_bundles(
     required_cols = {"model", "dataset", "split"}
     missing_cols = required_cols - set(all_results.columns)
     if missing_cols:
-        raise RuntimeError(f"Missing required columns in aggregated results: {sorted(missing_cols)}")
+        raise RuntimeError(
+            f"Missing required columns in aggregated results: {sorted(missing_cols)}"
+        )
 
     datasets_by_model = {
         model_name: set(df["dataset"].astype(str).unique())
         for model_name, df in results_by_model.items()
     }
     if not datasets_by_model:
-        raise RuntimeError("No per-model dataset coverage was found in aggregated results.")
+        raise RuntimeError(
+            "No per-model dataset coverage was found in aggregated results."
+        )
 
     all_datasets = set().union(*datasets_by_model.values())
     coverage_mismatch = {
@@ -274,7 +288,10 @@ def aggregate_real_world_results_from_bundles(
     }
     if coverage_mismatch:
         details = ", ".join(
-            [f"{model}: missing {missing}" for model, missing in sorted(coverage_mismatch.items())]
+            [
+                f"{model}: missing {missing}"
+                for model, missing in sorted(coverage_mismatch.items())
+            ]
         )
         raise RuntimeError(
             "Dataset coverage mismatch across models; all models must be evaluated on the same "
@@ -285,7 +302,10 @@ def aggregate_real_world_results_from_bundles(
     bad_split_counts = split_counts[split_counts != int(expected_splits)]
     if not bad_split_counts.empty:
         details = ", ".join(
-            [f"{model}/{dataset}: {int(count)}" for (model, dataset), count in bad_split_counts.items()]
+            [
+                f"{model}/{dataset}: {int(count)}"
+                for (model, dataset), count in bad_split_counts.items()
+            ]
         )
         raise RuntimeError(
             f"Split count mismatch detected (expected {int(expected_splits)} per model/dataset): {details}"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal
 
 import math
@@ -44,9 +45,9 @@ def resolve_display_name_map(df: pd.DataFrame | None = None) -> dict[str, str]:
     if df is None or "display_name" not in df.columns or "model" not in df.columns:
         return display_name_map
 
-    display_df = df.loc[df["display_name"].notna(), ["model", "display_name"]].drop_duplicates(
-        subset=["model"]
-    )
+    display_df = df.loc[
+        df["display_name"].notna(), ["model", "display_name"]
+    ].drop_duplicates(subset=["model"])
     display_name_map.update(
         {
             str(row["model"]): str(row["display_name"])
@@ -61,18 +62,14 @@ def make_display_name_formatter(
     df: pd.DataFrame | None = None,
     *,
     display_name_map: dict[str, str] | None = None,
-):
+) -> Callable[[object], str]:
     """Return a label formatter backed by an explicit display-name map."""
     name_map = (
         resolve_display_name_map(df)
         if display_name_map is None
         else dict(display_name_map)
     )
-
-    def format_display_name(label: object) -> str:
-        return name_map.get(str(label), str(label))
-
-    return format_display_name
+    return lambda label: name_map.get(str(label), str(label))
 
 
 def build_model_legend_name_map(
@@ -83,9 +80,16 @@ def build_model_legend_name_map(
     hidden_state_size_col: str = "context_size_mb",
 ) -> dict[str, str]:
     display_name_map = resolve_display_name_map(df)
-    if not append_max_hidden_state_size or hidden_state_size_df is None or hidden_state_size_df.empty:
+    if (
+        not append_max_hidden_state_size
+        or hidden_state_size_df is None
+        or hidden_state_size_df.empty
+    ):
         return display_name_map
-    if "model" not in hidden_state_size_df.columns or hidden_state_size_col not in hidden_state_size_df.columns:
+    if (
+        "model" not in hidden_state_size_df.columns
+        or hidden_state_size_col not in hidden_state_size_df.columns
+    ):
         return display_name_map
 
     size_df = hidden_state_size_df[["model", hidden_state_size_col]].copy()
@@ -94,9 +98,7 @@ def build_model_legend_name_map(
         return display_name_map
 
     max_size_by_model = (
-        size_df.groupby("model", observed=True)[hidden_state_size_col]
-        .max()
-        .to_dict()
+        size_df.groupby("model", observed=True)[hidden_state_size_col].max().to_dict()
     )
     for model_name, max_size in max_size_by_model.items():
         base_name = display_name_map.get(str(model_name), str(model_name))
@@ -151,7 +153,9 @@ def _compute_dodged_positions(
 
     unique_x = np.unique(x_values.astype(float, copy=False))
     if unique_x.size <= 1:
-        base_width = max(abs(float(unique_x[0])) * 0.08, 1.0) if unique_x.size == 1 else 1.0
+        base_width = (
+            max(abs(float(unique_x[0])) * 0.08, 1.0) if unique_x.size == 1 else 1.0
+        )
     else:
         diffs = np.diff(np.sort(unique_x))
         positive_diffs = diffs[diffs > 0.0]
@@ -187,7 +191,10 @@ def _compute_violin_widths(
     finite_span = local_span[np.isfinite(local_span)]
     fallback_span = float(finite_span.min()) if finite_span.size > 0 else 1.0
     local_span = np.where(np.isfinite(local_span), local_span, fallback_span)
-    width_lookup = {float(x): float(span * width_frac / max(1, model_count)) for x, span in zip(sorted_x, local_span)}
+    width_lookup = {
+        float(x): float(span * width_frac / max(1, model_count))
+        for x, span in zip(sorted_x, local_span)
+    }
     return np.array([width_lookup[float(x)] for x in x_values], dtype=float)
 
 
@@ -294,7 +301,11 @@ def apply_pretraining_split_background(
 
 
 def _format_boundary_label(boundary: float) -> str:
-    if boundary >= 1000.0 and float(boundary).is_integer() and int(boundary) % 1000 == 0:
+    if (
+        boundary >= 1000.0
+        and float(boundary).is_integer()
+        and int(boundary) % 1000 == 0
+    ):
         return f"{int(boundary / 1000)}k"
     if float(boundary).is_integer():
         return f"{int(boundary):,}"
@@ -427,7 +438,9 @@ def plot_grouped_runs_with_distribution(
         model_count=model_count,
         log_x=log_x,
     )
-    x_position_lookup = {float(base_x): float(curr_x) for base_x, curr_x in zip(unique_x, plot_x)}
+    x_position_lookup = {
+        float(base_x): float(curr_x) for base_x, curr_x in zip(unique_x, plot_x)
+    }
 
     if show_run_lines and not render_as_upper_bound:
         for _, run_df in sub.groupby(rep_col, observed=True, sort=True):
@@ -466,7 +479,10 @@ def plot_grouped_runs_with_distribution(
         pass
     elif distribution_style == "half_violin":
         violin = ax.violinplot(
-            dataset=[group[value_col].to_numpy(dtype=float, copy=False) for _, group in grouped],
+            dataset=[
+                group[value_col].to_numpy(dtype=float, copy=False)
+                for _, group in grouped
+            ],
             positions=plot_x,
             widths=_compute_violin_widths(
                 plot_x,
@@ -576,7 +592,9 @@ def plot_curves_from_df(
     if plot_mode not in {"aggregate", "individual_runs"}:
         raise ValueError("plot_mode must be 'aggregate' or 'individual_runs'.")
     if distribution_style not in {"none", "half_violin", "strip"}:
-        raise ValueError("distribution_style must be 'none', 'half_violin', or 'strip'.")
+        raise ValueError(
+            "distribution_style must be 'none', 'half_violin', or 'strip'."
+        )
     if plot_mode == "individual_runs" and rep_col not in df.columns:
         raise RuntimeError(
             f"plot_mode='individual_runs' requires a '{rep_col}' column in the dataframe."
@@ -629,7 +647,9 @@ def plot_curves_from_df(
         for model in model_names:
             sub = subset_metric[subset_metric["model"] == model]
             marker, linestyle, color = style_map.get(model, ("o", "-", None))
-            model_label = display_name_map.get(str(model), str(model)) if idx == 0 else None
+            model_label = (
+                display_name_map.get(str(model), str(model)) if idx == 0 else None
+            )
             render_as_upper_bound = model in upper_bound_model_names
             if plot_mode == "individual_runs":
                 plotted = plot_grouped_runs_with_distribution(
@@ -728,9 +748,14 @@ def plot_curves_from_df(
         if log_x:
             ax.set_xscale("log")
             if positive_x_values.size > 0:
-                ax.set_xlim(left=float(positive_x_values.min()), right=float(positive_x_values.max()))
+                ax.set_xlim(
+                    left=float(positive_x_values.min()),
+                    right=float(positive_x_values.max()),
+                )
         else:
-            right_limit = float(finite_x_values.max()) if finite_x_values.size > 0 else None
+            right_limit = (
+                float(finite_x_values.max()) if finite_x_values.size > 0 else None
+            )
             ax.set_xlim(left=0.0, right=right_limit)
         if log_y:
             ax.set_yscale("log")

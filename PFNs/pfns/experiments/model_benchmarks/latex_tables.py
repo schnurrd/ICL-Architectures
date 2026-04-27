@@ -12,6 +12,17 @@ from .wilcoxon_cd_diagram import (
 DEFAULT_LATEX_RANK_COLORS = {1: "yellow!35", 2: "gray!25", 3: "orange!25"}
 
 
+def _latex_line_index(lines: Sequence[str], prefix: str) -> int | None:
+    return next(
+        (i for i, line in enumerate(lines) if line.lstrip().startswith(prefix)),
+        None,
+    )
+
+
+def _is_caption_or_label(line: str) -> bool:
+    return line.lstrip().startswith((r"\caption{", r"\label{"))
+
+
 def latex_escape(value: object) -> str:
     value = " ".join(str(value).replace("\n", " ").split())
     replacements = {
@@ -28,8 +39,10 @@ def latex_escape(value: object) -> str:
     }
     return "".join(replacements.get(char, char) for char in value)
 
+
 def format_latex_number(value: object, *, precision: int = 4) -> str:
     return "-" if pd.isna(value) else f"{float(value):.{precision}f}"
+
 
 def format_ranked_latex_value(
     value: object,
@@ -47,6 +60,7 @@ def format_ranked_latex_value(
         color = (rank_colors or DEFAULT_LATEX_RANK_COLORS).get(int(rank))
     return rf"\cellcolor{{{color}}}{formatted}" if color else formatted
 
+
 def tighten_latex_table_spacing(
     latex_table: str,
     *,
@@ -55,9 +69,9 @@ def tighten_latex_table_spacing(
 ) -> str:
     """Reduce column padding without scaling the table font."""
     lines = latex_table.splitlines()
-    begin_idx = next(
-        i for i, line in enumerate(lines) if line.startswith(r"\begin{tabular}")
-    )
+    begin_idx = _latex_line_index(lines, r"\begin{tabular}")
+    if begin_idx is None:
+        return latex_table
 
     wrapped = lines[:begin_idx]
     wrapped.extend(
@@ -70,28 +84,22 @@ def tighten_latex_table_spacing(
     wrapped.extend(lines[begin_idx:])
     return "\n".join(wrapped)
 
+
 def move_latex_caption_and_label_to_bottom(
     latex_table: str,
     *,
     caption_skip: str = "0.5em",
 ) -> str:
     lines = latex_table.splitlines()
-    caption_label_lines = [
-        line
-        for line in lines
-        if line.startswith(r"\caption{") or line.startswith(r"\label{")
-    ]
+    caption_label_lines = [line for line in lines if _is_caption_or_label(line)]
     if not caption_label_lines:
         return latex_table
 
-    lines = [
-        line
-        for line in lines
-        if not (line.startswith(r"\caption{") or line.startswith(r"\label{"))
-    ]
-    end_tabular_idx = next(
-        i for i, line in enumerate(lines) if line.startswith(r"\end{tabular}")
-    )
+    lines = [line for line in lines if not _is_caption_or_label(line)]
+    end_tabular_idx = _latex_line_index(lines, r"\end{tabular}")
+    if end_tabular_idx is None:
+        return latex_table
+
     return "\n".join(
         lines[: end_tabular_idx + 1]
         + [rf"\vspace{{{caption_skip}}}"]
@@ -99,41 +107,47 @@ def move_latex_caption_and_label_to_bottom(
         + lines[end_tabular_idx + 1 :]
     )
 
+
 def insert_latex_midrules_after_data_rows(
     latex_table: str,
     row_counts: Sequence[int],
 ) -> str:
-    split_points = []
+    split_points = set()
     running_total = 0
     for count in row_counts[:-1]:
         running_total += int(count)
         if running_total > 0:
-            split_points.append(running_total)
+            split_points.add(running_total)
     if not split_points:
         return latex_table
 
     lines = latex_table.splitlines()
-    midrule_idx = next(
-        i for i, line in enumerate(lines) if line.startswith(r"\midrule")
-    )
+    midrule_idx = _latex_line_index(lines, r"\midrule")
+    if midrule_idx is None:
+        return latex_table
+
+    output = lines[: midrule_idx + 1]
     seen_rows = 0
-    for idx in range(midrule_idx + 1, len(lines)):
-        line = lines[idx]
-        if line.startswith(r"\bottomrule"):
+    for idx, line in enumerate(lines[midrule_idx + 1 :], start=midrule_idx + 1):
+        output.append(line)
+        if line.lstrip().startswith(r"\bottomrule"):
+            output.extend(lines[idx + 1 :])
             break
         if not line.strip() or line.lstrip().startswith("\\"):
             continue
         seen_rows += 1
         if seen_rows in split_points:
-            lines.insert(idx + 1, r"\midrule")
-            split_points.remove(seen_rows)
+            output.append(r"\midrule")
+            split_points.discard(seen_rows)
             if not split_points:
+                output.extend(lines[idx + 1 :])
                 break
-    return "\n".join(lines)
+    return "\n".join(output)
 
 
 def metric_label_higher_is_better(metric_label: object) -> bool:
-    return "downarrow" not in str(metric_label)
+    label = str(metric_label)
+    return not any(token in label for token in ("\\downarrow", "downarrow", "↓"))
 
 
 def normalize_setting_pair_scores(
@@ -178,18 +192,20 @@ def complete_metric_wide_scores(
     score_method: str = "minmax",
 ) -> pd.DataFrame:
     """Build a complete wide metric table, optionally normalized per paired row."""
+    pair_cols = list(pair_cols)
+    target_labels = list(target_labels)
     metric_by_pair = (
-        comparison_df.groupby(list(pair_cols) + [compare_col], observed=True)[metric_col]
+        comparison_df.groupby(pair_cols + [compare_col], observed=True)[metric_col]
         .mean()
         .reset_index()
     )
     wide = metric_by_pair.pivot_table(
-        index=list(pair_cols),
+        index=pair_cols,
         columns=compare_col,
         values=metric_col,
         observed=True,
-    ).reindex(columns=list(target_labels))
-    complete = wide.dropna(subset=list(target_labels))
+    ).reindex(columns=target_labels)
+    complete = wide.dropna(subset=target_labels)
     if normalize:
         complete = normalize_setting_pair_scores(
             complete[list(target_labels)],
@@ -198,8 +214,6 @@ def complete_metric_wide_scores(
             score_method=score_method,
         )
     return complete[list(target_labels)]
-
-
 
 
 def significance_markers_from_scores(
@@ -254,6 +268,7 @@ def build_setting_metric_tables(
     rank_parts: list[pd.Series] = []
     significance_parts: list[pd.Series] = []
     n_pairs_by_benchmark: dict[str, int] = {}
+    higher_is_better_by_column: dict[tuple[str, str], bool] = {}
 
     for preset_name, benchmark_label in benchmark_labels.items():
         preset_results = benchmark_results.get(preset_name, pd.DataFrame())
@@ -289,11 +304,14 @@ def build_setting_metric_tables(
                 average_index_level="dataset",
             )
             column = (benchmark_label, metric_label_fn(metric_col, normalize))
+            higher_is_better_by_column[column] = higher_is_better
             numeric_columns.append(column)
             numeric_parts.append(metric_means.rename(column))
             rank_parts.append(metric_ranks.rename(column))
             significance_parts.append(significance_markers.rename(column))
-            n_pairs_by_benchmark.setdefault(benchmark_label, int(metric_scores.shape[0]))
+            n_pairs_by_benchmark.setdefault(
+                benchmark_label, int(metric_scores.shape[0])
+            )
 
     if not numeric_parts:
         raise RuntimeError("No compatible setting results were found.")
@@ -311,11 +329,7 @@ def build_setting_metric_tables(
     )
     if sort_col not in numeric_table.columns:
         sort_col = numeric_table.columns[0]
-    sort_higher_is_better = True if normalize else next(
-        higher
-        for metric_col, _label, higher in metrics
-        if metric_label_fn(metric_col, normalize) == sort_col[1]
-    )
+    sort_higher_is_better = True if normalize else higher_is_better_by_column[sort_col]
     sorted_index = numeric_table.sort_values(
         sort_col,
         ascending=not sort_higher_is_better,
@@ -326,6 +340,7 @@ def build_setting_metric_tables(
         significance_table.loc[sorted_index],
         n_pairs_by_benchmark,
     )
+
 
 def render_setting_average_performance_latex(
     numeric_table: pd.DataFrame,
@@ -340,7 +355,7 @@ def render_setting_average_performance_latex(
 ) -> str:
     """Render a compact training-setup LaTeX table."""
     metric_labels = list(numeric_table.columns)
-    benchmark_labels = list(dict.fromkeys([col[0] for col in metric_labels]))
+    benchmark_labels = list(dict.fromkeys(col[0] for col in metric_labels))
     n_metric_cols = len(metric_labels)
     lines = [
         r"\begin{table}",
@@ -384,6 +399,7 @@ def render_setting_average_performance_latex(
     )
     return "\n".join(lines)
 
+
 def make_real_world_metric_tables(
     results: pd.DataFrame,
     *,
@@ -404,12 +420,16 @@ def make_real_world_metric_tables(
         return pd.DataFrame(), per_dataset_stats
 
     grouped = per_dataset_stats.groupby("model", sort=False)
-    mean_table = pd.DataFrame(index=grouped.size().index)
-    for metric in available_metrics:
-        mean_values = grouped[f"{metric}_mean"].mean()
-        metric_label = metric_labels[metric]
-        mean_table[metric_label] = mean_values
-    return mean_table, per_dataset_stats
+    return (
+        pd.DataFrame(
+            {
+                metric_labels[metric]: grouped[f"{metric}_mean"].mean()
+                for metric in available_metrics
+            }
+        ),
+        per_dataset_stats,
+    )
+
 
 def make_real_world_significance_table(
     per_dataset_stats: pd.DataFrame,
@@ -446,18 +466,14 @@ def make_real_world_significance_table(
             target_labels=target_models,
             alpha=alpha,
             higher_is_better=metric_label_higher_is_better(metric_label),
-            enabled=True,
             letters=letters,
-        )
-        markers_by_metric[metric_label] = markers_by_metric[metric_label].reindex(
-            output_models,
-            fill_value="",
-        )
+        ).reindex(output_models, fill_value="")
     table = pd.DataFrame(markers_by_metric).reindex(output_models)
     table.columns = pd.MultiIndex.from_tuples(
         [(benchmark_label, metric_label) for metric_label in table.columns]
     )
     return table
+
 
 def sort_models_by_reference_metric(
     table: pd.DataFrame,
@@ -491,6 +507,7 @@ def sort_models_by_reference_metric(
         + sort_subset(unranked_models)
         + sort_subset(baseline_models)
     )
+
 
 def apply_real_world_latex_cell_formatting(
     numeric_table: pd.DataFrame,
@@ -551,15 +568,20 @@ def apply_real_world_latex_cell_formatting(
                     int(rank) if pd.notna(rank) else None
                 )
                 if color is not None:
-                    formatted.loc[model, col] = rf"\cellcolor{{{color}}}{formatted.loc[model, col]}"
+                    formatted.loc[model, col] = (
+                        rf"\cellcolor{{{color}}}{formatted.loc[model, col]}"
+                    )
 
         if baseline_models:
             baseline_values = numeric_table.loc[baseline_models, col]
             baseline_ranks = baseline_values.rank(ascending=ascending, method="min")
             for model, rank in baseline_ranks.items():
                 if pd.notna(rank) and int(rank) == 1:
-                    formatted.loc[model, col] = rf"\textbf{{{formatted.loc[model, col]}}}"
+                    formatted.loc[model, col] = (
+                        rf"\textbf{{{formatted.loc[model, col]}}}"
+                    )
     return formatted
+
 
 def render_combined_real_world_latex_table(
     display_table: pd.DataFrame,

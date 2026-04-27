@@ -7,7 +7,7 @@ This module is an original PFNs implementation.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from itertools import combinations
 
 import numpy as np
@@ -17,11 +17,11 @@ from scipy.stats import friedmanchisquare, wilcoxon
 
 PairwiseResult = tuple[str, str, float, bool]
 
-# used for significance groups 
+# used for significance groups
 DEFAULT_GROUP_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
-def _unique_labels(labels: Iterable[str]) -> list[str]:
+def _unique_labels(labels: Iterable[object]) -> list[str]:
     return list(dict.fromkeys(str(label) for label in labels))
 
 
@@ -42,10 +42,13 @@ def _complete_score_matrix(
     *,
     higher_better: bool,
 ) -> pd.DataFrame:
+    frame = frame.rename(columns=str)
     _require_labels(frame, labels, context="score table")
     score_matrix = frame.reindex(columns=labels).dropna(subset=labels)
     if score_matrix.empty:
-        raise RuntimeError("No complete paired rows available for Wilcoxon/Holm analysis.")
+        raise RuntimeError(
+            "No complete paired rows available for Wilcoxon/Holm analysis."
+        )
 
     score_matrix = score_matrix.astype(float)
     if not higher_better:
@@ -117,7 +120,11 @@ def _find_maximal_cliques(
             return
 
         pivot_candidates = p | x
-        pivot = max(pivot_candidates, key=lambda n: len(adjacency[n])) if pivot_candidates else None
+        pivot = (
+            max(pivot_candidates, key=lambda n: len(adjacency[n]))
+            if pivot_candidates
+            else None
+        )
         if pivot is None:
             expand = list(p)
         else:
@@ -171,7 +178,10 @@ def _pack_intervals_into_lanes(
     packed: list[tuple[float, float, int]] = []
     for x_lo, x_hi in intervals:
         lane = 0
-        while lane < len(lane_right_edges) and x_lo <= lane_right_edges[lane] + interval_pad:
+        while (
+            lane < len(lane_right_edges)
+            and x_lo <= lane_right_edges[lane] + interval_pad
+        ):
             lane += 1
         if lane == len(lane_right_edges):
             lane_right_edges.append(x_hi)
@@ -218,6 +228,7 @@ def pairwise_wilcoxon_holm(
     if len(labels) < 2:
         raise RuntimeError("Need at least two labels for pairwise Wilcoxon/Holm.")
 
+    metric_scores = metric_scores.rename(columns=str)
     _require_labels(metric_scores, labels, context="metric_scores")
 
     means = metric_scores[labels].mean(axis=0)
@@ -240,7 +251,7 @@ def pairwise_wilcoxon_holm(
 def compact_significance_letters(
     significantly_different: pd.DataFrame,
     *,
-    target_labels: Iterable[str],
+    target_labels: Iterable[object],
     letters: str = DEFAULT_GROUP_LETTERS,
 ) -> pd.Series:
     """
@@ -250,13 +261,16 @@ def compact_significance_letters(
     deterministic and intended for table display; it is not an optimization
     routine for the minimum possible number of letters.
     """
+    labels = _unique_labels(target_labels)
     ordered_labels = list(significantly_different.index)
     groups: list[list[str]] = []
 
     for label in ordered_labels:
         placed = False
         for group in groups:
-            if all(not bool(significantly_different.loc[label, other]) for other in group):
+            if all(
+                not bool(significantly_different.loc[label, other]) for other in group
+            ):
                 group.append(label)
                 placed = True
         if not placed:
@@ -286,7 +300,7 @@ def compact_significance_letters(
             else:
                 groups.append([label_a, label_b])
 
-    letter_by_label = {label: "" for label in target_labels}
+    letter_by_label = {label: "" for label in labels}
     for group_idx, group in enumerate(groups):
         if group_idx >= len(letters):
             raise ValueError("Not enough letters for significance groups.")
@@ -294,36 +308,36 @@ def compact_significance_letters(
         for label in dict.fromkeys(group):
             letter_by_label[label] += letter
 
-    return pd.Series(letter_by_label, index=list(target_labels), dtype=object)
+    return pd.Series(letter_by_label, index=labels, dtype=object)
 
 
 def wilcoxon_holm_significance_letters(
     metric_scores: pd.DataFrame,
     *,
-    target_labels: Iterable[str],
+    target_labels: Iterable[object],
     alpha: float = 0.05,
     higher_better: bool = True,
     letters: str = DEFAULT_GROUP_LETTERS,
 ) -> pd.Series:
     """Return LaTeX superscript letters from paired Wilcoxon/Holm tests."""
+    labels = _unique_labels(target_labels)
     significantly_different, _ = pairwise_wilcoxon_holm(
         metric_scores,
-        target_labels=target_labels,
+        target_labels=labels,
         alpha=alpha,
         higher_better=higher_better,
     )
-    raw_letters = compact_significance_letters(
+    return compact_significance_letters(
         significantly_different,
-        target_labels=target_labels,
+        target_labels=labels,
         letters=letters,
-    )
-    return raw_letters.map(lambda value: rf"$^{{{value}}}$" if value else "")
+    ).map(lambda value: rf"$^{{{value}}}$" if value else "")
 
 
 def wilcoxon_holm_from_wide(
     *,
     metric_wide_complete: pd.DataFrame,
-    target_labels: Iterable[str],
+    target_labels: Iterable[object],
     higher_better: bool,
     alpha: float = 0.05,
 ) -> tuple[list[PairwiseResult], pd.Series, float]:
@@ -354,17 +368,21 @@ def wilcoxon_holm_from_wide(
         friedman_reject = friedman_p_value < alpha
 
     raw_p_values = _raw_pairwise_p_values(score_matrix, labels)
+    adjusted_p_values = (
+        holm_adjust_p_values(raw_p_values)
+        if friedman_reject
+        else pd.Series(index=raw_p_values, dtype=float)
+    )
     p_values: list[PairwiseResult] = [
-        (label_a, label_b, float(p_value), False)
+        (
+            label_a,
+            label_b,
+            float(p_value),
+            pd.notna(adjusted_p_values.loc[(label_a, label_b)])
+            and adjusted_p_values.loc[(label_a, label_b)] <= alpha,
+        )
         for (label_a, label_b), p_value in raw_p_values.items()
     ]
-    if friedman_reject:
-        sorted_idx = sorted(range(len(p_values)), key=lambda idx: p_values[idx][2])
-        for rank, idx in enumerate(sorted_idx):
-            if p_values[idx][2] > float(alpha / (len(p_values) - rank)):
-                break
-            label_a, label_b, p_raw, _ = p_values[idx]
-            p_values[idx] = (label_a, label_b, p_raw, True)
 
     average_ranks = (
         score_matrix.rank(axis=1, method="average", ascending=False)
@@ -424,32 +442,36 @@ def graph_ranks(
             frac = 1.0 - frac
         return x_axis_min + frac * (x_axis_max - x_axis_min)
 
-    rank_by_name = {str(name): float(rank) for name, rank in zip(rank_names, rank_values)}
-    order_by_x = np.argsort(np.array([rank_to_x(float(rank)) for rank in rank_values], dtype=np.float64))
+    rank_by_name = {
+        str(name): float(rank) for name, rank in zip(rank_names, rank_values)
+    }
+    order_by_x = np.argsort(
+        np.array([rank_to_x(float(rank)) for rank in rank_values], dtype=np.float64)
+    )
     left_count = int(np.ceil(n_methods / 2))
     left_idx = order_by_x[:left_count]
     right_idx = order_by_x[left_count:]
 
-    non_sig_adj: dict[str, set[str]] = {name: set() for name in rank_by_name}
-    for name_a, name_b, _p_raw, significant in p_values:
-        if significant or name_a not in rank_by_name or name_b not in rank_by_name:
-            continue
-        non_sig_adj[name_a].add(name_b)
-        non_sig_adj[name_b].add(name_a)
-
-    non_sig_cliques = _find_maximal_cliques(list(rank_by_name), non_sig_adj)
-    n_intervals = len(non_sig_cliques)
+    rank_intervals = _non_significant_rank_intervals(rank_by_name, p_values)
+    n_intervals = len(rank_intervals)
     fig_height = max(4.8, 2.6 + 0.34 * n_methods + 0.12 * min(n_intervals, 8))
     fig, ax = plt.subplots(figsize=(width, fig_height), dpi=400)
     ax.set_axis_off()
 
-    ax.plot([x_axis_min, x_axis_max], [rank_line_y, rank_line_y], color="black", linewidth=2.0)
+    ax.plot(
+        [x_axis_min, x_axis_max],
+        [rank_line_y, rank_line_y],
+        color="black",
+        linewidth=2.0,
+    )
     tick_values = list(np.arange(lowv, highv, 0.5)) + [highv]
     for tick in tick_values:
         x = rank_to_x(float(tick))
         is_integer = float(tick).is_integer()
         tick_len = 0.030 if is_integer else 0.020
-        ax.plot([x, x], [rank_line_y, rank_line_y + tick_len], color="black", linewidth=1.2)
+        ax.plot(
+            [x, x], [rank_line_y, rank_line_y + tick_len], color="black", linewidth=1.2
+        )
         if is_integer:
             ax.text(
                 x,
@@ -460,33 +482,41 @@ def graph_ranks(
                 fontsize=tick_fontsize,
             )
 
-    left_y_start = rank_line_y - 0.18
-    right_y_start = rank_line_y - 0.18
-    for idx, model_idx in enumerate(left_idx):
-        name = str(rank_names[model_idx])
-        rank = float(rank_values[model_idx])
-        x_rank = rank_to_x(rank)
-        y = left_y_start - idx * left_step
-        ax.plot([x_rank, x_rank], [rank_line_y, y], color="#222222", linewidth=1.6)
-        ax.plot([x_left_anchor, x_rank], [y, y], color="#222222", linewidth=1.6)
-        ax.text(x_left_anchor - 0.012, y, name, ha="right", va="center", fontsize=label_fontsize)
-        if labels:
-            ax.text(x_rank, y - 0.018, f"{rank:.3f}", ha="center", va="top", fontsize=9, color="#444444")
-
-    for idx, model_idx in enumerate(right_idx):
-        name = str(rank_names[model_idx])
-        rank = float(rank_values[model_idx])
-        x_rank = rank_to_x(rank)
-        y = right_y_start - idx * right_step
-        ax.plot([x_rank, x_rank], [rank_line_y, y], color="#222222", linewidth=1.6)
-        ax.plot([x_rank, x_right_anchor], [y, y], color="#222222", linewidth=1.6)
-        ax.text(x_right_anchor + 0.012, y, name, ha="left", va="center", fontsize=label_fontsize)
-        if labels:
-            ax.text(x_rank, y - 0.018, f"{rank:.3f}", ha="center", va="top", fontsize=9, color="#444444")
+    label_y_start = rank_line_y - 0.18
+    for side_idx, anchor, text_dx, ha, step in (
+        (left_idx, x_left_anchor, -0.012, "right", left_step),
+        (right_idx, x_right_anchor, 0.012, "left", right_step),
+    ):
+        for idx, model_idx in enumerate(side_idx):
+            name = str(rank_names[model_idx])
+            rank = float(rank_values[model_idx])
+            x_rank = rank_to_x(rank)
+            y = label_y_start - idx * step
+            horizontal = [anchor, x_rank] if ha == "right" else [x_rank, anchor]
+            ax.plot([x_rank, x_rank], [rank_line_y, y], color="#222222", linewidth=1.6)
+            ax.plot(horizontal, [y, y], color="#222222", linewidth=1.6)
+            ax.text(
+                anchor + text_dx,
+                y,
+                name,
+                ha=ha,
+                va="center",
+                fontsize=label_fontsize,
+            )
+            if labels:
+                ax.text(
+                    x_rank,
+                    y - 0.018,
+                    f"{rank:.3f}",
+                    ha="center",
+                    va="top",
+                    fontsize=9,
+                    color="#444444",
+                )
 
     interval_tuples: list[tuple[float, float]] = []
-    for clique in non_sig_cliques:
-        x_values = [rank_to_x(rank_by_name[name]) for name in clique]
+    for rank_lo, rank_hi in rank_intervals:
+        x_values = [rank_to_x(rank_lo), rank_to_x(rank_hi)]
         x_lo, x_hi = min(x_values), max(x_values)
         # Skip degenerate bars when tied ranks map to the same x-coordinate.
         if (x_hi - x_lo) <= 1e-8:
@@ -498,24 +528,25 @@ def graph_ranks(
         key=lambda item: (item[0], -(item[1] - item[0])),
     )
 
-    lane_right_edges: list[float] = []
     base_interval_y = rank_line_y - 0.055
     lane_gap = 0.034
     interval_pad = 0.004
-    for x_lo, x_hi in interval_tuples:
-        lane = 0
-        while lane < len(lane_right_edges) and x_lo <= lane_right_edges[lane] + interval_pad:
-            lane += 1
-        if lane == len(lane_right_edges):
-            lane_right_edges.append(x_hi)
-        else:
-            lane_right_edges[lane] = max(lane_right_edges[lane], x_hi)
+    for x_lo, x_hi, lane in _pack_intervals_into_lanes(
+        interval_tuples,
+        interval_pad=interval_pad,
+    ):
         y = base_interval_y - lane * lane_gap
-        ax.plot([x_lo, x_hi], [y, y], color="black", linewidth=5.0, solid_capstyle="butt")
+        ax.plot(
+            [x_lo, x_hi], [y, y], color="black", linewidth=5.0, solid_capstyle="butt"
+        )
 
     lowest_label_y = min(
-        left_y_start - max(len(left_idx) - 1, 0) * left_step,
-        right_y_start - max(len(right_idx) - 1, 0) * right_step if len(right_idx) else left_y_start,
+        label_y_start - max(len(left_idx) - 1, 0) * left_step,
+        (
+            label_y_start - max(len(right_idx) - 1, 0) * right_step
+            if len(right_idx)
+            else label_y_start
+        ),
     )
     y_min = lowest_label_y - 0.09
     y_max = rank_line_y + 0.12
