@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Wilcoxon/Holm and critical-difference style plotting utilities.
 
@@ -7,7 +5,10 @@ Inspired by: https://github.com/hfawaz/cd-diagram (GPL-3.0).
 This module is an original PFNs implementation.
 """
 
-from collections.abc import Iterable, Sequence
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from itertools import combinations
 
 import numpy as np
 import pandas as pd
@@ -15,6 +16,85 @@ from scipy.stats import friedmanchisquare, wilcoxon
 
 
 PairwiseResult = tuple[str, str, float, bool]
+
+# used for significance groups 
+DEFAULT_GROUP_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def _unique_labels(labels: Iterable[str]) -> list[str]:
+    return list(dict.fromkeys(str(label) for label in labels))
+
+
+def _require_labels(
+    frame: pd.DataFrame,
+    labels: Sequence[str],
+    *,
+    context: str,
+) -> None:
+    missing = [label for label in labels if label not in frame.columns]
+    if missing:
+        raise RuntimeError(f"Missing labels in {context}: {missing}")
+
+
+def _complete_score_matrix(
+    frame: pd.DataFrame,
+    labels: Sequence[str],
+    *,
+    higher_better: bool,
+) -> pd.DataFrame:
+    _require_labels(frame, labels, context="score table")
+    score_matrix = frame.reindex(columns=labels).dropna(subset=labels)
+    if score_matrix.empty:
+        raise RuntimeError("No complete paired rows available for Wilcoxon/Holm analysis.")
+
+    score_matrix = score_matrix.astype(float)
+    if not higher_better:
+        score_matrix = -score_matrix
+    return score_matrix.reset_index(drop=True)
+
+
+def _wilcoxon_p_value_from_arrays(
+    values_a: Sequence[float],
+    values_b: Sequence[float],
+    *,
+    alternative: str = "two-sided",
+    zero_method: str = "pratt",
+) -> float:
+    values_a = np.asarray(values_a, dtype=np.float64)
+    values_b = np.asarray(values_b, dtype=np.float64)
+    if values_a.size < 2:
+        return float("nan")
+    if np.all(values_a == values_b):
+        return 1.0
+
+    try:
+        return float(
+            wilcoxon(
+                values_a,
+                values_b,
+                alternative=alternative,
+                zero_method=zero_method,
+            ).pvalue
+        )
+    except ValueError:
+        return float("nan")
+
+
+def _raw_pairwise_p_values(
+    score_matrix: pd.DataFrame,
+    labels: Sequence[str],
+    *,
+    alternative: str = "two-sided",
+) -> dict[tuple[str, str], float]:
+    raw_p_values: dict[tuple[str, str], float] = {}
+    for label_a, label_b in combinations(labels, 2):
+        paired = score_matrix[[label_a, label_b]].dropna()
+        raw_p_values[(label_a, label_b)] = _wilcoxon_p_value_from_arrays(
+            paired[label_a],
+            paired[label_b],
+            alternative=alternative,
+        )
+    return raw_p_values
 
 
 def _find_maximal_cliques(
@@ -52,6 +132,194 @@ def _find_maximal_cliques(
     return cliques
 
 
+def _non_significant_adjacency(
+    names: Sequence[str],
+    p_values: Sequence[PairwiseResult],
+) -> dict[str, set[str]]:
+    adjacency: dict[str, set[str]] = {name: set() for name in names}
+    for name_a, name_b, _p_raw, significant in p_values:
+        if significant or name_a not in adjacency or name_b not in adjacency:
+            continue
+        adjacency[name_a].add(name_b)
+        adjacency[name_b].add(name_a)
+    return adjacency
+
+
+def _non_significant_rank_intervals(
+    rank_by_name: Mapping[str, float],
+    p_values: Sequence[PairwiseResult],
+) -> list[tuple[float, float]]:
+    adjacency = _non_significant_adjacency(list(rank_by_name), p_values)
+    intervals: list[tuple[float, float]] = []
+    for clique in _find_maximal_cliques(list(rank_by_name), adjacency):
+        ranks = [rank_by_name[name] for name in clique]
+        rank_min, rank_max = min(ranks), max(ranks)
+        if (rank_max - rank_min) > 1e-8:
+            intervals.append((rank_min, rank_max))
+    return sorted(
+        set(intervals),
+        key=lambda item: (item[0], -(item[1] - item[0])),
+    )
+
+
+def _pack_intervals_into_lanes(
+    intervals: Sequence[tuple[float, float]],
+    *,
+    interval_pad: float,
+) -> list[tuple[float, float, int]]:
+    lane_right_edges: list[float] = []
+    packed: list[tuple[float, float, int]] = []
+    for x_lo, x_hi in intervals:
+        lane = 0
+        while lane < len(lane_right_edges) and x_lo <= lane_right_edges[lane] + interval_pad:
+            lane += 1
+        if lane == len(lane_right_edges):
+            lane_right_edges.append(x_hi)
+        else:
+            lane_right_edges[lane] = max(lane_right_edges[lane], x_hi)
+        packed.append((x_lo, x_hi, lane))
+    return packed
+
+
+def holm_adjust_p_values(p_values: Mapping[object, float] | pd.Series) -> pd.Series:
+    """
+    Return Holm step-down adjusted p-values.
+
+    The input index/keys are preserved. NaN p-values are ignored for the
+    multiplicity count and remain NaN in the output.
+    """
+    p_values = pd.Series(p_values, dtype=float)
+    adjusted = pd.Series(index=p_values.index, dtype=float)
+    valid = p_values.dropna().sort_values(kind="stable")
+    running_max = 0.0
+    m = int(valid.shape[0])
+    for i, (label, p_value) in enumerate(valid.items()):
+        adjusted_p = min((m - i) * float(p_value), 1.0)
+        running_max = max(running_max, adjusted_p)
+        adjusted.loc[label] = running_max
+    return adjusted.reindex(p_values.index)
+
+
+def pairwise_wilcoxon_holm(
+    metric_scores: pd.DataFrame,
+    *,
+    target_labels: Iterable[str],
+    alpha: float = 0.05,
+    higher_better: bool = True,
+    alternative: str = "two-sided",
+) -> tuple[pd.DataFrame, pd.Series]:
+    """
+    Run all pairwise paired Wilcoxon tests and Holm adjustment.
+
+    Returns a symmetric boolean significance matrix and the Holm-adjusted
+    p-values indexed by `(label_a, label_b)` tuples.
+    """
+    labels = _unique_labels(target_labels)
+    if len(labels) < 2:
+        raise RuntimeError("Need at least two labels for pairwise Wilcoxon/Holm.")
+
+    _require_labels(metric_scores, labels, context="metric_scores")
+
+    means = metric_scores[labels].mean(axis=0)
+    labels = list(means.sort_values(ascending=not higher_better).index)
+    raw_p_values = _raw_pairwise_p_values(
+        metric_scores,
+        labels,
+        alternative=alternative,
+    )
+
+    adjusted_p_values = holm_adjust_p_values(raw_p_values)
+    significantly_different = pd.DataFrame(False, index=labels, columns=labels)
+    for (label_a, label_b), adjusted_p_value in adjusted_p_values.items():
+        is_significant = pd.notna(adjusted_p_value) and adjusted_p_value <= alpha
+        significantly_different.loc[label_a, label_b] = is_significant
+        significantly_different.loc[label_b, label_a] = is_significant
+    return significantly_different, adjusted_p_values
+
+
+def compact_significance_letters(
+    significantly_different: pd.DataFrame,
+    *,
+    target_labels: Iterable[str],
+    letters: str = DEFAULT_GROUP_LETTERS,
+) -> pd.Series:
+    """
+    Assign compact display letters for a pairwise significance matrix.
+
+    Labels sharing a letter are not significantly different. The assignment is
+    deterministic and intended for table display; it is not an optimization
+    routine for the minimum possible number of letters.
+    """
+    ordered_labels = list(significantly_different.index)
+    groups: list[list[str]] = []
+
+    for label in ordered_labels:
+        placed = False
+        for group in groups:
+            if all(not bool(significantly_different.loc[label, other]) for other in group):
+                group.append(label)
+                placed = True
+        if not placed:
+            groups.append([label])
+
+    for i, label_a in enumerate(ordered_labels[:-1]):
+        for label_b in ordered_labels[i + 1 :]:
+            if bool(significantly_different.loc[label_a, label_b]):
+                continue
+            if any(label_a in group and label_b in group for group in groups):
+                continue
+            for group in groups:
+                can_add_b = label_a in group and all(
+                    not bool(significantly_different.loc[label_b, other])
+                    for other in group
+                )
+                can_add_a = label_b in group and all(
+                    not bool(significantly_different.loc[label_a, other])
+                    for other in group
+                )
+                if can_add_b:
+                    group.append(label_b)
+                    break
+                if can_add_a:
+                    group.append(label_a)
+                    break
+            else:
+                groups.append([label_a, label_b])
+
+    letter_by_label = {label: "" for label in target_labels}
+    for group_idx, group in enumerate(groups):
+        if group_idx >= len(letters):
+            raise ValueError("Not enough letters for significance groups.")
+        letter = letters[group_idx]
+        for label in dict.fromkeys(group):
+            letter_by_label[label] += letter
+
+    return pd.Series(letter_by_label, index=list(target_labels), dtype=object)
+
+
+def wilcoxon_holm_significance_letters(
+    metric_scores: pd.DataFrame,
+    *,
+    target_labels: Iterable[str],
+    alpha: float = 0.05,
+    higher_better: bool = True,
+    letters: str = DEFAULT_GROUP_LETTERS,
+) -> pd.Series:
+    """Return LaTeX superscript letters from paired Wilcoxon/Holm tests."""
+    significantly_different, _ = pairwise_wilcoxon_holm(
+        metric_scores,
+        target_labels=target_labels,
+        alpha=alpha,
+        higher_better=higher_better,
+    )
+    raw_letters = compact_significance_letters(
+        significantly_different,
+        target_labels=target_labels,
+        letters=letters,
+    )
+    return raw_letters.map(lambda value: rf"$^{{{value}}}$" if value else "")
+
+
 def wilcoxon_holm_from_wide(
     *,
     metric_wide_complete: pd.DataFrame,
@@ -66,51 +334,37 @@ def wilcoxon_holm_from_wide(
     - `p_values` entries are `(label_a, label_b, p_raw, significant_holm)`.
     - `average_ranks` uses rank 1 as best and is sorted descending for CD plotting.
     """
-    labels = list(dict.fromkeys(target_labels))
+    labels = _unique_labels(target_labels)
     if len(labels) < 2:
         raise RuntimeError("Need at least two labels for Wilcoxon/Holm analysis.")
 
-    missing = [label for label in labels if label not in metric_wide_complete.columns]
-    if missing:
-        raise RuntimeError(f"Missing target labels in metric_wide_complete: {missing}")
-
-    score_matrix = metric_wide_complete.reindex(columns=labels).dropna(subset=labels)
-    if score_matrix.empty:
-        raise RuntimeError("No complete paired rows available for Wilcoxon/Holm analysis.")
-
-    score_matrix = score_matrix.astype(float)
-    if not higher_better:
-        score_matrix = -score_matrix
-    score_matrix = score_matrix.reset_index(drop=True)
+    score_matrix = _complete_score_matrix(
+        metric_wide_complete,
+        labels,
+        higher_better=higher_better,
+    )
 
     friedman_reject = True
     if len(labels) >= 3:
         friedman_p_value = float(
-            friedmanchisquare(*(score_matrix[label].to_numpy(dtype=np.float64) for label in labels))[1]
+            friedmanchisquare(
+                *(score_matrix[label].to_numpy(dtype=np.float64) for label in labels)
+            )[1]
         )
         friedman_reject = friedman_p_value < alpha
 
-    p_values: list[PairwiseResult] = []
-    for i, label_a in enumerate(labels[:-1]):
-        perf_a = score_matrix[label_a].to_numpy(dtype=np.float64)
-        for label_b in labels[i + 1 :]:
-            perf_b = score_matrix[label_b].to_numpy(dtype=np.float64)
-            try:
-                p_value = float(wilcoxon(perf_a, perf_b, zero_method="pratt")[1])
-            except ValueError:
-                # All differences are exactly zero.
-                p_value = 1.0
-            p_values.append((label_a, label_b, p_value, False))
-
-    if friedman_reject and p_values:
+    raw_p_values = _raw_pairwise_p_values(score_matrix, labels)
+    p_values: list[PairwiseResult] = [
+        (label_a, label_b, float(p_value), False)
+        for (label_a, label_b), p_value in raw_p_values.items()
+    ]
+    if friedman_reject:
         sorted_idx = sorted(range(len(p_values)), key=lambda idx: p_values[idx][2])
         for rank, idx in enumerate(sorted_idx):
-            threshold = float(alpha / (len(p_values) - rank))
-            if p_values[idx][2] <= threshold:
-                label_a, label_b, p_raw, _ = p_values[idx]
-                p_values[idx] = (label_a, label_b, p_raw, True)
-            else:
+            if p_values[idx][2] > float(alpha / (len(p_values) - rank)):
                 break
+            label_a, label_b, p_raw, _ = p_values[idx]
+            p_values[idx] = (label_a, label_b, p_raw, True)
 
     average_ranks = (
         score_matrix.rank(axis=1, method="average", ascending=False)

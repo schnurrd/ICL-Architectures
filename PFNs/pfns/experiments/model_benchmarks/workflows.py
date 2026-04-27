@@ -6,7 +6,12 @@ from typing import Any
 import pandas as pd
 
 from .analysis import nested_metric_table_to_long_df
-from .io import merge_model_results, run_metadata_matches
+from .io import (
+    find_latest_real_world_bundle_for_model,
+    merge_model_results,
+    run_metadata_matches,
+)
+from .real_world_presets import get_real_world_preset
 
 
 def build_seq_len_run_metadata(
@@ -287,3 +292,41 @@ def aggregate_real_world_results_from_bundles(
         )
 
     return all_results, results_by_model
+
+
+def load_cached_real_world_results_for_preset(
+    preset_name: str,
+    *,
+    model_names: Iterable[str],
+    device: str,
+    output_root: str | Path,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Load compatible cached real-world results for one preset and model list."""
+    preset = get_real_world_preset(preset_name)
+    experiment = preset["experiment"]
+    expected_metadata = build_real_world_run_metadata(
+        experiment=experiment,
+        device=device,
+    )
+
+    bundles_by_model: dict[str, dict[str, Any]] = {}
+    missing_models: list[str] = []
+    for model_name in model_names:
+        bundle_path, bundle = find_latest_real_world_bundle_for_model(
+            model_name,
+            output_root=output_root,
+            expected_metadata=expected_metadata,
+        )
+        if bundle is None:
+            missing_models.append(model_name)
+            continue
+        bundles_by_model[model_name] = {"path": bundle_path, "bundle": bundle}
+
+    if not bundles_by_model:
+        return pd.DataFrame(), missing_models
+
+    results, _ = aggregate_real_world_results_from_bundles(
+        bundles_by_model,
+        expected_splits=int(experiment["n_splits"]),
+    )
+    return results, missing_models

@@ -57,6 +57,24 @@ def resolve_display_name_map(df: pd.DataFrame | None = None) -> dict[str, str]:
     return display_name_map
 
 
+def make_display_name_formatter(
+    df: pd.DataFrame | None = None,
+    *,
+    display_name_map: dict[str, str] | None = None,
+):
+    """Return a label formatter backed by an explicit display-name map."""
+    name_map = (
+        resolve_display_name_map(df)
+        if display_name_map is None
+        else dict(display_name_map)
+    )
+
+    def format_display_name(label: object) -> str:
+        return name_map.get(str(label), str(label))
+
+    return format_display_name
+
+
 def build_model_legend_name_map(
     df: pd.DataFrame | None = None,
     *,

@@ -308,6 +308,45 @@ def plot_gain_boxplot(
     return fig, ax
 
 
+def compute_wilcoxon_holm_summary(
+    *,
+    target_labels: Iterable[str],
+    metric_wide_complete: pd.DataFrame,
+    higher_better: bool,
+    alpha: float = 0.05,
+    comparison_label: str = "comparison",
+) -> dict[str, Any]:
+    """Return Wilcoxon/Holm p-values and average ranks for a complete wide table."""
+    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import (
+        wilcoxon_holm_from_wide,
+    )
+
+    target_labels = list(dict.fromkeys(target_labels))
+    p_values, mean_ranks, n_pairs = wilcoxon_holm_from_wide(
+        metric_wide_complete=metric_wide_complete,
+        target_labels=target_labels,
+        higher_better=higher_better,
+        alpha=alpha,
+    )
+    p_value_table = pd.DataFrame(
+        p_values,
+        columns=[
+            f"{comparison_label}_a",
+            f"{comparison_label}_b",
+            "p_raw",
+            "significant_holm",
+        ],
+    ).sort_values("p_raw", ascending=True, kind="stable")
+    rank_table = mean_ranks.reindex(target_labels).to_frame("average_rank")
+    return {
+        "p_values": p_values,
+        "p_value_table": p_value_table,
+        "mean_ranks": mean_ranks,
+        "rank_table": rank_table,
+        "n_pairs": int(n_pairs),
+    }
+
+
 def run_comparison_analysis(
     *,
     comparison_results: pd.DataFrame,
@@ -388,6 +427,18 @@ def run_comparison_analysis(
             higher_better=higher_better,
         )
 
+    wilcoxon_payload = (
+        compute_wilcoxon_holm_summary(
+            target_labels=target_labels,
+            metric_wide_complete=metric_wide_complete,
+            higher_better=higher_better,
+            alpha=wilcoxon_alpha,
+            comparison_label=comparison_label,
+        )
+        if include_cd_diagram
+        else None
+    )
+
     if include_cd_diagram:
         figures["wilcoxon_cd"] = plot_wilcoxon_cd_diagram(
             target_labels=target_labels,
@@ -396,6 +447,7 @@ def run_comparison_analysis(
             alpha=wilcoxon_alpha,
             comparison_label=comparison_label,
             title=f"Wilcoxon/Holm comparison diagram ({metric_label})",
+            wilcoxon_summary=wilcoxon_payload,
         )
 
     return {
@@ -405,8 +457,10 @@ def run_comparison_analysis(
         "n_complete_pairs": int(metric_wide_complete.shape[0]),
         "gain": gain_payload,
         "pairwise": pairwise_payload,
+        "wilcoxon": wilcoxon_payload,
         "figures": figures,
     }
+
 
 def plot_wilcoxon_cd_diagram(
     *,
@@ -416,23 +470,24 @@ def plot_wilcoxon_cd_diagram(
     alpha: float = 0.05,
     title: str = "Wilcoxon/Holm comparison diagram",
     comparison_label: str = "comparison",
+    wilcoxon_summary: dict[str, Any] | None = None,
 ):
     """
     Draw a Wilcoxon/Holm CD diagram for arbitrary comparisons.
     """
-    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import (
-        graph_ranks,
-        wilcoxon_holm_from_wide,
-    )
+    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import graph_ranks
 
     target_labels = list(dict.fromkeys(target_labels))
-    p_values, mean_ranks, _ = wilcoxon_holm_from_wide(
-        metric_wide_complete=metric_wide_complete,
+    wilcoxon_summary = wilcoxon_summary or compute_wilcoxon_holm_summary(
         target_labels=target_labels,
+        metric_wide_complete=metric_wide_complete,
         higher_better=higher_better,
         alpha=alpha,
+        comparison_label=comparison_label,
     )
 
+    p_values = wilcoxon_summary["p_values"]
+    mean_ranks = wilcoxon_summary["mean_ranks"]
     ordered = mean_ranks.reindex(target_labels).dropna().sort_values(ascending=False)
     names = ordered.index.to_numpy()
     avranks = ordered.to_numpy(dtype=float).tolist()
