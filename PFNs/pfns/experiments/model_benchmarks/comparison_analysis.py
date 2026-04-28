@@ -7,6 +7,10 @@ import pandas as pd
 from scipy.stats import t as student_t
 
 
+def _unique_string_labels(labels: Iterable[object]) -> list[str]:
+    return list(dict.fromkeys(str(label) for label in labels))
+
+
 def ci95_halfwidth(values: pd.Series) -> float:
     """
     Return two-sided 95% CI half-width for the sample mean.
@@ -16,7 +20,7 @@ def ci95_halfwidth(values: pd.Series) -> float:
     if n <= 1:
         return 0.0
     std = float(clean_values.std(ddof=1))
-    sem = float(std / (n ** 0.5))
+    sem = float(std / (n**0.5))
     t_crit = float(student_t.ppf(0.975, df=n - 1))
     return float(t_crit * sem)
 
@@ -28,7 +32,7 @@ def summarize_diff(diff: pd.Series) -> dict[str, float | int | bool] | None:
 
     mean_gain = float(diff.mean())
     std_gain = float(diff.std(ddof=1)) if n > 1 else 0.0
-    sem_gain = float(std_gain / (n ** 0.5)) if n > 1 else 0.0
+    sem_gain = float(std_gain / (n**0.5)) if n > 1 else 0.0
     ci95 = ci95_halfwidth(diff)
     ci95_low = mean_gain - ci95
     ci95_high = mean_gain + ci95
@@ -45,7 +49,9 @@ def summarize_diff(diff: pd.Series) -> dict[str, float | int | bool] | None:
     }
 
 
-def paired_gain(series_a: pd.Series, series_b: pd.Series, *, higher_better: bool) -> pd.Series:
+def paired_gain(
+    series_a: pd.Series, series_b: pd.Series, *, higher_better: bool
+) -> pd.Series:
     """Return paired gain (positive is better for `series_a`)."""
     if higher_better:
         return (series_a - series_b).dropna()
@@ -126,7 +132,9 @@ def compute_reference_gain_analysis(
         )
     comparison_labels = [c for c in target_labels if c != reference_label]
     if not comparison_labels:
-        raise RuntimeError("No comparison labels remain after selecting reference_label.")
+        raise RuntimeError(
+            "No comparison labels remain after selecting reference_label."
+        )
 
     label_means = metric_wide_complete[target_labels].mean(axis=0)
     gain_records = []
@@ -179,8 +187,12 @@ def compute_pairwise_gain_matrices(
 ) -> dict[str, pd.DataFrame]:
     """Compute pairwise mean gain and uncertainty matrices across any target labels."""
     target_labels = list(dict.fromkeys(target_labels))
-    pairwise_mean = pd.DataFrame(index=target_labels, columns=target_labels, dtype=float)
-    pairwise_ci95 = pd.DataFrame(index=target_labels, columns=target_labels, dtype=float)
+    pairwise_mean = pd.DataFrame(
+        index=target_labels, columns=target_labels, dtype=float
+    )
+    pairwise_ci95 = pd.DataFrame(
+        index=target_labels, columns=target_labels, dtype=float
+    )
     pairwise_n = pd.DataFrame(index=target_labels, columns=target_labels, dtype=float)
     pairwise_sig = pd.DataFrame(index=target_labels, columns=target_labels, dtype=bool)
 
@@ -202,7 +214,9 @@ def compute_pairwise_gain_matrices(
             pairwise_mean.loc[row_label, col_label] = float(summary_stats["mean_gain"])
             pairwise_ci95.loc[row_label, col_label] = float(summary_stats["ci95"])
             pairwise_n.loc[row_label, col_label] = float(summary_stats["n_pairs"])
-            pairwise_sig.loc[row_label, col_label] = bool(summary_stats["ci95_excludes_zero"])
+            pairwise_sig.loc[row_label, col_label] = bool(
+                summary_stats["ci95_excludes_zero"]
+            )
 
     return {
         "pairwise_mean": pairwise_mean,
@@ -298,7 +312,13 @@ def plot_gain_boxplot(
         medianprops={"color": "#08306b", "linewidth": 1.5},
     )
     means = [float(np.mean(arr)) if len(arr) else np.nan for arr in box_data]
-    ax.scatter(means, np.arange(1, len(ordered_labels) + 1), color="#08306b", s=22, label="Mean gain")
+    ax.scatter(
+        means,
+        np.arange(1, len(ordered_labels) + 1),
+        color="#08306b",
+        s=22,
+        label="Mean gain",
+    )
     ax.axvline(0.0, color="black", linewidth=1.0, alpha=0.8)
     ax.set_xlabel(f"Paired gain on {metric_label} (positive is better)")
     ax.set_title(f"Gain distribution by comparison vs {reference_label} (unit={unit})")
@@ -306,6 +326,46 @@ def plot_gain_boxplot(
     ax.legend(loc="best")
     fig.tight_layout()
     return fig, ax
+
+
+def compute_wilcoxon_holm_summary(
+    *,
+    target_labels: Iterable[str],
+    metric_wide_complete: pd.DataFrame,
+    higher_better: bool,
+    alpha: float = 0.05,
+    comparison_label: str = "comparison",
+) -> dict[str, Any]:
+    """Return Wilcoxon/Holm p-values and average ranks for a complete wide table."""
+    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import (
+        wilcoxon_holm_from_wide,
+    )
+
+    target_labels = _unique_string_labels(target_labels)
+    metric_wide_complete = metric_wide_complete.rename(columns=str)
+    p_values, mean_ranks, n_pairs = wilcoxon_holm_from_wide(
+        metric_wide_complete=metric_wide_complete,
+        target_labels=target_labels,
+        higher_better=higher_better,
+        alpha=alpha,
+    )
+    p_value_table = pd.DataFrame(
+        p_values,
+        columns=[
+            f"{comparison_label}_a",
+            f"{comparison_label}_b",
+            "p_raw",
+            "significant_holm",
+        ],
+    ).sort_values("p_raw", ascending=True, kind="stable")
+    rank_table = mean_ranks.reindex(target_labels).to_frame("average_rank")
+    return {
+        "p_values": p_values,
+        "p_value_table": p_value_table,
+        "mean_ranks": mean_ranks,
+        "rank_table": rank_table,
+        "n_pairs": int(n_pairs),
+    }
 
 
 def run_comparison_analysis(
@@ -335,7 +395,9 @@ def run_comparison_analysis(
     target_labels = list(dict.fromkeys(target_labels))
     pair_cols = list(pair_cols)
     if len(target_labels) < 2:
-        raise RuntimeError("Need at least two labels in target_labels for comparison analysis.")
+        raise RuntimeError(
+            "Need at least two labels in target_labels for comparison analysis."
+        )
     if unit not in {"dataset", "split", "seqlen"}:
         raise ValueError("unit must be 'dataset', 'split', or 'seqlen'.")
 
@@ -388,6 +450,18 @@ def run_comparison_analysis(
             higher_better=higher_better,
         )
 
+    wilcoxon_payload = (
+        compute_wilcoxon_holm_summary(
+            target_labels=target_labels,
+            metric_wide_complete=metric_wide_complete,
+            higher_better=higher_better,
+            alpha=wilcoxon_alpha,
+            comparison_label=comparison_label,
+        )
+        if include_cd_diagram
+        else None
+    )
+
     if include_cd_diagram:
         figures["wilcoxon_cd"] = plot_wilcoxon_cd_diagram(
             target_labels=target_labels,
@@ -396,6 +470,7 @@ def run_comparison_analysis(
             alpha=wilcoxon_alpha,
             comparison_label=comparison_label,
             title=f"Wilcoxon/Holm comparison diagram ({metric_label})",
+            wilcoxon_summary=wilcoxon_payload,
         )
 
     return {
@@ -405,8 +480,10 @@ def run_comparison_analysis(
         "n_complete_pairs": int(metric_wide_complete.shape[0]),
         "gain": gain_payload,
         "pairwise": pairwise_payload,
+        "wilcoxon": wilcoxon_payload,
         "figures": figures,
     }
+
 
 def plot_wilcoxon_cd_diagram(
     *,
@@ -416,23 +493,25 @@ def plot_wilcoxon_cd_diagram(
     alpha: float = 0.05,
     title: str = "Wilcoxon/Holm comparison diagram",
     comparison_label: str = "comparison",
+    wilcoxon_summary: dict[str, Any] | None = None,
 ):
     """
     Draw a Wilcoxon/Holm CD diagram for arbitrary comparisons.
     """
-    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import (
-        graph_ranks,
-        wilcoxon_holm_from_wide,
-    )
+    from pfns.experiments.model_benchmarks.wilcoxon_cd_diagram import graph_ranks
 
-    target_labels = list(dict.fromkeys(target_labels))
-    p_values, mean_ranks, _ = wilcoxon_holm_from_wide(
-        metric_wide_complete=metric_wide_complete,
+    target_labels = _unique_string_labels(target_labels)
+    metric_wide_complete = metric_wide_complete.rename(columns=str)
+    wilcoxon_summary = wilcoxon_summary or compute_wilcoxon_holm_summary(
         target_labels=target_labels,
+        metric_wide_complete=metric_wide_complete,
         higher_better=higher_better,
         alpha=alpha,
+        comparison_label=comparison_label,
     )
 
+    p_values = wilcoxon_summary["p_values"]
+    mean_ranks = wilcoxon_summary["mean_ranks"].rename(index=str)
     ordered = mean_ranks.reindex(target_labels).dropna().sort_values(ascending=False)
     names = ordered.index.to_numpy()
     avranks = ordered.to_numpy(dtype=float).tolist()
