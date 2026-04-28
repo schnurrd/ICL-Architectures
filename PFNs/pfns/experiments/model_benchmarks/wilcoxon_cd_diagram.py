@@ -248,6 +248,33 @@ def pairwise_wilcoxon_holm(
     return significantly_different, adjusted_p_values
 
 
+def _validate_compact_significance_letters(
+    significantly_different: pd.DataFrame,
+    markers: pd.Series,
+) -> None:
+    """Verify that compact letters exactly encode pairwise non-significance."""
+    if not markers.map(bool).all():
+        missing = markers.index[~markers.map(bool)].tolist()
+        raise RuntimeError(f"Missing significance letters for labels: {missing}")
+
+    for label_a, label_b in combinations(markers.index, 2):
+        share_letter = bool(set(markers.loc[label_a]) & set(markers.loc[label_b]))
+        are_not_significantly_different = not bool(
+            significantly_different.loc[label_a, label_b]
+        )
+        if share_letter != are_not_significantly_different:
+            relation = (
+                "not significantly different"
+                if are_not_significantly_different
+                else "significantly different"
+            )
+            raise RuntimeError(
+                "Significance letter mismatch for "
+                f"{label_a!r} and {label_b!r}: pair is {relation}, "
+                f"letters are {markers.loc[label_a]!r} and {markers.loc[label_b]!r}."
+            )
+
+
 def compact_significance_letters(
     significantly_different: pd.DataFrame,
     *,
@@ -308,7 +335,9 @@ def compact_significance_letters(
         for label in dict.fromkeys(group):
             letter_by_label[label] += letter
 
-    return pd.Series(letter_by_label, index=labels, dtype=object)
+    markers = pd.Series(letter_by_label, index=labels, dtype=object)
+    _validate_compact_significance_letters(significantly_different, markers)
+    return markers
 
 
 def wilcoxon_holm_significance_letters(
