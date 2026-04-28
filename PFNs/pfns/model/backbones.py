@@ -369,7 +369,7 @@ class FLABackboneConfig(BackboneConfig):
     bidirectional_state_fusion: str = "mean_output_mean_cache"
     state_passing: bool = False
     state_passing_dropout: float = 0.1
-    include_self_term: bool = False
+    include_self_term: bool = True
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_init_mode: MimeticInitMode = "gate_only"

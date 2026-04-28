@@ -160,6 +160,9 @@ def _maybe_patch_gla_with_stateless_recurrent(
         assert gv is None, "naive_recurrent_gla does not support gv."
         assert not reverse, "naive_recurrent_gla does not support reverse processing."
         assert cu_seqlens is None, "naive_recurrent_gla does not support cu_seqlens."
+        assert output_final_state is False, (
+            "output_final_state must be False in stateless_gla patch."
+        )
         assert q.shape[1] == 1, "stateless_gla patch only supports decode-like T=1."
         if gk is None:
             gk = g
@@ -191,8 +194,7 @@ def _maybe_patch_gla_with_stateless_recurrent(
 
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, 1, *o.shape[2:])
-        final_state = initial_state if output_final_state else None
-        return o.to(dtype), final_state
+        return o.to(dtype), None
 
     original_fused_recurrent = gla_layer.fused_recurrent_gla
     original_chunked = gla_layer.chunk_gla
@@ -244,6 +246,9 @@ def _maybe_patch_kda_with_stateless_recurrent(
         assert initial_state is not None, "stateless mode requires an initial_state."
         assert not reverse, "stateless_kda does not support reverse processing."
         assert cu_seqlens is None, "stateless_kda does not support cu_seqlens."
+        assert output_final_state is False, (
+            "output_final_state must be False in stateless_kda patch."
+        )
         assert q.shape[1] == 1, "stateless_kda patch only supports decode-like T=1."
 
         scale = k.shape[-1] ** -0.5 if scale is None else scale
@@ -315,9 +320,7 @@ def _maybe_patch_kda_with_stateless_recurrent(
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, *o.shape[2:])
 
-        final_state = initial_state if output_final_state else None
-        
-        return o.to(dtype), final_state
+        return o.to(dtype), None
 
     original_fused_recurrent_kda = kda_layer.fused_recurrent_kda
     original_chunk_kda = kda_layer.chunk_kda
@@ -357,6 +360,9 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
         assert cu_seqlens is None, "native_recurrent_deltanet does not support cu_seqlens."
         assert beta is not None, "beta is required for native_recurrent_deltanet."
         assert initial_state is not None, "stateless mode requires an initial_state."
+        assert output_final_state is False, (
+            "output_final_state must be False in stateless_deltanet patch."
+        )
         assert q.shape[1] == 1, "stateless_deltanet patch only supports decode-like T=1."
         
         scale = k.shape[-1] ** -0.5 if scale is None else scale
@@ -399,9 +405,7 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, 1, *o.shape[2:])
             
-        final_state = initial_state if output_final_state else None
-        
-        return o.to(dtype), final_state
+        return o.to(dtype), None
 
     original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
     original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
@@ -446,6 +450,9 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
         assert initial_state is not None, "stateless mode requires an initial_state."
         assert cu_seqlens is None, "stateless_gated_deltanet does not support cu_seqlens."
         assert num_householder == 1, "stateless_gated_deltanet only supports num_householder=1."
+        assert output_final_state is False, (
+            "output_final_state must be False in stateless_gated_deltanet patch."
+        )
         assert q.shape[1] == 1, "stateless_gated_deltanet patch only supports decode-like T=1."
 
         scale = scale if scale is not None else k.shape[-1] ** -0.5
@@ -516,9 +523,7 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, 1, *o.shape[2:])
 
-        final_state = initial_state if output_final_state else None
-        
-        return o.to(dtype), final_state
+        return o.to(dtype), None
 
     original_fused = gated_deltanet_layer.fused_recurrent_gated_delta_rule
     original_chunk = gated_deltanet_layer.chunk_gated_delta_rule
@@ -851,6 +856,9 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
         assert offsets is None, "stateless linear_attn patch does not support offsets."
         assert indices is None, "stateless linear_attn patch does not support indices."
         assert initial_state is not None, "stateless linear_attn patch requires initial_state."
+        assert output_final_state is False, (
+            "output_final_state must be False in stateless linear_attn patch."
+        )
         assert q.shape[1] == 1, "stateless linear_attn patch only supports decode-like T=1."
         assert not normalize, ("stateless linear_attn patch does not support normalize=True")
 
@@ -882,8 +890,7 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, *o.shape[2:])
 
-        final_state = initial_state if output_final_state else None
-        return o.to(dtype), final_state
+        return o.to(dtype), None
 
     original_fused_recurrent = linear_attn_layer.fused_recurrent_linear_attn
     original_chunk = linear_attn_layer.chunk_linear_attn
