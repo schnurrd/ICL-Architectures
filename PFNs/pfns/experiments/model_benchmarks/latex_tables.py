@@ -155,29 +155,17 @@ def normalize_setting_pair_scores(
     *,
     target_labels: Sequence[str],
     higher_is_better: bool,
-    score_method: str = "minmax",
 ) -> pd.DataFrame:
-    """Convert raw paired scores to per-row min-max or rank scores."""
+    """Convert raw paired scores to per-row min-max scores."""
     values = complete_pair_table[list(target_labels)]
-    if score_method == "minmax":
-        row_min = values.min(axis=1)
-        row_max = values.max(axis=1)
-        denominator = (row_max - row_min).mask(lambda value: value == 0.0)
-        if higher_is_better:
-            scores = values.sub(row_min, axis=0).div(denominator, axis=0)
-        else:
-            scores = values.rsub(row_max, axis=0).div(denominator, axis=0)
-        return scores.fillna(0.5)
-
-    if score_method == "rank":
-        ranks = values.rank(axis=1, ascending=not higher_is_better, method="average")
-        if len(target_labels) == 1:
-            return ranks.fillna(1.0)
-        return (len(target_labels) - ranks).div(len(target_labels) - 1)
-
-    raise ValueError(
-        f"Unsupported score_method={score_method!r}. Choose 'minmax' or 'rank'."
-    )
+    row_min = values.min(axis=1)
+    row_max = values.max(axis=1)
+    denominator = (row_max - row_min).mask(lambda value: value == 0.0)
+    if higher_is_better:
+        scores = values.sub(row_min, axis=0).div(denominator, axis=0)
+    else:
+        scores = values.rsub(row_max, axis=0).div(denominator, axis=0)
+    return scores.fillna(0.5)
 
 
 def complete_metric_wide_scores(
@@ -189,7 +177,6 @@ def complete_metric_wide_scores(
     target_labels: Sequence[str],
     normalize: bool = False,
     higher_is_better: bool = True,
-    score_method: str = "minmax",
 ) -> pd.DataFrame:
     """Build a complete wide metric table, optionally normalized per paired row."""
     pair_cols = list(pair_cols)
@@ -211,7 +198,6 @@ def complete_metric_wide_scores(
             complete[list(target_labels)],
             target_labels=target_labels,
             higher_is_better=higher_is_better,
-            score_method=score_method,
         )
     return complete[list(target_labels)]
 
@@ -257,7 +243,6 @@ def build_setting_metric_tables(
     metric_label_fn: Callable[[str, bool], str],
     sort_metric: str,
     normalize: bool = False,
-    score_method: str = "minmax",
     add_significance_markers: bool = True,
     significance_alpha: float = 0.05,
     group_letters: str = DEFAULT_GROUP_LETTERS,
@@ -287,8 +272,9 @@ def build_setting_metric_tables(
                 target_labels=target_labels,
                 normalize=normalize,
                 higher_is_better=higher_is_better,
-                score_method=score_method,
             )
+            if metric_scores.empty:
+                continue
             metric_means = metric_scores[list(target_labels)].mean(axis=0)
             metric_ranks = metric_means.rank(
                 ascending=False if normalize else not higher_is_better,
@@ -487,12 +473,13 @@ def sort_models_by_reference_metric(
     sort_col = (benchmark_label, metric_label)
     if sort_col not in table.columns:
         return list(table.index)
+    reverse = metric_label_higher_is_better(metric_label)
 
     def sort_subset(model_names: list[str]) -> list[str]:
         return sorted(
             model_names,
             key=lambda model: table.loc[model, sort_col],
-            reverse=True,
+            reverse=reverse,
         )
 
     ranked_models = [

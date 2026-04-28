@@ -649,6 +649,13 @@ class FLABackbone(Backbone):
                 return_cache=return_cache,
             )
 
+        if cache_params is not None and return_cache and use_custom_recurrent:
+            raise ValueError(
+                "Custom stateless recurrent FLA patches do not support returning "
+                "updated caches. Use return_cache=False, or use native cache "
+                "processing for cache-updating decode."
+            )
+
         use_cache = return_cache or (
             cache_params is not None and isinstance(self.fla, Mamba2Model)
         )
