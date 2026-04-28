@@ -311,6 +311,12 @@ DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
     "DeltaNet_Int_MT_Seq_Len_500-64K_loguniform": {
         "wandb_run_id": "fla_models/runs/pyfldrsm",
     },
+    "DeltaNet_Comb_ST_Seq_Len_200-64K_loguniform": {
+        "wandb_run_id": "fla_models/runs/9llxebf9",
+    },
+    "DeltaNet_Comb_ST_Seq_Len_200-100K_loguniform": {
+        "wandb_run_id": "fla_models/runs/oh6n51z3",
+    },
     "DeltaNet_Int_MT_Seq_Len_1K": {
         "wandb_run_id": "fla_models/runs/ji6lw9hu",
     },
