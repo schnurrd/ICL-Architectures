@@ -394,7 +394,7 @@ class BatchShapeSamplerConfig(BaseConfig):
         if seq_len_distribution == "shifted_lognormal":
             # Calibrated for sigma=1.6 and the long-sequence staged batch sizes
             # so E[batch_size(seq_len) * seq_len] matches 8 * 1000 rows.
-            target_mean_seq_len = 1135.0
+            target_mean_seq_len = 1138.0
             if not min_seq_len < target_mean_seq_len < max_seq_len:
                 raise ValueError(
                     "shifted_lognormal target mean must be between min_seq_len "
