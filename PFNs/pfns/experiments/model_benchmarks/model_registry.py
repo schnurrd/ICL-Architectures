@@ -319,10 +319,10 @@ DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/didft89r",
         "display_name": "DeltaNet Seq Len\n200-16K loguniform",
     },
-    # "DeltaNet_Comb_ST_Seq_Len_200-100K_loguniform": {
-    #     "wandb_run_id": "fla_models/runs/oh6n51z3",
-    #     "display_name": "DeltaNet Seq Len\n200-100K loguniform",
-    # },
+    "DeltaNet_Comb_ST_Seq_Len_200-100K_loguniform": {
+        "wandb_run_id": "fla_models/runs/oh6n51z3",
+        "display_name": "DeltaNet Seq Len\n200-100K loguniform",
+    },
     "DeltaNet_Comb_ST_Reference": {
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "display_name": "DeltaNet Reference",
