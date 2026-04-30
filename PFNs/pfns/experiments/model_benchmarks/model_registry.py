@@ -352,7 +352,7 @@ DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
 
 EQUAL_PARAMS_MODELS_RETRAINED: dict[str, dict[str, Any]] = {
     "equal_params_new:Linear_Attention_Comb_ST": {
-      "wandb_run_id": "linear_attention/runs/743tmxot", # updated fla version
+      "wandb_run_id": "fla_models/runs/743tmxot", # updated fla version
       "display_name": "Linear Attention\n(Comb_ST)",
     },
     "equal_params_new:DeltaNet_Comb_ST": {
