@@ -159,9 +159,10 @@ class BatchShapeSamplerConfig(BaseConfig):
         )
         if normalized == "loguniform":
             normalized = "log_uniform"
-        if normalized not in {"fixed", "uniform", "log_uniform"}:
+        if normalized not in {"fixed", "uniform", "log_uniform", "shifted_lognormal"}:
             raise ValueError(
-                "seq_len_distribution must be one of ['fixed', 'uniform', 'log_uniform']. "
+                "seq_len_distribution must be one of "
+                "['fixed', 'uniform', 'log_uniform', 'shifted_lognormal']. "
                 f"Got raw={distribution!r}, normalized={normalized!r}."
             )
         return normalized
@@ -386,13 +387,24 @@ class BatchShapeSamplerConfig(BaseConfig):
         if seq_len_distribution == "uniform":
             return rng.randint(min_seq_len, max_seq_len)
         if seq_len_distribution == "log_uniform":
-            sampled = int(
-                round(
-                    math.exp(
-                        rng.uniform(math.log(float(min_seq_len)), math.log(float(max_seq_len)))
-                    )
+            log_min = math.log(float(min_seq_len))
+            log_max = math.log(float(max_seq_len))
+            sampled = int(round(math.exp(rng.uniform(log_min, log_max))))
+            return max(min_seq_len, min(max_seq_len, sampled))
+        if seq_len_distribution == "shifted_lognormal":
+            # Calibrated for sigma=1.6 and the long-sequence staged batch sizes
+            # so E[batch_size(seq_len) * seq_len] matches 8 * 1000 rows.
+            target_mean_seq_len = 1138.0
+            if not min_seq_len < target_mean_seq_len < max_seq_len:
+                raise ValueError(
+                    "shifted_lognormal target mean must be between min_seq_len "
+                    "and max_seq_len."
                 )
+            sigma = 1.6
+            mu = math.log(target_mean_seq_len - float(min_seq_len)) - (
+                sigma * sigma / 2.0
             )
+            sampled = int(round(float(min_seq_len) + rng.lognormvariate(mu, sigma)))
             return max(min_seq_len, min(max_seq_len, sampled))
         raise ValueError(
             f"Unsupported seq_len_distribution {seq_len_distribution!r}; this should have been validated earlier."

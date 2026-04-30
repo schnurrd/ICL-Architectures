@@ -350,6 +350,33 @@ DELTANET_FINETUNED_MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+EQUAL_PARAMS_MODELS_RETRAINED: dict[str, dict[str, Any]] = {
+    "equal_params_new:Linear_Attention_Comb_ST": {
+      "wandb_run_id": "fla_models/runs/743tmxot", # updated fla version
+      "display_name": "Linear Attention\n(Comb_ST)",
+    },
+    "equal_params_new:DeltaNet_Comb_ST": {
+        "display_name": "DeltaNet",
+        "wandb_run_id": "fla_models/runs/e9fvlq9x", # updated
+    },
+    "equal_params_new:GLA_Comb_ST": {
+        "display_name": "Gated Linear\nAttention",
+        "wandb_run_id": "fla_models/runs/ue3648xk", # updated
+    },
+    "equal_params_new:Gated_DeltaNet_Comb_ST": {
+        "display_name": "Gated DeltaNet",
+        "wandb_run_id": "fla_models/runs/bevop0pw",  # updated
+    },
+    "equal_params_new:KDA_Comb_ST": {
+        "display_name": "Kimi Delta\nAttention",
+        "wandb_run_id": "fla_models/runs/2a55gn40", # updated
+    },
+    "equal_params_new:Mamba2_Comb_ST": {
+        "display_name": "Mamba2",
+        "wandb_run_id": "fla_models/runs/mrqlajz1", # updated
+    },
+}
+
 EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     "equal_params:Transformer_Comb_ST": { # non-causal version
         "display_name": "Non-Causal Transformer",
@@ -691,6 +718,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "linear_attention": LINEAR_ATTENTION_MODELS,
     "based": BASED_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
+    "equal_params_new": EQUAL_PARAMS_MODELS_RETRAINED, 
     "transformer_masked": TRANSFORMER_MASKED_MODELS,
     "deltanet_high_seq_len": DELTANET_HIGH_SEQ_LEN_MODELS,
     "deltanet_added_regularization": DELTANET_ADDED_REGULARIZATION,
