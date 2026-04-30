@@ -299,27 +299,37 @@ BASED_MODELS: dict[str, dict[str, Any]] = {
 }
 
 DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
-    "DeltaNet_Int_MT_Increasing_seq_1K->32K": {
-        "wandb_run_id": "fla_models/runs/vo5mkuwt",
-    },
-    "DeltaNet_Comb_ST_Increasing_seq_1K->32K": {
-        "wandb_run_id": "fla_models/runs/58w3kifz",
-    },
-    "DeltaNet_Int_MT_Seq_Len_500-64K_uniform": {
-        "wandb_run_id": "fla_models/runs/tou1nzi5",
-    },
-    "DeltaNet_Int_MT_Seq_Len_500-64K_loguniform": {
-        "wandb_run_id": "fla_models/runs/pyfldrsm",
-    },
+    # "DeltaNet_Int_MT_Increasing_seq_1K->32K": {
+    #     "wandb_run_id": "fla_models/runs/vo5mkuwt",
+    # },
+    # "DeltaNet_Comb_ST_Increasing_seq_1K->32K": {
+    #     "wandb_run_id": "fla_models/runs/58w3kifz",
+    # },
+    # "DeltaNet_Int_MT_Seq_Len_500-64K_uniform": {
+    #     "wandb_run_id": "fla_models/runs/tou1nzi5",
+    # },
+    # "DeltaNet_Int_MT_Seq_Len_500-64K_loguniform": {
+    #     "wandb_run_id": "fla_models/runs/pyfldrsm",
+    # },
     "DeltaNet_Comb_ST_Seq_Len_200-64K_loguniform": {
         "wandb_run_id": "fla_models/runs/9llxebf9",
+        "display_name": "DeltaNet Seq Len\n200-64K loguniform",
     },
-    "DeltaNet_Comb_ST_Seq_Len_200-100K_loguniform": {
-        "wandb_run_id": "fla_models/runs/oh6n51z3",
+    "DeltaNet_Comb_ST_Seq_Len_200-16K_loguniform": {
+        "wandb_run_id": "fla_models/runs/didft89r",
+        "display_name": "DeltaNet Seq Len\n200-16K loguniform",
     },
-    "DeltaNet_Int_MT_Seq_Len_1K": {
-        "wandb_run_id": "fla_models/runs/ji6lw9hu",
-    },
+    # "DeltaNet_Comb_ST_Seq_Len_200-100K_loguniform": {
+    #     "wandb_run_id": "fla_models/runs/oh6n51z3",
+    #     "display_name": "DeltaNet Seq Len\n200-100K loguniform",
+    # },
+    "DeltaNet_Comb_ST_Reference": {
+        "wandb_run_id": "fla_models/runs/ob2m9rth",
+        "display_name": "DeltaNet Reference",
+    }
+    # "DeltaNet_Int_MT_Seq_Len_1K": {
+    #     "wandb_run_id": "fla_models/runs/ji6lw9hu",
+    # },
 }
 
 DELTANET_ADDED_REGULARIZATION: dict[str, dict[str, Any]] = {
