@@ -227,6 +227,7 @@ def get_config(
     bidirectional_state_fusion: str = "mean_output_mean_cache",
     state_passing: bool = False,
     state_passing_dropout: float = 0.1,
+    state_weaving: bool = False,
     include_self_term: bool = True,
     task_variant: str = "tabular_prior",
     # Training
@@ -381,6 +382,7 @@ def get_config(
         "bidirectional_state_fusion": bidirectional_state_fusion,
         "state_passing": bool(state_passing),
         "state_passing_dropout": float(state_passing_dropout),
+        "state_weaving": bool(state_weaving),
         "include_self_term": resolved_include_self_term,
         "mimetic_init": mimetic_init,
         "mimetic_init_mode": mimetic_init_mode,
@@ -440,6 +442,7 @@ def get_config(
         f"cache{cache_chunk_size}" if cache_chunk_size else None,
         "sp" if state_passing else None,
         f"spd{state_passing_dropout:g}" if state_passing and state_passing_dropout != 0.1 else None,
+        "sw" if state_weaving else None,
         f"lr{resolved_lr:g}" if lr else None,
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
