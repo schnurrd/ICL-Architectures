@@ -463,11 +463,12 @@ class FLABackboneConfig(BackboneConfig):
             cache_chunk_size=self.cache_chunk_size,
             state_passing=self.state_passing,
             state_passing_dropout=self.state_passing_dropout,
-            state_weaving=self.state_weaving,
             include_self_term=self.include_self_term,
         )
         if self.bidirectional:
             backbone_kwargs["state_fusion"] = self.bidirectional_state_fusion
+        else:
+            backbone_kwargs["state_weaving"] = self.state_weaving
 
         return backbone_cls(**backbone_kwargs)
 
@@ -529,7 +530,6 @@ class FLABackbone(Backbone):
                 self.state_weaving_initial_states.append(
                     nn.Parameter(
                         torch.randn(
-                            1,
                             int(attn.num_heads),
                             head_k_dim,
                             int(attn.head_v_dim),
@@ -667,7 +667,7 @@ class FLABackbone(Backbone):
         previous_recurrent_state: torch.Tensor | None = None
 
         for layer, learned_state in zip(self.layers, self.state_weaving_initial_states):
-            initial_state = learned_state.expand(x.size(0), -1, -1, -1)
+            initial_state = learned_state.unsqueeze(0).expand(x.size(0), -1, -1, -1)
             if previous_recurrent_state is not None:
                 initial_state = initial_state + previous_recurrent_state
             initial_state = initial_state.contiguous()

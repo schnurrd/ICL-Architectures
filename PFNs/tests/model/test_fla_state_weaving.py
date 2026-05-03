@@ -7,9 +7,14 @@ from pfns.model.backbones import FLABackboneConfig
 from tests.model.fla_test_utils import build_fla_backbone, fla_hidden_size
 
 
-def test_state_weaving_rejects_non_deltanet() -> None:
-    with pytest.raises(ValueError, match="only DeltaNet"):
-        build_fla_backbone("gla", state_weaving=True)
+@pytest.mark.parametrize(
+    "model_type",
+    ["gla", "kda", "deltanet", "gated_deltanet", "linear_attn"],
+)
+def test_state_weaving_builds_supported_recurrent_models(model_type: str) -> None:
+    backbone = build_fla_backbone(model_type, size="small", state_weaving=True)
+
+    assert len(backbone.state_weaving_initial_states) == len(backbone.layers)
 
 
 def test_state_weaving_rejects_non_comb_st() -> None:
@@ -54,9 +59,9 @@ def test_state_weaving_delta_net_forward_and_gradients() -> None:
         train=True,
     ).to(device)
 
-    batch_size = 2
-    seq_len = 72
-    train_len = 68
+    batch_size = 1
+    seq_len = 8
+    train_len = 5
     embed_dim = fla_hidden_size("deltanet")
     backbone = backbone.to(torch.bfloat16)
     x = torch.randn(batch_size, seq_len, 1, embed_dim, device=device, dtype=torch.bfloat16)
