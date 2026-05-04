@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Combined transformer config with selectable variants.
+Combined transformer config.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ MAX_NUM_FEATURES = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
 
 
 BASE_PROFILE = {
-    "nhead": 8,
+    "nhead": 4,
     "nlayers": 12,
     "layer_kwargs": None,
 }

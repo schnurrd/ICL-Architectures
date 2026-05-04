@@ -10,7 +10,6 @@ from configs.config_utils import normalize_optional_none_string, resolve_prior_d
 from pfns.model.backbones import TransformerBackboneConfig
 from pfns.model.criterions import CrossEntropyConfig
 from pfns.model.encoders import EncoderConfig
-from pfns.priors.tabpfn_prior_adapter import TabPFNPriorConfig
 from pfns.run_logger import WandbConfig
 from pfns.train import (
     BatchShapeSamplerConfig,
@@ -19,7 +18,6 @@ from pfns.train import (
     ModelConfig,
 )
 from pfns.prior_defaults import (
-    ASSOCIATIVE_RECALL_SETTINGS,
     TABPFN_PRIOR_DEFAULTS,
     build_prior_for_task,
     resolve_training_setup_for_task,
@@ -112,7 +110,7 @@ def get_config(
         criterion=CrossEntropyConfig(num_classes=MAX_NUM_CLASSES),
         encoder=EncoderConfig(
             variable_num_features_normalization=True,
-            nan_handling=True, # currently only nan to mean imputation works
+            nan_handling=True,
             use_categorical_encoder=True,
             train_normalization=True,
         ),
@@ -125,7 +123,7 @@ def get_config(
         backbone=TransformerBackboneConfig(
             nhid=320 * 2,
             nlayers=15,
-            nhead=8,
+            nhead=4,
             layer_kwargs=layer_kwargs,
         ),
         features_per_group=20,
