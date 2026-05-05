@@ -23,6 +23,7 @@ from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 from fla.models import LinearAttentionConfig, LinearAttentionModel
 from fla.models import MesaNetConfig, MesaNetModel
+from fla.models.utils import Cache as FLACache
 
 from pfns import base_config
 from pfns.model.fla_mimetic_init import MimeticInitMode, apply_mimetic_fla_init
@@ -369,6 +370,7 @@ class FLABackboneConfig(BackboneConfig):
     bidirectional_state_fusion: str = "mean_output_mean_cache"
     state_passing: bool = False
     state_passing_dropout: float = 0.1
+    state_weaving: bool = False
     include_self_term: bool = True
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
@@ -412,6 +414,13 @@ class FLABackboneConfig(BackboneConfig):
                 )
         if self.bidirectional and self.state_passing:
             raise ValueError("Bidirectional FLA does not support state_passing.")
+        if self.state_weaving:
+            if self.sequence_mode != "Comb_ST":
+                raise ValueError("state_weaving currently supports only sequence_mode='Comb_ST'.")
+            if self.bidirectional:
+                raise ValueError("Bidirectional FLA does not support state_weaving.")
+            if self.state_passing:
+                raise ValueError("state_weaving does not support state_passing.")
         if not 0.0 <= self.state_passing_dropout <= 1.0:
             raise ValueError("state_passing_dropout must be in [0, 1].")
 
@@ -458,6 +467,8 @@ class FLABackboneConfig(BackboneConfig):
         )
         if self.bidirectional:
             backbone_kwargs["state_fusion"] = self.bidirectional_state_fusion
+        else:
+            backbone_kwargs["state_weaving"] = self.state_weaving
 
         return backbone_cls(**backbone_kwargs)
 
@@ -482,6 +493,7 @@ class FLABackbone(Backbone):
         cache_chunk_size: int | None = None,
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
+        state_weaving: bool = False,
         include_self_term: bool = True,
     ):
         super().__init__()
@@ -492,11 +504,39 @@ class FLABackbone(Backbone):
         self.sequence_mode = resolve_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
         self.include_self_term = bool(include_self_term)
+        self.state_weaving = bool(state_weaving)
         self.state_passing = (
             FLAStatePassing(dropout_prob=state_passing_dropout)
             if state_passing
             else None
         )
+        self.state_weaving_initial_states = nn.ParameterList()
+        if self.state_weaving:
+            for layer in self.layers:
+                attn = getattr(layer, "attn", None)
+                if not all(hasattr(attn, name) for name in ("num_heads", "head_k_dim", "head_v_dim")):
+                    raise ValueError(
+                        "state_weaving requires every FLA layer to expose generic "
+                        "recurrent state dimensions on layer.attn."
+                    )
+                if getattr(attn, "use_short_conv", False) and not all(
+                    hasattr(attn, name) for name in ("q_conv1d", "k_conv1d", "v_conv1d")
+                ):
+                    raise ValueError(
+                        "state_weaving requires short-conv layers to expose q/k/v "
+                        "conv states. This model needs a custom conv-state adapter."
+                    )
+                head_k_dim = int(attn.head_k_dim)
+                self.state_weaving_initial_states.append(
+                    nn.Parameter(
+                        torch.randn(
+                            int(attn.num_heads),
+                            head_k_dim,
+                            int(attn.head_v_dim),
+                        )
+                        / head_k_dim
+                    )
+                )
 
     @property
     def layers(self) -> nn.ModuleList:
@@ -604,14 +644,64 @@ class FLABackbone(Backbone):
         (B, S, N, E). However we currently only support N=1 for unflattened input.
         """
         x_batched, shape_info = self._prepare_fla_input(train_x)
-        train_out, cache_params = self._run_fla(
-            x_batched,
-            cache_params=initial_cache_params,
-            return_cache=True,
-        )
+        if self.state_weaving:
+            if initial_cache_params is not None:
+                raise ValueError("state_weaving does not support initial_cache_params.")
+            train_out, cache_params = self._run_state_weaving(x_batched)
+        else:
+            train_out, cache_params = self._run_fla(
+                x_batched,
+                cache_params=initial_cache_params,
+                return_cache=True,
+            )
         cached_state = {"cache_params": cache_params}
         out = self._unprepare_fla_output(train_out, shape_info)
         return out, cached_state
+
+    def _run_state_weaving(
+        self,
+        x: torch.Tensor,
+    ) -> tuple[torch.Tensor, tp.Any]:
+        hidden_states = x
+        cache_params = FLACache()
+        previous_recurrent_state: torch.Tensor | None = None
+
+        for layer, learned_state in zip(self.layers, self.state_weaving_initial_states):
+            initial_state = learned_state.unsqueeze(0).expand(x.size(0), -1, -1, -1)
+            if previous_recurrent_state is not None:
+                initial_state = initial_state + previous_recurrent_state
+            initial_state = initial_state.contiguous()
+
+            layer_cache = FLACache()
+            conv_state = None
+            attn = layer.attn
+            if getattr(attn, "use_short_conv", False):
+                conv_state = tuple(
+                    x.new_zeros(x.size(0), conv.weight.size(0), conv.weight.size(-1))
+                    for conv in (attn.q_conv1d, attn.k_conv1d, attn.v_conv1d)
+                )
+            layer_cache.update(
+                recurrent_state=initial_state,
+                conv_state=conv_state,
+                layer_idx=int(layer.layer_idx),
+                offset=0,
+            )
+            hidden_states, _, layer_cache = layer(
+                hidden_states,
+                past_key_values=layer_cache,
+                use_cache=True,
+            )
+            layer_state = layer_cache.layers[int(layer.layer_idx)].state
+            previous_recurrent_state = layer_state["recurrent_state"]
+            cache_params.update(
+                recurrent_state=previous_recurrent_state,
+                conv_state=layer_state.get("conv_state"),
+                layer_idx=int(layer.layer_idx),
+                offset=x.size(1),
+            )
+
+        hidden_states = self.fla.norm(hidden_states)
+        return hidden_states, cache_params
 
     def incontext_predict(
         self,
@@ -895,6 +985,10 @@ class FLABackbone(Backbone):
             attn_out = torch.cat([train_out, test_out], dim=1)
             if state_passing is not None:
                 state_passing.remember(state["cache_params"])
+        elif self.state_weaving:
+            if initial_cache_params is not None:
+                raise ValueError("state_weaving does not support initial_cache_params.")
+            attn_out, _ = self._run_state_weaving(x_batched)
         else:
             attn_out, cache_params = self._run_fla(
                 x_batched,
