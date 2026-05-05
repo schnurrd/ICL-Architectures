@@ -57,7 +57,7 @@ TRAINING_PROFILES = {
 
 MODEL_SETTINGS = {
     # KDA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/kda/configuration_kda.py#L10
-    # Model size: 12.60 M
+    # Model size: 12.60 M full (12.42 M FLA backbone)
     # Training speed on different gpus (uncompiled, single target): 
     #    - RTX 5070 (bf16):   16it/s, 3.4GiB (single target); 19it/s, 2.2GiB (multi target); 10it/s, 3.7GiB (multi target, interleaved)
     #    - RTX 2080Ti:        4it/s, 6.2GB (non-compiled), 
@@ -79,7 +79,7 @@ MODEL_SETTINGS = {
         },
     },
     # GLA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gla/configuration_gla.py#L12
-    # Model size: 12.59 M
+    # Model size: 12.69 M full (12.52 M FLA backbone)
     # Training speed on different gpus (uncompiled, single target): 
     #    - RTX 5070:   22it/s, 1.8GiB (single target); 28it/s, 1.6GiB (multi target); 16it/s, 2.6GiB (multi target, interleaved)
     #    - RTX 2080Ti:  it/s
@@ -88,9 +88,11 @@ MODEL_SETTINGS = {
         "emsize": 320,
         "config_kwargs": { # also has max_position_embeddings set to 2048, supports attn dict
             "hidden_size": 320, # default 2048
+            "expand_k": 1.0, # equalizes recurrent state to total K/V width 320 x 320
+            "expand_v": 1.0,
             "use_short_conv": False, 
             "num_heads": 4, # default 4
-            "num_hidden_layers": 12, # default 24
+            "num_hidden_layers": 11, # default 24
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
             "norm_eps": 1e-6, # default 1e-6
@@ -99,7 +101,7 @@ MODEL_SETTINGS = {
         },
     },
     # Mamba2 Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/mamba2/configuration_mamba2.py#L21
-    # Model size: 12.49 M
+    # Model size: 12.49 M full (12.32 M FLA backbone)
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   7it/s, 4.3GB (single target); 5it/s (single target, interleaved); 15it/s, 2GB (multi target); 8it/s, 2.9GiB (multi target, interleaved)
     #    - RTX 2080Ti:  it/s
@@ -110,9 +112,8 @@ MODEL_SETTINGS = {
             "hidden_size": 320, # default 2048
             "num_hidden_layers": 18, # default 48
             "state_size": 96, # default 128
-            "conv_kernel": 4, # default 4
             "expand": 2, # default 2, --> num_heads self.expand * hidden_size // head_dim
-            "head_dim": 64, # default
+            "head_dim": 64, # default 64
             "norm_eps": 1e-6, # default 1e-5
             "vocab_size": 1, # dummy value, not used default 32000
             "use_cache": True,
@@ -120,7 +121,7 @@ MODEL_SETTINGS = {
         },
     },
     # DeltaNet Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/delta_net/configuration_delta_net.py#L7
-    # Model size: 10.46 M -> increased layers to 12 -> 12.52 M
+    # Model size: 12.49 M full (12.31 M FLA backbone)
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   22it/s, 2.2GB (single target); 29it/s, 1.7GB (multi target); 16it/s, 2.8GiB (multi target, interleaved)
     #    - RTX 2080Ti:  it/s
@@ -140,7 +141,7 @@ MODEL_SETTINGS = {
         },
     },
     # Gated DeltaNet Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gated_deltanet/configuration_gated_deltanet.py#L7
-    # Model size: 12.50 M
+    # Model size: 12.60 M full (12.43 M FLA backbone)
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   14it/s, 2.9GB (single target); 24it/s, 1.9GB (multi target); 15it/s, 3.5GiB (multi target, interleaved)
     #    - RTX 2080Ti:  it/s
@@ -150,10 +151,10 @@ MODEL_SETTINGS = {
         "config_kwargs": {
             "attn_mode": "chunk",
             "hidden_size": 320,
-            "num_hidden_layers": 12, # default 21
+            "num_hidden_layers": 11, # default 21
             "expand_v": 1.0, # default 2.0
             "num_heads": 4, # default 6
-            "head_dim": 64, # default 256
+            "head_dim": 80, # default 256; equalizes recurrent state to total K/V width 320 x 320
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
             "norm_eps": 1e-6, # default 1e-6
@@ -163,6 +164,7 @@ MODEL_SETTINGS = {
         },
     },
     # Linear Attention Config: https://github.com/fla-org/flash-linear-attention/blob/main/fla/models/linear_attn/configuration_linear_attn.py
+    # Model size: 12.47 M full (12.30 M FLA backbone)
     "linear_attn": {
         "emsize": 320,
         "config_kwargs": {
@@ -182,14 +184,15 @@ MODEL_SETTINGS = {
         },
     },
     # MesaNet Config: https://github.com/fla-org/flash-linear-attention/blob/main/fla/models/mesa_net/configuration_mesa_net.py
+    # Model size: 12.54 M full (12.36 M FLA backbone)
     "mesanet": {
         "emsize": 320,
         "config_kwargs": {
             "attn_mode": "chunk",
             "hidden_size": 320,
             "num_hidden_layers": 12,
-            "num_heads": 5,
-            "head_dim": 64,
+            "num_heads": 4,
+            "head_dim": 80,
             "intermediate_size": 320 * 2,
             "hidden_act": "swish",
             "norm_eps": 1e-6,
