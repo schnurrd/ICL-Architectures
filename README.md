@@ -1,8 +1,9 @@
 # ICL-Architectures
-Unified framework for comparing sequence-model architectures in in-context learning across tabular classification task. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, (Gated) Linear Attention, (Gated) DeltaNet, Kimi Delta Attention and Mamba2 backbones. 
+Unified framework for comparing sequence-model architectures for in-context learning on tabular classification tasks. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, Linear Attention, DeltaNet, Gated DeltaNet, Kimi Delta Attention, and Mamba2 backbones.
 
 ## Table of Contents
 - [Installation](#installation)
+  - [Pulling latest changes](#pulling-latest-changes)
 - [Repository User Guide](#repository-user-guide)
   - [CLI training interface](#cli-training-interface)
     - [Usage](#usage)
@@ -13,7 +14,12 @@ Unified framework for comparing sequence-model architectures in in-context learn
   - [wandb support](#wandb-support)
   - [Configuration Files](#configuration-files)
   - [Curriculum Learning Parameters](#curriculum-learning-parameters)
-- [Currently known issues / TODOs](#currently-known-issues--todos)
+    - [Sequence-length stages](#sequence-length-stages)
+    - [Eval-position split (global)](#eval-position-split-global)
+    - [Dynamic batch-size by sequence length](#dynamic-batch-size-by-sequence-length)
+    - [Related sampler controls](#related-sampler-controls)
+  - [Sequence-length notebooks](#sequence-length-notebooks)
+  - [Minimal sequence-length degradation reproduction](#minimal-sequence-length-degradation-reproduction)
 - [Repository (PFNs) explanation](#repository-pfns-explanation)
   - [Steps of execution in the pre-training pipeline](#steps-of-execution-in-the-pre-training-pipeline)
   - [Main Config components](#main-config-components)
@@ -50,10 +56,10 @@ pip install -r requirements/requirements.txt \
     -e ./prior-repos/tabularpriors
 ```
 
-Tested for Nvidia RTX 5070 with Cuda 12.8. For old GPUs with compute capability < 7.0 you might need to install requirements/requirements_old_gpus.txt instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, the tabularpriors repository can't be installed and torch compile will not work.
+Tested for Nvidia RTX 5070 with CUDA 12.8. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, the `tabularpriors` repository can't be installed and `torch.compile` will not work.
 
 
-On the obsession cluster note with cuda 12.0 the following versions work:
+On the clusters with CUDA 11.8, the following versions work:
 ```bash
 conda create -n icl_arch python=3.11
 conda activate icl_arch
@@ -93,6 +99,8 @@ Additionally to clean the submodules or main repository run: `git submodule fore
 The training CLI allows you to train PFNs models using configuration from Python files. This provides a flexible and programmable way to configure training parameters, allowing for dynamic configuration generation, conditional logic, and easy reuse of configuration components. Configuration files define either a `config` variable or a `get_config(...)` function returning the training configuration.
 
 ### Usage
+Transformer example:
+
 ```bash
 python PFNs/pfns/run_training_cli.py PFNs/configs/transformer/transformer_config.py \
     --device cuda:0 \
@@ -100,6 +108,19 @@ python PFNs/pfns/run_training_cli.py PFNs/configs/transformer/transformer_config
     --checkpoint-save-load-prefix PFNs/models_diff \
     --checkpoint-save-load-suffix no_seed \
     --wandb \
+    --config-index 0
+```
+
+FLA example:
+
+```bash
+python PFNs/pfns/run_training_cli.py PFNs/configs/fla/fla_config.py \
+    --device cuda:0 \
+    --checkpoint-save-load-prefix PFNs/models_diff \
+    --checkpoint-save-load-suffix gla_seed0 \
+    --config-arg model_type=gla \
+    --config-arg sequence_mode=Comb_ST \
+    --config-arg training_setup=high \
     --config-index 0
 ```
 
@@ -138,7 +159,7 @@ python PFNs/pfns/run_evaluation_cli.py \
 - `--checkpoint_name`: Name of the checkpoint file within the model path (default: 'checkpoint.pt')
 - `--wandb_run_id`: wandb run path or ID to download/evaluate instead of a local checkpoint path.
 - `--device`: Device to use for evaluation (e.g., 'cuda:0', 'cpu'). Default: auto-detect
-- `--benchmark`: Benchmark suite to evaluate on. Choices: 'opencc' (OpenML-CC18), 'test' (smaller test set), 'openml_large_dataset', 'tabarena_full', 'tabarena_medium'. Default: 'opencc'
+- `--benchmark`: Benchmark suite to evaluate on. Choices: 'opencc' (OpenML-CC18), 'openml_large_dataset', 'tabarena_full', 'tabarena_medium'. Default: 'opencc'
 - `--max_samples`: Maximum number of samples per dataset (default: 1000)
 - `--max_features`: Maximum number of features per dataset (default: 20)
 - `--max_classes`: Maximum number of classes per dataset (default: 10)
@@ -163,6 +184,12 @@ The Python configuration file must define either a `config` variable or a
 `MainConfig` object. An example configuration file can be found at
 `PFNs/configs/example_config.py`; the main TabPFN-style transformer config is
 `PFNs/configs/transformer/transformer_config.py`.
+
+The main FLA config is `PFNs/configs/fla/fla_config.py`. It supports
+`model_type` values such as `kda`, `gla`, `mamba2`, `deltanet`,
+`gated_deltanet`, and `linear_attn`, plus sequence-mode,
+bidirectional, state-passing, cache, categorical-feature, and mimetic-init
+options via `--config-arg`.
 
 ## Curriculum Learning Parameters
 
@@ -224,14 +251,30 @@ These are part of `BatchShapeSamplerConfig` and influence the same sampling proc
 - `min_num_features`, `max_num_features`: Feature-count sampling range per batch.
 - `seed` (default: `42`): Seed used with `(epoch, step)` for deterministic batch-shape sampling.
 
+## Sequence-length notebooks
 
-# Currently known issues / TODOs
+The main sequence-length experiment notebooks are:
 
-- Multi GPU training currently does not provide the expected predictive performance and is worse than single GPU training
-- Samplers used are very basic and could be improved to better cover the data distribution
-- Look into replacing the Inference wrapper with the prior labs tabpfn implementation
-- Check handling of categorical features during training and inference and in prior generation
-- TabPFN v1 prior has many issues e.g. very simple prior and normalize_by_used_features was broken (fixed it in this repo)
+- [Sequence-length comparison and generalization](PFNs/notebooks/seq_len_comparison_and_generalization.ipynb)
+- [Minimal linear-attention sequence-length generalization](PFNs/notebooks/minimal_linear_attention_seq_len_generalization.ipynb)
+- [Sequence-length hidden-state debugging](PFNs/notebooks/seq_len_hidden_state_debug.ipynb)
+
+The corresponding batch script for the larger sequence-length benchmark is
+[run_synthetic_seq_len_experiments.py](PFNs/notebooks/run_synthetic_seq_len_experiments.py).
+
+## Minimal sequence-length degradation reproduction
+
+The minimal reproduction for the linear-attention sequence-length degradation
+question is the notebook
+[minimal_linear_attention_seq_len_generalization.ipynb](PFNs/notebooks/minimal_linear_attention_seq_len_generalization.ipynb).
+It trains small causal and non-causal linear-attention PFN variants on short
+contexts and evaluates them on longer context lengths.
+
+For non-interactive runs, the notebook has a script companion:
+[minimal_linear_attention_seq_len_generalization.py](PFNs/notebooks/minimal_linear_attention_seq_len_generalization.py).
+It writes outputs under `minimal_linear_attention_seq_len_generalization_runs/`
+unless `--output-root` is set, and can log to the
+`minimal_linear_attention_seq_len_generalization` wandb project with `--wandb`.
 
 # Repository (PFNs) explanation
 
