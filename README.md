@@ -11,14 +11,10 @@ Unified framework for comparing sequence-model architectures for in-context lear
   - [CLI evaluation interface](#cli-evaluation-interface)
     - [Usage](#usage-1)
     - [Command Line Arguments](#command-line-arguments-1)
-  - [wandb support](#wandb-support)
-  - [Configuration Files](#configuration-files)
-  - [Curriculum Learning Parameters](#curriculum-learning-parameters)
-    - [Sequence-length stages](#sequence-length-stages)
-    - [Eval-position split (global)](#eval-position-split-global)
-    - [Dynamic batch-size by sequence length](#dynamic-batch-size-by-sequence-length)
-    - [Related sampler controls](#related-sampler-controls)
-  - [Sequence-length notebooks](#sequence-length-notebooks)
+  - [Configuration and logging](#configuration-and-logging)
+    - [wandb support](#wandb-support)
+    - [Configuration Files](#configuration-files)
+  - [Sequence-length experiments](#sequence-length-experiments)
   - [Minimal sequence-length degradation reproduction](#minimal-sequence-length-degradation-reproduction)
 - [Repository (PFNs) explanation](#repository-pfns-explanation)
   - [Steps of execution in the pre-training pipeline](#steps-of-execution-in-the-pre-training-pipeline)
@@ -172,12 +168,14 @@ python PFNs/pfns/run_evaluation_cli.py \
 - `--sample_order_permutation`: Permute training sample order for each ensemble configuration
 - `--fla_cache_chunk_size`: Chunk size for cache-backed inference when using an FLA backbone
 
-## wandb support
+## Configuration and logging
+
+### wandb support
 
 wandb is configured via `MainConfig.wandb`. The CLI can toggle logging via `--wandb` / `--no-wandb` or continue from an existing run via `--continue-from-wandb`.
 For restricted environments, set `mode="offline"` in the config file (or `WANDB_MODE=offline`) and sync later with `wandb sync`.
 
-## Configuration Files
+### Configuration Files
 
 The Python configuration file must define either a `config` variable or a
 `get_config(config_index: int = 0)` function, which when called returns a
@@ -191,13 +189,13 @@ The main FLA config is `PFNs/configs/fla/fla_config.py`. It supports
 bidirectional, state-passing, cache, categorical-feature, and mimetic-init
 options via `--config-arg`.
 
-## Curriculum Learning Parameters
+#### Curriculum Learning Parameters
 
 Curriculum learning is configured via `get_config(...)` arguments in configs such as
 `PFNs/configs/transformer/transformer_config.py` and `PFNs/configs/fla/fla_config.py`.
 From the CLI, pass these through repeatable `--config-arg KEY=VALUE` arguments.
 
-### Sequence-length stages
+##### Sequence-length stages
 
 - `max_seq_len` (default: `1000`): Upper bound for sampled sequence length.
 - `seq_len_stages` (default: `None`): Optional staged sequence-length settings by epoch.
@@ -223,7 +221,7 @@ Examples:
   - First stage: sample seq len uniformly from 1k to 5k.
   - Second stage: sample seq len log-uniformly from 5k to 64k.
 
-### Eval-position split (global)
+##### Eval-position split (global)
 
 - `eval_pos_split_pct` (default: `None`): Global eval split in percent for `single_eval_pos`.
   - Scalar: fixed split, e.g. `80` means always 80% of sequence length.
@@ -231,7 +229,7 @@ Examples:
 - Stage-level split values in `seq_len_stages` override the global `eval_pos_split_pct` for those epochs.
 - Split percentages must be between 0 and 100, with min `<=` max.
 
-### Dynamic batch-size by sequence length
+##### Dynamic batch-size by sequence length
 
 - `batch_size_stages` (default: `None`): Optional sequence-length thresholds for batch size.
   - Format: `[(seq_len_threshold, batch_size), ...]` with increasing thresholds.
@@ -243,7 +241,7 @@ Examples:
     `dynamic_batch_size / base_batch_size`.
   - This keeps effective batch size approximately stable when dynamic batch sizing is active.
 
-### Related sampler controls
+##### Related sampler controls
 
 These are part of `BatchShapeSamplerConfig` and influence the same sampling process:
 
@@ -252,7 +250,9 @@ These are part of `BatchShapeSamplerConfig` and influence the same sampling proc
 - `min_num_features`, `max_num_features`: Feature-count sampling range per batch.
 - `seed` (default: `42`): Seed used with `(epoch, step)` for deterministic batch-shape sampling.
 
-## Sequence-length notebooks
+## Sequence-length experiments
+
+### Sequence-length notebooks
 
 The main sequence-length experiment notebooks are:
 
