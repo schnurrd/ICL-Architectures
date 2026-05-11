@@ -44,7 +44,7 @@ git clone --recurse-submodules git@github.com:schnurrd/ICL-Architectures.git
 cd ICL-Architectures
 ```
 
-Install the required packages and editable installs for the repositories PFNs, TabPFN-v1-prior, and tabularpriors:
+Install the required packages and editable installs for PFNs and the TabPFN-v1 prior:
 
 ```bash
 conda create -n icl_arch python=3.11
@@ -52,11 +52,10 @@ conda activate icl_arch
 
 pip install -r requirements/requirements.txt \
     -e ./PFNs \
-    -e ./prior-repos/tabpfn-v1-prior \
-    -e ./prior-repos/tabularpriors
+    -e ./prior-repos/tabpfn-v1-prior
 ```
 
-Tested for Nvidia RTX 5070 with CUDA 12.8. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, the `tabularpriors` repository can't be installed and `torch.compile` will not work.
+Tested for Nvidia RTX 5070 with CUDA 12.8. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
 
 
 On the clusters with CUDA 11.8, the following versions work:
@@ -411,11 +410,9 @@ During `predict`/`predict_proba` calls:
 This repo builds on:
 - [PFNs](https://github.com/automl/PFNs) (Apache 2.0) for the core training pipeline and priors. Used as the starting repository.
 - [TabPFN-v1-prior](https://github.com/automl/tabpfn-v1-prior) (Apache 2.0) for the tabpfn v1 prior implementation.
-- [tabularpriors](https://github.com/automl/tabularpriors) (Apache 2.0) for additional tabular priors (TabICL, TICL)
 
 # Similar relevant repositories
 - [TabPFN](https://github.com/PriorLabs/TabPFN) the TabPFN model and prior implementation.
 - [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) similar to this repository however still in initial stages.
 - [nanoTabPFN](https://github.com/automl/nanoTabPFN) small educational version of TabPFN.
 - [TabICL](https://github.com/soda-inria/tabicl) For TabICL model and prior implementation from Inria.
-- [TICL](https://github.com/microsoft/ticl) For TICL model and prior implementation from Microsoft.
