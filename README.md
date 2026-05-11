@@ -28,6 +28,7 @@ Unified framework for comparing sequence-model architectures for in-context lear
       - [Features per group parameter](#features-per-group-parameter)
       - [Encoding overview](#encoding-overview)
       - [Feature Positional Embedding](#feature-positional-embedding)
+    - [Backbones](#backbones)
     - [Table Transformer Architecture](#table-transformer-architecture)
       - [Per Feature Layer](#per-feature-layer)
     - [Decoder](#decoder)
@@ -211,6 +212,7 @@ From the CLI, pass these through repeatable `--config-arg KEY=VALUE` arguments.
   - `fixed`: use `stage_max_seq_len`.
   - `uniform`: sample integer sequence length uniformly in `[min_seq_len, max_seq_len]`.
   - `log_uniform`: sample sequence length log-uniformly in `[min_seq_len, max_seq_len]`.
+  - `shifted_lognormal`: sample sequence length from a shifted log-normal distribution calibrated for long-sequence staged training.
 
 Examples:
 - `--config-arg max_seq_len=16000 --config-arg seq_len_stages='[(5, 2048), (20, 8192), (60, 16000)]'`
@@ -320,6 +322,8 @@ Encoders are a sequence of (learned) transformations (encoding steps) that proce
 - **InputNormalizationEncoderStep**: Performs simple outlier soft clipping using logarithmic compression and input normalization to mean 0 and std 1.
 - **VariableNumFeaturesEncoderStep**: Transforms input to a fixed number of features by appending zeros and performs normalization by number of features used to keep variance consistent.
 - **NanHandlingEncoderStep**: Creates NaN masks for input and target and replaces NaNs with feature mean.
+- **OrdinalEncoderStep**: Encodes categorical feature values as ordinal IDs using the training context.
+- **MixedFeatureEncoderStep**: Applies categorical or continuous preprocessing per feature based on categorical feature metadata.
 - **LinearInputEncoderStep**: Linear layer to map input features to model dimension (num_features -> embedding size). Normally a single layer but with optional 2-layer MLP with GELU activation.
 
 These individual encoders can be combined using the `SequentialEncoder` class to form a complete encoding pipeline.
@@ -345,9 +349,17 @@ Without positional embeddings, the model cannot distinguish between different fe
 
 The random embeddings use a fixed seed, ensuring consistent feature IDs across forward passes while different models get different IDs. 
 
+### Backbones
+
+The model core is selected via `ModelConfig.backbone`, which uses the `Backbone` / `BackboneConfig` interfaces in `PFNs/pfns/model/backbones.py`. Current backbone implementations include:
+
+- **TransformerBackbone**: PFN-style per-feature Transformer stack.
+- **FLABackbone** and **BidirectionalFLABackbone**: Wrappers for Flash Linear Attention models such as GLA, DeltaNet, Gated DeltaNet, KDA, Mamba2, Linear Attention, and MesaNet.
+- **LinearAttentionBackbone** and related experimental backbones for local linear-attention variants.
+
 ### Table Transformer Architecture
 
-Extends the standard Transformer architecture to operate on a per-feature basis, which allows for processing each feature separately. The transformer here only consists of encoder blocks (no decoder blocks). Specifically the transformer is a stack of `PerFeatureLayer` layers.
+The Transformer backbone extends the standard Transformer architecture to operate on a per-feature basis, which allows for processing each feature separately. It only consists of encoder blocks (no decoder blocks). Specifically, the Transformer backbone is a stack of `PerFeatureLayer` layers.
 
 #### Per Feature Layer
 
@@ -389,8 +401,9 @@ The inference pipeline consists of three main components:
    - Applies class/feature shifts for ensemble diversity
    - Batches inference across ensemble members and aggregates results
 
-3. **ModelBackbone Protocol**: Interface for swappable architectures
-   - `TransformerBackbone`: Wrapper for existing Transformer model
+3. **Backbone interface**: Swappable neural architecture interface implemented in `PFNs/pfns/model/backbones.py`
+   - `TransformerBackbone`: Wrapper for the PFN-style Transformer stack
+   - `FLABackbone`: Wrapper for Flash Linear Attention backbones used by GLA, DeltaNet, KDA, Mamba2, Linear Attention, MesaNet, and related variants
 
 ### Prediction Flow
 
