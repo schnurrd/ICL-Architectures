@@ -1,7 +1,9 @@
 # ICL-Architectures
+
 Unified framework for comparing sequence-model architectures for in-context learning on tabular classification tasks. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, Linear Attention, DeltaNet, Gated DeltaNet, Kimi Delta Attention, and Mamba2 backbones.
 
 ## Table of Contents
+
 - [Installation](#installation)
   - [Pulling latest changes](#pulling-latest-changes)
 - [Repository User Guide](#repository-user-guide)
@@ -54,8 +56,8 @@ pip install -r requirements/requirements.txt \
 
 Tested for Nvidia RTX 5070 with CUDA 12.8. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
 
-
 On the clusters with CUDA 11.8, the following versions work:
+
 ```bash
 conda create -n icl_arch python=3.11
 conda activate icl_arch
@@ -77,7 +79,7 @@ pip install -r requirements/requirements_obsession.txt \
     -e ./prior-repos/tabpfn-v1-prior
 ```
 
-### Pulling latest changes 
+### Pulling latest changes
 
 To pull the latest changes including submodules, run:
 
@@ -95,6 +97,7 @@ Additionally to clean the submodules or main repository run: `git submodule fore
 The training CLI allows you to train PFNs models using configuration from Python files. This provides a flexible and programmable way to configure training parameters, allowing for dynamic configuration generation, conditional logic, and easy reuse of configuration components. Configuration files define either a `config` variable or a `get_config(...)` function returning the training configuration.
 
 ### Usage
+
 Transformer example:
 
 ```bash
@@ -140,6 +143,7 @@ python PFNs/pfns/run_training_cli.py PFNs/configs/fla/fla_config.py \
 The evaluation CLI allows you to evaluate trained PFNs/TabPFN-style models on OpenML benchmarks. It reports tabular classification metrics and can load either a local checkpoint directory or a wandb run.
 
 #### Usage
+
 ```bash
 python PFNs/pfns/run_evaluation_cli.py \
     --model_path PFNs/models_diff/large_config.pt/tabpfn_prior_config_large_0_no_seed \
@@ -206,13 +210,14 @@ From the CLI, pass these through repeatable `--config-arg KEY=VALUE` arguments.
   - `(end_epoch, stage_max_seq_len, eval_pos_split_pct_min, eval_pos_split_pct_max)`
   - `(end_epoch, stage_min_seq_len, stage_max_seq_len, seq_len_distribution)`
   - `(end_epoch, stage_min_seq_len, stage_max_seq_len, seq_len_distribution, eval_pos_split_pct_min, eval_pos_split_pct_max)`
-  Where `seq_len_distribution` is one of:
+    Where `seq_len_distribution` is one of:
   - `fixed`: use `stage_max_seq_len`.
   - `uniform`: sample integer sequence length uniformly in `[min_seq_len, max_seq_len]`.
   - `log_uniform`: sample sequence length log-uniformly in `[min_seq_len, max_seq_len]`.
   - `shifted_lognormal`: sample sequence length from a shifted log-normal distribution calibrated for long-sequence staged training.
 
 Examples:
+
 - `--config-arg max_seq_len=16000 --config-arg seq_len_stages='[(5, 2048), (20, 8192), (60, 16000)]'`
 - `--config-arg max_seq_len=12000 --config-arg seq_len_stages='[(10, 4000, 80, 80), (30, 12000, 30, 90)]'`
   - First stage: fixed eval split at 80%.
@@ -280,6 +285,7 @@ unless `--output-root` is set, and can log to the
 # Repository (PFNs) explanation
 
 ## Steps of execution in the pre-training pipeline
+
 1. The CLI script `run_training_cli.py` is executed with the path to a configuration file and the CLI parameters. This first parses the CLI arguments and then loads the configuration file as a Python module. It retrieves the `config` variable or calls the `get_config` function to obtain the `MainConfig` object.
 2. The `MainConfig` object includes all the necessary objects for the training process, including the prior, model, batch shape sampler, optimizer and training loop configuration. If we have already started a training with the same name and have stored a checkpoint the config gets updated to load the checkpoint.
 3. The training loop is started by calling the `pfns.train.train` function with the created `MainConfig` object.
@@ -287,30 +293,31 @@ unless `--output-root` is set, and can log to the
 ## Main Config components
 
 Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for training. Specifically includes:
+
 - Prior and optimizer:
-    - **Prior**: prior.PriorConfig objects defining the prior
-    - **Optimizer**: OptimizerConfig object defining the optimizer
+  - **Prior**: prior.PriorConfig objects defining the prior
+  - **Optimizer**: OptimizerConfig object defining the optimizer
 - Model:
-    - **model**: ModelConfig object defining the model architecture
+  - **model**: ModelConfig object defining the model architecture
 - Training:
-    - **batch_shape_sampler**: BatchShapeSamplerConfig object which samples num_features, and single_eval_pos for each batch
-    - **epochs**: Number of training epochs
-    - **steps_per_epoch**: Number of steps per epoch (we don't really have a concept of epochs since data is infinite, so this defines how many steps we call an epoch)
-    - **aggregate_k_gradients**: Number of batches to aggregate gradients over before performing an optimizer step, allowing a larger effective batch size than fits in GPU memory
-    - **n_targets_per_input**: Used if a model is trained to predict multiple targets per input
-    - **train_mixed_precision**, **train_mixed_precision_dtype**
-    - **skip_grad_norm_spike_factor**
+  - **batch_shape_sampler**: BatchShapeSamplerConfig object which samples num_features, and single_eval_pos for each batch
+  - **epochs**: Number of training epochs
+  - **steps_per_epoch**: Number of steps per epoch (we don't really have a concept of epochs since data is infinite, so this defines how many steps we call an epoch)
+  - **aggregate_k_gradients**: Number of batches to aggregate gradients over before performing an optimizer step, allowing a larger effective batch size than fits in GPU memory
+  - **n_targets_per_input**: Used if a model is trained to predict multiple targets per input
+  - **train_mixed_precision**, **train_mixed_precision_dtype**
+  - **skip_grad_norm_spike_factor**
 - LR Scheduler:
-    - **scheduler**, **warmup_epochs**, **min_lr**
+  - **scheduler**, **warmup_epochs**, **min_lr**
 - Checkpointing:
-    - **train_state_dict_save_path**, **train_state_dict_load_path**
-- Validation: 
-    - **test_priors**: prior.PriorConfig objects to use for validation during training
-    - **validation_period**: How often to run validation (in epochs)
+  - **train_state_dict_save_path**, **train_state_dict_load_path**
+- Validation:
+  - **test_priors**: prior.PriorConfig objects to use for validation during training
+  - **validation_period**: How often to run validation (in epochs)
 - Logging:
-    - **verbose**, **progress_bar**, **wandb**, **wandb_run_id**: Logging options
+  - **verbose**, **progress_bar**, **wandb**, **wandb_run_id**: Logging options
 - Data loading
-    - **dataloader_class**, **num_workers**
+  - **dataloader_class**, **num_workers**
 
 ## Model Overview
 
@@ -340,14 +347,15 @@ The model both encodes the input features (X) and the target (y) separately. Eac
 
 #### Feature Positional Embedding
 
-Without positional embeddings, the model cannot distinguish between different feature groups as attention is permutation-invariant. The `feature_positional_embedding` adds a unique identifier to each feature group's embedding. Options are: 
+Without positional embeddings, the model cannot distinguish between different feature groups as attention is permutation-invariant. The `feature_positional_embedding` adds a unique identifier to each feature group's embedding. Options are:
+
 - `None`: No embedding (features indistinguishable)
 - `normal_rand_vec`: Random Gaussian vectors (fixed per seed)
 - `uni_rand_vec`: Random uniform [-1, 1] vectors
 - `learned`: Lookup table of 1000 learnable embeddings
 - `subspace` (recommended): Random vectors projected through a learned linear layer — combines random uniqueness with learnable representations
 
-The random embeddings use a fixed seed, ensuring consistent feature IDs across forward passes while different models get different IDs. 
+The random embeddings use a fixed seed, ensuring consistent feature IDs across forward passes while different models get different IDs.
 
 ### Backbones
 
@@ -366,14 +374,16 @@ The Transformer backbone extends the standard Transformer architecture to operat
 Transformer encoder layer that processes each feature block separately. Does Multi-head attention between features, multi-head attention between items, and feedforward neural networks (MLPs).
 
 **Architecture flow:**
+
 1. **Attention between features** (optional): Each feature group attends to other feature groups. Operates independently for each item in the sequence.
-2. **Second MLP** (optional): Extra feedforward between attention layers  
+2. **Second MLP** (optional): Extra feedforward between attention layers
 3. **Attention between items**: Items/samples attend to other items in the sequence. Each feature group attends to itself across items.
 4. **MLP**: Standard feedforward network
 
 Each sublayer is followed by layer normalization (post-norm).
 
 The main features here are:
+
 - **Two attention axes**: Attends across both features AND items (unlike standard transformers)
 - **Train/test split**: `single_eval_pos` separates training context from test items, enabling causal masking for in-context learning
 
@@ -388,7 +398,7 @@ The y-token for test items initially encodes "unknown label" (via NaN handling),
 
 ## Inference Overview
 
-`TabPFNClassifier` is the main prediction interface with a modular architecture supporting swappable model backbones. The training set is provided via `fit(X_train, y_train)`, and predictions are made on new data with `predict(X_test)` or `predict_proba(X_test)`. 
+`TabPFNClassifier` is the main prediction interface with a modular architecture supporting swappable model backbones. The training set is provided via `fit(X_train, y_train)`, and predictions are made on new data with `predict(X_test)` or `predict_proba(X_test)`.
 
 ### Architecture Components
 
@@ -408,23 +418,27 @@ The inference pipeline consists of three main components:
 ### Prediction Flow
 
 During the `fit` call, the training data is preprocessed:
+
 - Y values are encoded via sklearn's LabelEncoder (outputs 0,...,n_classes-1)
 - X and y are stored for use during prediction (no actual training occurs here)
 
 During `predict`/`predict_proba` calls:
+
 1. **Generate ensemble configurations**: Create N configurations with random class/feature shifts and preprocessing transforms
 2. **Preprocess data**: InferenceEngine applies transforms (with caching by transform type), removes constant features, handles outliers
 3. **Apply shifts**: Circular shift classes/features according to each configuration
 4. **Batch inference**: Forward passes through model backbone in batches
 5. **Aggregate**: Reverse class shifts, average logits across ensemble, apply softmax
 
-
 # Credits
+
 This repo builds on:
+
 - [PFNs](https://github.com/automl/PFNs) (Apache 2.0) for the core training pipeline and priors. Used as the starting repository.
 - [TabPFN-v1-prior](https://github.com/automl/tabpfn-v1-prior) (Apache 2.0) for the tabpfn v1 prior implementation.
 
 # Similar relevant repositories
+
 - [TabPFN](https://github.com/PriorLabs/TabPFN) the TabPFN model and prior implementation.
 - [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) similar to this repository however still in initial stages.
 - [nanoTabPFN](https://github.com/automl/nanoTabPFN) small educational version of TabPFN.
