@@ -1,4 +1,4 @@
-# ICL-Architectures
+# Towards Linear-Time Tabular In-Context Learning: Architectures, Generalisation, and Limitations
 
 Unified framework for comparing sequence-model architectures for in-context learning on tabular classification tasks. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, Linear Attention, DeltaNet, Gated DeltaNet, and Mamba2 backbones.
 
