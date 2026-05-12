@@ -56,7 +56,7 @@ pip install -r requirements/requirements.txt \
 pip install --no-build-isolation causal-conv1d mamba-ssm
 ```
 
-Tested for Nvidia RTX 5070 with CUDA 12.8. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
+Tested for Nvidia RTX 5070 and Nvidia RTX 2080Ti with CUDA 12.8 and 12.9. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
 
 On the clusters with CUDA 11.8, the following versions work:
 
