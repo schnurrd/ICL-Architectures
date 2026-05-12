@@ -52,6 +52,8 @@ conda activate icl_arch
 pip install -r requirements/requirements.txt \
     -e ./PFNs \
     -e ./prior-repos/tabpfn-v1-prior
+
+pip install --no-build-isolation causal-conv1d mamba-ssm
 ```
 
 Tested for Nvidia RTX 5070 with CUDA 12.8. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
@@ -102,11 +104,10 @@ Transformer example:
 
 ```bash
 python PFNs/pfns/run_training_cli.py PFNs/configs/transformer/transformer_config.py \
-    --device cuda:0 \
-    --compile \
     --checkpoint-save-load-prefix PFNs/models_diff \
     --checkpoint-save-load-suffix no_seed \
-    --wandb \
+    --device cuda:0 \
+    --no-wandb \
     --config-index 0
 ```
 
@@ -146,12 +147,14 @@ The evaluation CLI allows you to evaluate trained PFNs/TabPFN-style models on Op
 
 ```bash
 python PFNs/pfns/run_evaluation_cli.py \
-    --model_path PFNs/models_diff/large_config.pt/tabpfn_prior_config_large_0_no_seed \
+    --model_path PFNs/models_diff/transformer_config_0_no_seed_default \
     --benchmark opencc \
     --n_splits 5 \
     --output results.csv \
     --batch_size_inference 16
 ```
+
+This `--model_path` matches the transformer training example above when run with `--no-wandb`. If wandb is enabled, replace `default` with the wandb run ID printed by the training command.
 
 #### Command Line Arguments
 
