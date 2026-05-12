@@ -228,6 +228,8 @@ The main sequence-length, real-world, and hidden-state analysis notebooks are:
 - [Minimal linear-attention sequence-length generalization](PFNs/notebooks/minimal_linear_attention_seq_len_generalization.ipynb)
 - [Sequence-length hidden-state debugging](PFNs/notebooks/seq_len_hidden_state_debug.ipynb)
 
+The Sequence-length comparison and generalization, Real-world experiments, and Sequence-length hidden-state debugging notebooks require trained model checkpoints. These checkpoints are not included in this anonymized submission and must be registered in [model_registry.py](PFNs/pfns/experiments/model_benchmarks/model_registry.py) before running the notebooks.
+
 ## Minimal sequence-length degradation reproduction
 
 The minimal reproduction for the linear-attention sequence-length degradation
