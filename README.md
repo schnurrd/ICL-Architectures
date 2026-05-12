@@ -400,6 +400,6 @@ This repo builds on:
 # Similar relevant repositories
 
 - [TabPFN](https://github.com/PriorLabs/TabPFN) the TabPFN model and prior implementation.
-- [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) similar to this repository however still in initial stages.
+- [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) open source playground containing nanoTabPFN with more more diverse prior support.
 - [nanoTabPFN](https://github.com/automl/nanoTabPFN) small educational version of TabPFN.
 - [TabICL](https://github.com/soda-inria/tabicl) For TabICL model and prior implementation from Inria.
