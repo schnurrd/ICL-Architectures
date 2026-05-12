@@ -15,5 +15,3 @@ tabicl
 flash-linear-attention==0.4.2
 tabpfn
 wandb
-causal-conv1d
-mamba-ssm

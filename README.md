@@ -52,6 +52,8 @@ conda activate icl_arch
 pip install -r requirements/requirements.txt \
     -e ./PFNs \
     -e ./prior-repos/tabpfn-v1-prior
+
+pip install --no-build-isolation causal-conv1d mamba-ssm
 ```
 
 Tested for Nvidia RTX 5070 with CUDA 12.8. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
