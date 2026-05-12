@@ -119,6 +119,7 @@ python PFNs/pfns/run_training_cli.py PFNs/configs/fla/fla_config.py \
     --config-arg model_type=gla \
     --config-arg sequence_mode=Comb_ST \
     --config-arg training_setup=high \
+    --no-wandb \
     --config-index 0
 ```
 
@@ -264,9 +265,6 @@ The main sequence-length, real-world, and hidden-state analysis notebooks are:
 - [Real-world experiments](PFNs/notebooks/real_world_experiments.ipynb)
 - [Minimal linear-attention sequence-length generalization](PFNs/notebooks/minimal_linear_attention_seq_len_generalization.ipynb)
 - [Sequence-length hidden-state debugging](PFNs/notebooks/seq_len_hidden_state_debug.ipynb)
-
-The corresponding batch script for the larger sequence-length benchmark is
-[run_synthetic_seq_len_experiments.py](PFNs/notebooks/run_synthetic_seq_len_experiments.py).
 
 ## Minimal sequence-length degradation reproduction
 
