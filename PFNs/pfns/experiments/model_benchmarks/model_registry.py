@@ -375,7 +375,7 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Non-Causal Linear\nAttention",
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
     },
-    "Linear_Attention_FLA_Comb_ST": { 
+    "equal_params:Linear_Attention_FLA_Comb_ST": { 
         "wandb_run_id": "icl_arch/fla_models/f4rsksje",
         "display_name": "Causal Linear\nAttention (Comb ST)",
     },
