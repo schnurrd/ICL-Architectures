@@ -5,7 +5,6 @@ Unified framework for comparing sequence-model architectures for in-context lear
 ## Table of Contents
 
 - [Installation](#installation)
-  - [Pulling latest changes](#pulling-latest-changes)
 - [Repository User Guide](#repository-user-guide)
   - [CLI training interface](#cli-training-interface)
     - [Usage](#usage)
@@ -36,12 +35,7 @@ Unified framework for comparing sequence-model architectures for in-context lear
 
 ## Installation
 
-Clone the repository with submodules:
-
-```bash
-git clone --recurse-submodules git@github.com:schnurrd/ICL-Architectures.git
-cd ICL-Architectures
-```
+Download or clone the codebase and navigate into the root directory of the repository.
 
 Install the required packages and editable installs for PFNs and the TabPFN-v1 prior:
 
@@ -57,40 +51,6 @@ pip install --no-build-isolation causal-conv1d mamba-ssm
 ```
 
 Tested for Nvidia RTX 5070 and Nvidia RTX 2080Ti with CUDA 12.8 and 12.9. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
-
-On the clusters with CUDA 11.8, the following versions work:
-
-```bash
-conda create -n icl_arch python=3.11
-conda activate icl_arch
-
-conda install -y -c nvidia/label/cuda-11.8.0 cuda-toolkit
-
-export CUDA_HOME=$CONDA_PREFIX
-export PATH=$CUDA_HOME/bin:$PATH
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-
-python -m pip install --no-cache-dir \
-  --index-url https://download.pytorch.org/whl/cu118 \
-  torch==2.7.1
-
-python -m pip install --no-cache-dir --no-build-isolation causal-conv1d mamba-ssm
-
-pip install -r requirements/requirements_obsession.txt \
-    -e ./PFNs \
-    -e ./prior-repos/tabpfn-v1-prior
-```
-
-### Pulling latest changes
-
-To pull the latest changes including submodules, run:
-
-```bash
-git pull
-git submodule update --init --recursive
-```
-
-Additionally to clean the submodules or main repository run: `git submodule foreach git clean -fdx` and `git clean -fdx` for main repository. To see the status of the submodules run: `git submodule status`.
 
 # Repository User Guide
 
