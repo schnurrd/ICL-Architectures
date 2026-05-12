@@ -16,7 +16,7 @@ Unified framework for comparing sequence-model architectures for in-context lear
   - [Configuration and logging](#configuration-and-logging)
     - [wandb support](#wandb-support)
     - [Configuration Files](#configuration-files)
-  - [Sequence-length experiments](#sequence-length-experiments)
+  - [Main sequence-length, real-world, and hidden-state analysis notebooks](#main-sequence-length-real-world-and-hidden-state-analysis-notebooks)
   - [Minimal sequence-length degradation reproduction](#minimal-sequence-length-degradation-reproduction)
 - [Repository (PFNs) explanation](#repository-pfns-explanation)
   - [Steps of execution in the pre-training pipeline](#steps-of-execution-in-the-pre-training-pipeline)
@@ -52,8 +52,6 @@ conda activate icl_arch
 pip install -r requirements/requirements.txt \
     -e ./PFNs \
     -e ./prior-repos/tabpfn-v1-prior
-
-pip install --no-build-isolation causal-conv1d mamba-ssm
 ```
 
 Tested for Nvidia RTX 5070 with CUDA 12.8. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
@@ -258,13 +256,12 @@ These are part of `BatchShapeSamplerConfig` and influence the same sampling proc
 - `min_num_features`, `max_num_features`: Feature-count sampling range per batch.
 - `seed` (default: `42`): Seed used with `(epoch, step)` for deterministic batch-shape sampling.
 
-## Sequence-length experiments
+## Main sequence-length, real-world, and hidden-state analysis notebooks
 
-### Sequence-length notebooks
-
-The main sequence-length experiment notebooks are:
+The main sequence-length, real-world, and hidden-state analysis notebooks are:
 
 - [Sequence-length comparison and generalization](PFNs/notebooks/seq_len_comparison_and_generalization.ipynb)
+- [Real-world experiments](PFNs/notebooks/real_world_experiments.ipynb)
 - [Minimal linear-attention sequence-length generalization](PFNs/notebooks/minimal_linear_attention_seq_len_generalization.ipynb)
 - [Sequence-length hidden-state debugging](PFNs/notebooks/seq_len_hidden_state_debug.ipynb)
 
