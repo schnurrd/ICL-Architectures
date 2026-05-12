@@ -228,7 +228,7 @@ The main sequence-length, real-world, and hidden-state analysis notebooks are:
 - [Minimal linear-attention sequence-length generalization](PFNs/notebooks/minimal_linear_attention_seq_len_generalization.ipynb)
 - [Sequence-length hidden-state debugging](PFNs/notebooks/seq_len_hidden_state_debug.ipynb)
 
-The Sequence-length comparison and generalization, Real-world experiments, and Sequence-length hidden-state debugging notebooks require trained model checkpoints. These checkpoints are not included in this anonymized submission and must be registered in [model_registry.py](PFNs/pfns/experiments/model_benchmarks/model_registry.py) before running the notebooks.
+The Sequence-length comparison and generalization, Real-world experiments, and Sequence-length hidden-state debugging notebooks require trained model checkpoints. These checkpoints are not included in this anonymized submission; use the provided training commands to reproduce the models from scratch. Before running these notebooks, register the checkpoints in [model_registry.py](PFNs/pfns/experiments/model_benchmarks/model_registry.py). The minimal sequence-length degradation notebook is intended as a lightweight standalone reproduction.
 
 ## Minimal sequence-length degradation reproduction
 
@@ -402,6 +402,6 @@ This repo builds on:
 # Similar relevant repositories
 
 - [TabPFN](https://github.com/PriorLabs/TabPFN) the TabPFN model and prior implementation.
-- [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) open source playground containing nanoTabPFN with more more diverse prior support.
+- [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) open source playground containing nanoTabPFN with more diverse prior support.
 - [nanoTabPFN](https://github.com/automl/nanoTabPFN) small educational version of TabPFN.
 - [TabICL](https://github.com/soda-inria/tabicl) For TabICL model and prior implementation from Inria.
