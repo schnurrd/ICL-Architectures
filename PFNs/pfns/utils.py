@@ -19,7 +19,7 @@ def find_project_root(start: str | Path) -> Path:
     start_path = Path(start).resolve()
     candidates = (start_path, *start_path.parents)
     for path in candidates:
-        if (path / ".git").exists() and (path / "PFNs").exists():
+        if (path / "PFNs" / "pfns").is_dir() and (path / "PFNs" / "configs").is_dir():
             return path
     raise RuntimeError(f"Could not find repo root from {start_path}.")
 
