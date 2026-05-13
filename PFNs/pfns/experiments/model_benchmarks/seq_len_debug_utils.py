@@ -46,15 +46,43 @@ _METRIC_DISPLAY_NAMES = {
     "effective_rank": "Effective Rank",
     "stable_rank": "Stable Rank",
     "kv_state_norm": "KV-State Norm",
-    "kv_state_norm_post_renorm": "KV-State Norm After Renorm",
+    "kv_state_norm_post_renorm": "KV-State Norm After Renormalisation",
     "k_sum_norm": "K-Sum Norm",
     "joint_hidden_state_norm": "Joint Hidden-State Norm",
     "kv_over_ksum_ratio": "KV-over-K-Sum Ratio",
-    "state_cosine_to_reference": "State Cosine to Reference",
+    "state_cosine_to_reference": "State Cosine Similarity to Reference",
     "state_top_subspace_to_reference": "Top Singular Subspace to Reference",
-    "state_renorm_scale": "State Renorm Scale",
+    "state_renorm_scale": "State Renormalisation Scale",
     "output_norm": "Output Norm",
 }
+
+
+def _sanitize_plot_filename(value: object) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).strip())
+    return safe.strip("_") or "plot"
+
+
+def _save_plot_figure(
+    fig: Any,
+    *,
+    save_dir: str | Path | None,
+    filename_stem: str,
+    save_formats: tuple[str, ...],
+) -> list[Path]:
+    if save_dir is None:
+        return []
+    output_dir = Path(save_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    saved_paths: list[Path] = []
+    safe_stem = _sanitize_plot_filename(filename_stem)
+    for fmt in save_formats:
+        path = output_dir / f"{safe_stem}.{fmt.lstrip('.')}"
+        save_kwargs: dict[str, Any] = {"bbox_inches": "tight"}
+        if fmt.lower().lstrip(".") in {"png", "jpg", "jpeg"}:
+            save_kwargs["dpi"] = 300
+        fig.savefig(path, **save_kwargs)
+        saved_paths.append(path)
+    return saved_paths
 
 
 def _compute_padded_y_limits(
@@ -520,6 +548,13 @@ def _plot_recurrent_metric(
     run_alpha: float = 0.35,
     distribution_alpha: float | None = 0.3,
     distribution_width_frac: float = 0.4,
+    show_title: bool = True,
+    show_suptitle: bool = True,
+    include_group_in_title: bool = True,
+    legend_title: str | None = None,
+    save_dir: str | Path | None = None,
+    filename_prefix: str | None = None,
+    save_formats: tuple[str, ...] = ("pdf",),
 ) -> None:
     if plot_mode not in {"individual_runs", "violin"}:
         raise ValueError("plot_mode must be 'individual_runs' or 'violin'.")
@@ -573,7 +608,7 @@ def _plot_recurrent_metric(
             colors = {value: tab20_reordered[i % len(tab20_reordered)] for i, value in enumerate(line_values)}
             for line_idx, line_value in enumerate(line_values):
                 value = int(line_value)
-                label = f"{line_name}[{value}]" if value >= 0 else f"{line_name}[unknown]"
+                label = f"{line_name.title()} {value}" if value >= 0 else f"{line_name.title()} unknown"
                 color = colors[line_value]
                 raw_line_df = sub[sub[line_key] == line_value]
                 plot_grouped_runs_with_distribution(
@@ -613,15 +648,31 @@ def _plot_recurrent_metric(
                     boundary=float(training_context_length),
                     boundary_label="Train context",
                 )
-            ax.set_xlabel("Sequence Length")
+            ax.set_xlabel("Sequence length")
             ax.set_ylabel(metric_label if idx == 0 else "")
-            ax.set_title(
-                display_name_map.get(str(model_name), str(model_name))
+            panel_title = (
+                (
+                    display_name_map.get(str(model_name), str(model_name))
+                    if show_suptitle
+                    else (
+                        display_name_map.get(str(model_name), str(model_name))
+                        if not include_group_in_title
+                        else (
+                            f"{display_name_map.get(str(model_name), str(model_name))}\n"
+                            f"{group_name.title()} {int(group_value)}"
+                        )
+                    )
+                )
                 if split
-                else f"{title_prefix} | {group_name}[{int(group_value)}]"
+                else (
+                    title_prefix
+                    if not include_group_in_title
+                    else f"{title_prefix} | {group_name}[{int(group_value)}]"
+                )
             )
+            ax.set_title(panel_title if show_title else "")
             ax.grid(True, alpha=0.3)
-            ax.legend(loc="best", fontsize=8, ncol=2)
+            ax.legend(loc="best", fontsize=8, ncol=2, title=legend_title)
         for ax in visible_axes:
             if shared_x_left is not None and shared_x_right is not None:
                 ax.set_xlim(shared_x_left, shared_x_right)
@@ -633,11 +684,22 @@ def _plot_recurrent_metric(
                     boundary=float(training_context_length),
                     boundary_label="Train context",
                 )
-        if split:
-            fig.suptitle(f"{title_prefix} | {group_name}[{int(group_value)}]")
+        if split and show_suptitle:
+            suptitle = (
+                title_prefix
+                if not include_group_in_title
+                else f"{title_prefix} | {group_name}[{int(group_value)}]"
+            )
+            fig.suptitle(suptitle)
             fig.tight_layout(rect=(0, 0, 1, 0.95))
         else:
             fig.tight_layout()
+        _save_plot_figure(
+            fig,
+            save_dir=save_dir,
+            filename_stem=f"{filename_prefix or metric}_{group_name}_{int(group_value)}",
+            save_formats=save_formats,
+        )
 
 
 def plot_recurrent_metric_per_head(
@@ -653,6 +715,13 @@ def plot_recurrent_metric_per_head(
     run_alpha: float = 0.35,
     distribution_alpha: float | None = 0.3,
     distribution_width_frac: float = 0.4,
+    show_title: bool = True,
+    show_suptitle: bool = True,
+    include_group_in_title: bool = True,
+    legend_title: str | None = None,
+    save_dir: str | Path | None = None,
+    filename_prefix: str | None = None,
+    save_formats: tuple[str, ...] = ("pdf",),
 ) -> None:
     if df.empty:
         print(f"No rows to plot for: {title_prefix}")
@@ -685,6 +754,13 @@ def plot_recurrent_metric_per_head(
         run_alpha=run_alpha,
         distribution_alpha=distribution_alpha,
         distribution_width_frac=distribution_width_frac,
+        show_title=show_title,
+        show_suptitle=show_suptitle,
+        include_group_in_title=include_group_in_title,
+        legend_title=legend_title,
+        save_dir=save_dir,
+        filename_prefix=filename_prefix,
+        save_formats=save_formats,
     )
 
 
@@ -694,6 +770,12 @@ def plot_avg_metric_per_layer_per_head(
     metric: str,
     title_prefix: str,
     model: str | None = None,
+    show_title: bool = True,
+    show_suptitle: bool = True,
+    legend_title: str | None = None,
+    save_dir: str | Path | None = None,
+    filename_prefix: str | None = None,
+    save_formats: tuple[str, ...] = ("pdf",),
 ) -> None:
     if df.empty:
         print(f"No rows to plot for: {title_prefix}")
@@ -719,6 +801,7 @@ def plot_avg_metric_per_layer_per_head(
         print(f"Skipping {title_prefix}: no finite rows.")
         return
 
+    display_name_map = resolve_display_name_map(plot_df)
     avg_metric_df = (
         plot_df.groupby(["model", "head_idx", "layer_idx"], observed=True)[metric]
         .mean()
@@ -730,7 +813,6 @@ def plot_avg_metric_per_layer_per_head(
         return
 
     model_values = sorted(avg_metric_df["model"].astype(str).unique().tolist())
-    display_name_map = resolve_display_name_map(avg_metric_df)
     split = model is None and len(model_values) > 1
     panel_models = model_values if split else [model_values[0]]
     fig, axes = create_panel_figure(
@@ -742,7 +824,7 @@ def plot_avg_metric_per_layer_per_head(
     tab20_reordered = _reordered_tab20_palette()
     colors = {head_idx: tab20_reordered[i % len(tab20_reordered)] for i, head_idx in enumerate(head_values)}
     metric_label = _METRIC_DISPLAY_NAMES.get(metric, metric.replace("_", " ").title())
-    ylabel = f"Average {metric_label} Across Seq Len"
+    ylabel = f"Average {metric_label} across sequence length"
 
     for idx, model_name in enumerate(panel_models):
         ax = axes[idx if split else 0]
@@ -761,20 +843,27 @@ def plot_avg_metric_per_layer_per_head(
             )
         ax.set_xlabel("Layer")
         ax.set_ylabel(ylabel if idx == 0 else "")
-        ax.set_title(
+        panel_title = (
             display_name_map.get(str(model_name), str(model_name))
             if split
             else title_prefix
         )
+        ax.set_title(panel_title if show_title else "")
         ax.set_xticks(sorted(sub["layer_idx"].astype(int).unique().tolist()))
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="best", fontsize=8)
+        ax.legend(loc="best", fontsize=8, title=legend_title)
 
-    if split:
+    if split and show_suptitle:
         fig.suptitle(f"{title_prefix} (averaged across sequence lengths)")
         fig.tight_layout(rect=(0, 0, 1, 0.97))
     else:
         fig.tight_layout()
+    _save_plot_figure(
+        fig,
+        save_dir=save_dir,
+        filename_stem=filename_prefix or f"{metric}_avg_per_layer_per_head",
+        save_formats=save_formats,
+    )
 
 
 def plot_metric_layer_seqlen_heatmap(
@@ -787,6 +876,11 @@ def plot_metric_layer_seqlen_heatmap(
     cmap: str = "viridis",
     color_scale: Literal["linear", "log_reference_gap"] = "linear",
     reference_value: float = 1.0,
+    show_title: bool = True,
+    show_suptitle: bool = True,
+    save_dir: str | Path | None = None,
+    filename_prefix: str | None = None,
+    save_formats: tuple[str, ...] = ("pdf",),
 ) -> None:
     if df.empty:
         print(f"No rows to plot for: {title_prefix}")
@@ -805,13 +899,13 @@ def plot_metric_layer_seqlen_heatmap(
         print(f"No finite rows to plot for: {title_prefix}")
         return
 
+    display_name_map = resolve_display_name_map(plot_df)
     heatmap_df = (
         plot_df.groupby(["model", "layer_idx", "seqlen"], observed=True)[metric]
         .mean()
         .reset_index()
     )
     model_values = sorted(heatmap_df["model"].astype(str).unique().tolist())
-    display_name_map = resolve_display_name_map(heatmap_df)
     split = model is None and len(model_values) > 1
     panel_models = model_values if split else [model_values[0]]
     fig, axes = create_panel_figure(
@@ -880,20 +974,27 @@ def plot_metric_layer_seqlen_heatmap(
                 linestyle="--",
                 linewidth=1.2,
             )
-        ax.set_xlabel("Sequence Length")
+        ax.set_xlabel("Sequence length")
         ax.set_ylabel("Layer" if idx == 0 else "")
-        ax.set_title(
+        panel_title = (
             display_name_map.get(str(model_name), str(model_name))
             if split
             else title_prefix
         )
-    if split:
+        ax.set_title(panel_title if show_title else "")
+    if split and show_suptitle:
         fig.suptitle(title_prefix)
         fig.tight_layout(rect=(0, 0, 0.92, 0.95))
     else:
         fig.tight_layout(rect=(0, 0, 0.92, 1))
     cbar_ax = fig.add_axes([0.94, 0.18, 0.012, 0.66])
     fig.colorbar(image, cax=cbar_ax, label=cbar_label)
+    _save_plot_figure(
+        fig,
+        save_dir=save_dir,
+        filename_stem=filename_prefix or f"{metric}_layer_seqlen_heatmap",
+        save_formats=save_formats,
+    )
 
 
 def plot_recurrent_metric_per_layer(
@@ -911,6 +1012,13 @@ def plot_recurrent_metric_per_layer(
     run_alpha: float = 0.35,
     distribution_alpha: float | None = 0.3,
     distribution_width_frac: float = 0.4,
+    show_title: bool = True,
+    show_suptitle: bool = True,
+    include_group_in_title: bool = True,
+    legend_title: str | None = None,
+    save_dir: str | Path | None = None,
+    filename_prefix: str | None = None,
+    save_formats: tuple[str, ...] = ("pdf",),
 ) -> None:
     if df.empty:
         print(f"No rows to plot for: {title_prefix}")
@@ -947,4 +1055,11 @@ def plot_recurrent_metric_per_layer(
         run_alpha=run_alpha,
         distribution_alpha=distribution_alpha,
         distribution_width_frac=distribution_width_frac,
+        show_title=show_title,
+        show_suptitle=show_suptitle,
+        include_group_in_title=include_group_in_title,
+        legend_title=legend_title,
+        save_dir=save_dir,
+        filename_prefix=filename_prefix,
+        save_formats=save_formats,
     )

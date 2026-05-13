@@ -334,7 +334,7 @@ def add_pretraining_split_legend(
             facecolor=generalization_region_color,
             alpha=region_alpha,
             edgecolor="none",
-            label=f"Generalization range (>{boundary_label})",
+            label=f"Generalisation range (>{boundary_label})",
         ),
         mlines.Line2D(
             [],
