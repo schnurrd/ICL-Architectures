@@ -128,6 +128,33 @@ def parse_args():
         metavar="KEY=VALUE",
         help="Extra get_config kwargs (repeatable), e.g. --config-arg masking='causal_train_only'.",
     )
+    parser.add_argument(
+        "--delta-rule-decay-power",
+        type=float,
+        default=None,
+        help=(
+            "Set DeltaNet delta-rule step-decay power v. Passed to configs "
+            "that accept delta_rule_decay_power."
+        ),
+    )
+    parser.add_argument(
+        "--delta-rule-decay-train-length",
+        type=int,
+        default=None,
+        help=(
+            "Reference train length T_ref for DeltaNet delta-rule step decay. "
+            "If omitted, fla_config defaults to max_seq_len when decay is enabled."
+        ),
+    )
+    parser.add_argument(
+        "--delta-rule-decay-clamp-max",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Clamp DeltaNet step-decay weights to at most 1.0, avoiding early-token "
+            "step amplification."
+        ),
+    )
 
     parser.add_argument(
         "--overwrite",
@@ -331,6 +358,12 @@ def main():
     """Main CLI entry point."""
     args = parse_args()
     config_kwargs = dict(args.config_arg)
+    if args.delta_rule_decay_power is not None:
+        config_kwargs["delta_rule_decay_power"] = args.delta_rule_decay_power
+    if args.delta_rule_decay_train_length is not None:
+        config_kwargs["delta_rule_decay_train_length"] = args.delta_rule_decay_train_length
+    if args.delta_rule_decay_clamp_max is not None:
+        config_kwargs["delta_rule_decay_clamp_max"] = args.delta_rule_decay_clamp_max
     print("Loading configuration...")
     config = load_config_from_python(args.config_file, args.config_index, config_kwargs=config_kwargs)
 

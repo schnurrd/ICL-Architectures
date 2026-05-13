@@ -167,6 +167,9 @@ def build_fla_backbone(
     bidirectional_share_weights: bool = True,
     bidirectional_state_fusion: str = "mean_output_mean_cache",
     include_self_term: bool = True,
+    delta_rule_decay_power: float = 0.0,
+    delta_rule_decay_train_length: int | None = None,
+    delta_rule_decay_clamp_max: bool = True,
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -187,6 +190,9 @@ def build_fla_backbone(
         bidirectional_share_weights=bidirectional_share_weights,
         bidirectional_state_fusion=bidirectional_state_fusion,
         include_self_term=bool(include_self_term),
+        delta_rule_decay_power=float(delta_rule_decay_power),
+        delta_rule_decay_train_length=delta_rule_decay_train_length,
+        delta_rule_decay_clamp_max=bool(delta_rule_decay_clamp_max),
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)

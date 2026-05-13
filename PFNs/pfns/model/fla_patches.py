@@ -10,6 +10,49 @@ import torch.nn.functional as F
 from fla.modules.l2norm import l2norm
 
 
+def _delta_rule_step_decay_is_enabled(power: float) -> bool:
+    return abs(float(power)) > 0.0
+
+
+def _apply_delta_rule_step_decay(
+    beta: torch.Tensor,
+    *,
+    power: float,
+    train_length: int | None,
+    clamp_max: bool,
+    sequence_offset: int = 0,
+    position_dim: int = 1,
+) -> torch.Tensor:
+    """Scale DeltaNet beta by a normalized online-LR decay schedule."""
+    if not _delta_rule_step_decay_is_enabled(power):
+        return beta
+
+    position_dim = position_dim % beta.ndim
+    seq_len = beta.shape[position_dim]
+    if seq_len == 0:
+        return beta
+
+    reference_length = seq_len if train_length is None else int(train_length)
+    if reference_length <= 0:
+        raise ValueError("Delta rule step-decay train_length must be positive.")
+    if sequence_offset < 0:
+        raise ValueError("Delta rule step-decay sequence_offset must be non-negative.")
+
+    positions = torch.arange(
+        sequence_offset + 1,
+        sequence_offset + seq_len + 1,
+        device=beta.device,
+        dtype=torch.float32,
+    )
+    weights = (float(reference_length) / positions).pow(float(power))
+    if clamp_max:
+        weights = weights.clamp(max=1.0)
+
+    shape = [1] * beta.ndim
+    shape[position_dim] = seq_len
+    return beta * weights.to(dtype=beta.dtype).view(shape)
+
+
 @contextmanager
 def _maybe_patch_shortconv_forward_pytorch(enabled: bool):
     if not enabled:
@@ -337,11 +380,44 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    step_decay_power: float = 0.0,
+    step_decay_train_length: int | None = None,
+    step_decay_clamp_max: bool = True,
+    sequence_offset: int = 0,
 ):
-    if not enabled:
+    step_decay_enabled = _delta_rule_step_decay_is_enabled(step_decay_power)
+    if not enabled and not step_decay_enabled:
         yield
         return
     import fla.layers.delta_net as deltanet_layer
+
+    original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
+    original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
+
+    def _decay_beta(beta: torch.Tensor, *, position_dim: int) -> torch.Tensor:
+        return _apply_delta_rule_step_decay(
+            beta,
+            power=step_decay_power,
+            train_length=step_decay_train_length,
+            clamp_max=step_decay_clamp_max,
+            sequence_offset=sequence_offset,
+            position_dim=position_dim,
+        )
+
+    def _wrap_delta_rule_kernel(original_kernel: tp.Callable[..., tp.Any]):
+        @torch.compiler.disable
+        def _kernel_with_step_decay(*args: tp.Any, **kwargs: tp.Any) -> tp.Any:
+            if "beta" in kwargs:
+                beta = kwargs["beta"]
+                if beta is not None:
+                    kwargs["beta"] = _decay_beta(beta, position_dim=1)
+                return original_kernel(*args, **kwargs)
+
+            if len(args) >= 4 and args[3] is not None:
+                args = (*args[:3], _decay_beta(args[3], position_dim=1), *args[4:])
+            return original_kernel(*args, **kwargs)
+
+        return _kernel_with_step_decay
 
     @torch.compiler.disable
     def _stateless_deltanet_kernel(
@@ -381,6 +457,9 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
             k = k.reshape(cache_batch, flat_len, *k.shape[2:])
             v = v.reshape(cache_batch, flat_len, *v.shape[2:])
             beta = beta.reshape(cache_batch, flat_len, *beta.shape[2:])
+            beta = _decay_beta(beta, position_dim=1)
+        else:
+            beta = _decay_beta(beta, position_dim=1)
 
         # Use FLA's l2norm to match the original kernel's normalization and don't fail tests
         if use_qk_l2norm_in_kernel:
@@ -392,9 +471,12 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
         if beta.ndim < v.ndim:
             beta = beta.view(*beta.shape, *([1] * (v.ndim - beta.ndim)))
 
-        s0k = torch.einsum("bthd,bhdm->bthm", k, s0)
-
-        term1 = torch.einsum("bthd,bhdm->bthm", q, s0)
+        if q.ndim == 5:
+            s0k = torch.einsum("blthd,bhdm->blthm", k, s0)
+            term1 = torch.einsum("blthd,bhdm->blthm", q, s0)
+        else:
+            s0k = torch.einsum("bthd,bhdm->bthm", k, s0)
+            term1 = torch.einsum("bthd,bhdm->bthm", q, s0)
 
         o = term1
         if include_self_term:
@@ -403,15 +485,21 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
             o = o + scaled_qk * v - scaled_qk * s0k
 
         if orig_batch != cache_batch:
-            o = o.reshape(orig_batch, 1, *o.shape[2:])
+            if o.ndim == 4:
+                o = o.reshape(orig_batch, 1, *o.shape[2:])
+            else:
+                o = o.reshape(orig_batch, *o.shape[2:])
             
         return o.to(dtype), None
 
-    original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
-    original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
-    
-    deltanet_layer.fused_recurrent_delta_rule = _stateless_deltanet_kernel
-    deltanet_layer.chunk_delta_rule = _stateless_deltanet_kernel
+    if enabled:
+        deltanet_layer.fused_recurrent_delta_rule = _stateless_deltanet_kernel
+        deltanet_layer.chunk_delta_rule = _stateless_deltanet_kernel
+    else:
+        deltanet_layer.fused_recurrent_delta_rule = _wrap_delta_rule_kernel(
+            original_fused_recurrent_delta_rule
+        )
+        deltanet_layer.chunk_delta_rule = _wrap_delta_rule_kernel(original_chunk_delta_rule)
 
     try:
         yield

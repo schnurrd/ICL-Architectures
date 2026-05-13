@@ -5,6 +5,7 @@ pytest.importorskip("fla")
 from fla.layers.gla import fused_recurrent_gla
 from fla.layers.linear_attn import fused_recurrent_linear_attn
 
+from pfns.model.fla_patches import _apply_delta_rule_step_decay
 from tests.model.fla_test_utils import (
     fla_cache_equivalence_tolerances,
     FLA_MODEL_TYPES,
@@ -12,6 +13,23 @@ from tests.model.fla_test_utils import (
     fla_hidden_size,
     fla_tolerances,
 )
+
+
+def test_delta_rule_step_decay_scales_beta_after_reference_length():
+    beta = torch.ones(1, 6, 2)
+
+    decayed = _apply_delta_rule_step_decay(
+        beta,
+        power=1.0,
+        train_length=3,
+        clamp_max=True,
+        sequence_offset=0,
+        position_dim=1,
+    )
+
+    expected = torch.tensor([1.0, 1.0, 1.0, 0.75, 0.6, 0.5]).view(1, 6, 1)
+    torch.testing.assert_close(decayed, expected.expand_as(beta))
+
 
 def _run_repeated_cache_reference(
     backbone,

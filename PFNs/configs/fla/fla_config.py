@@ -230,6 +230,9 @@ def get_config(
     state_passing_dropout: float = 0.1,
     state_weaving: bool = False,
     include_self_term: bool = True,
+    delta_rule_decay_power: float = 0.0,
+    delta_rule_decay_train_length: int | None = None,
+    delta_rule_decay_clamp_max: bool = True,
     task_variant: str = "tabular_prior",
     # Training
     training_setup: str = "high",
@@ -373,6 +376,14 @@ def get_config(
         resolved_config_kwargs.get("hidden_size", model_settings["emsize"])
     )
     resolved_include_self_term = bool(include_self_term)
+    resolved_delta_rule_decay_power = float(delta_rule_decay_power)
+    resolved_delta_rule_decay_train_length = (
+        int(delta_rule_decay_train_length)
+        if delta_rule_decay_train_length is not None
+        else resolved_max_seq_len
+        if resolved_delta_rule_decay_power > 0.0
+        else None
+    )
 
     backbone_kwargs = {
         "model_type": model_type,
@@ -385,6 +396,9 @@ def get_config(
         "state_passing_dropout": float(state_passing_dropout),
         "state_weaving": bool(state_weaving),
         "include_self_term": resolved_include_self_term,
+        "delta_rule_decay_power": resolved_delta_rule_decay_power,
+        "delta_rule_decay_train_length": resolved_delta_rule_decay_train_length,
+        "delta_rule_decay_clamp_max": bool(delta_rule_decay_clamp_max),
         "mimetic_init": mimetic_init,
         "mimetic_init_mode": mimetic_init_mode,
         "mimetic_init_layer_indices": mimetic_init_layer_indices,
@@ -450,6 +464,23 @@ def get_config(
         f"shortconv_{use_short_conv}" if use_short_conv is not None else None,
         "nocat" if not use_categorical_features else None,
         f"mimetic_{mimetic_init_mode}" if mimetic_init else None,
+        (
+            f"drdecay{resolved_delta_rule_decay_power:g}"
+            if resolved_delta_rule_decay_power > 0.0
+            else None
+        ),
+        (
+            f"drtrain{resolved_delta_rule_decay_train_length}"
+            if resolved_delta_rule_decay_power > 0.0
+            and resolved_delta_rule_decay_train_length != resolved_max_seq_len
+            else None
+        ),
+        (
+            "drnoclamp"
+            if resolved_delta_rule_decay_power > 0.0
+            and not bool(delta_rule_decay_clamp_max)
+            else None
+        ),
         "bidir" if bidirectional else None,
         (
             f"bidirshare_{int(bidirectional_share_weights)}"

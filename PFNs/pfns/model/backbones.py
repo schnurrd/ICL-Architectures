@@ -372,6 +372,9 @@ class FLABackboneConfig(BackboneConfig):
     state_passing_dropout: float = 0.1
     state_weaving: bool = False
     include_self_term: bool = True
+    delta_rule_decay_power: float = 0.0
+    delta_rule_decay_train_length: int | None = None
+    delta_rule_decay_clamp_max: bool = True
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_init_mode: MimeticInitMode = "gate_only"
@@ -423,6 +426,18 @@ class FLABackboneConfig(BackboneConfig):
                 raise ValueError("state_weaving does not support state_passing.")
         if not 0.0 <= self.state_passing_dropout <= 1.0:
             raise ValueError("state_passing_dropout must be in [0, 1].")
+        if self.delta_rule_decay_power < 0.0:
+            raise ValueError("delta_rule_decay_power must be non-negative.")
+        if (
+            self.delta_rule_decay_train_length is not None
+            and self.delta_rule_decay_train_length <= 0
+        ):
+            raise ValueError("delta_rule_decay_train_length must be positive when set.")
+        if self.delta_rule_decay_power > 0.0 and self.model_type != "deltanet":
+            raise ValueError(
+                "delta_rule_decay_power is currently supported only for "
+                "model_type='deltanet'."
+            )
 
     def create_backbone(self, ninp: int, attention_between_features: bool, **kwargs: tp.Any) -> "Backbone":
         ConfigClass, ModelClass = FLA_MODEL_REGISTRY[self.model_type]
@@ -464,6 +479,9 @@ class FLABackboneConfig(BackboneConfig):
             state_passing=self.state_passing,
             state_passing_dropout=self.state_passing_dropout,
             include_self_term=self.include_self_term,
+            delta_rule_decay_power=self.delta_rule_decay_power,
+            delta_rule_decay_train_length=self.delta_rule_decay_train_length,
+            delta_rule_decay_clamp_max=self.delta_rule_decay_clamp_max,
         )
         if self.bidirectional:
             backbone_kwargs["state_fusion"] = self.bidirectional_state_fusion
@@ -495,6 +513,9 @@ class FLABackbone(Backbone):
         state_passing_dropout: float = 0.1,
         state_weaving: bool = False,
         include_self_term: bool = True,
+        delta_rule_decay_power: float = 0.0,
+        delta_rule_decay_train_length: int | None = None,
+        delta_rule_decay_clamp_max: bool = True,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
@@ -504,6 +525,9 @@ class FLABackbone(Backbone):
         self.sequence_mode = resolve_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
         self.include_self_term = bool(include_self_term)
+        self.delta_rule_decay_power = float(delta_rule_decay_power)
+        self.delta_rule_decay_train_length = delta_rule_decay_train_length
+        self.delta_rule_decay_clamp_max = bool(delta_rule_decay_clamp_max)
         self.state_weaving = bool(state_weaving)
         self.state_passing = (
             FLAStatePassing(dropout_prob=state_passing_dropout)
@@ -582,6 +606,30 @@ class FLABackbone(Backbone):
         )
 
     @staticmethod
+    def _cache_sequence_offset(cache_params: tp.Any | None) -> int:
+        if cache_params is None:
+            return 0
+        for attr in ("get_seq_length", "get_usable_length"):
+            method = getattr(cache_params, attr, None)
+            if callable(method):
+                try:
+                    return int(method())
+                except TypeError:
+                    pass
+        for attr in ("seen_tokens", "_seen_tokens", "seq_length", "offset"):
+            value = getattr(cache_params, attr, None)
+            if isinstance(value, int):
+                return value
+        layers = getattr(cache_params, "layers", None)
+        if layers:
+            first_layer = layers[0]
+            for attr in ("offset", "seq_length"):
+                value = getattr(first_layer, attr, None)
+                if isinstance(value, int):
+                    return value
+        return 0
+
+    @staticmethod
     def _shallow_copy(obj: tp.Any) -> tp.Any:
         return _shallow_copy_fla(obj)
 
@@ -653,6 +701,7 @@ class FLABackbone(Backbone):
                 x_batched,
                 cache_params=initial_cache_params,
                 return_cache=True,
+                sequence_offset=self._cache_sequence_offset(initial_cache_params),
             )
         cached_state = {"cache_params": cache_params}
         out = self._unprepare_fla_output(train_out, shape_info)
@@ -727,6 +776,7 @@ class FLABackbone(Backbone):
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
+        sequence_offset: int = 0,
     ) -> tuple[torch.Tensor, tp.Any | None]:
         if (
             cache_params is not None
@@ -760,6 +810,7 @@ class FLABackbone(Backbone):
                 for ctx in self._patch_contexts(
                     use_custom_recurrent=use_custom_recurrent,
                     use_custom_shortconv=use_custom_shortconv,
+                    sequence_offset=sequence_offset,
                 ):
                     stack.enter_context(ctx)
                 out = self.fla(**kwargs)
@@ -813,6 +864,7 @@ class FLABackbone(Backbone):
         self, 
         use_custom_recurrent: bool,
         use_custom_shortconv : bool = False,
+        sequence_offset: int = 0,
     ) -> tp.Iterable[tp.ContextManager[tp.Any]]:
         """
         Get context managers for patching FLA model behavior. 
@@ -839,12 +891,17 @@ class FLABackbone(Backbone):
         )
         for model_type, ctx_factory in patch_registry:
             if isinstance(model, model_type):
-                contexts.append(
-                    ctx_factory(
-                        use_custom_recurrent,
-                        include_self_term=self.include_self_term,
+                kwargs: dict[str, tp.Any] = {
+                    "include_self_term": self.include_self_term,
+                }
+                if model_type is DeltaNetModel:
+                    kwargs.update(
+                        step_decay_power=self.delta_rule_decay_power,
+                        step_decay_train_length=self.delta_rule_decay_train_length,
+                        step_decay_clamp_max=self.delta_rule_decay_clamp_max,
+                        sequence_offset=sequence_offset,
                     )
-                )
+                contexts.append(ctx_factory(use_custom_recurrent, **kwargs))
         return contexts
 
     def _supports_custom_recurrent(self) -> bool:
@@ -867,8 +924,9 @@ class FLABackbone(Backbone):
 
         batch_size, seq_len, embed_dim = test_x.shape
         supports_custom_recurrent = self._supports_custom_recurrent()
+        cache_sequence_offset = self._cache_sequence_offset(cache_params)
 
-        def _run_parallel_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
+        def _run_parallel_chunk(chunk_x: torch.Tensor, *, chunk_start: int) -> torch.Tensor:
             chunk_len = chunk_x.size(1)
             if not use_custom_recurrent or not supports_custom_recurrent:
                 expanded_cache = self._repeat_cache(cache_params, chunk_len)
@@ -881,6 +939,7 @@ class FLABackbone(Backbone):
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
+                sequence_offset=cache_sequence_offset + chunk_start,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
@@ -895,13 +954,13 @@ class FLABackbone(Backbone):
             effective_cache_chunk_size = 128
 
         if effective_cache_chunk_size is None or seq_len <= effective_cache_chunk_size:
-            return _run_parallel_chunk(test_x)
+            return _run_parallel_chunk(test_x, chunk_start=0)
 
         outputs = []
         for chunk_start in range(0, seq_len, effective_cache_chunk_size):
             chunk_end = min(chunk_start + effective_cache_chunk_size, seq_len)
             chunk_x = test_x[:, chunk_start:chunk_end]
-            outputs.append(_run_parallel_chunk(chunk_x))
+            outputs.append(_run_parallel_chunk(chunk_x, chunk_start=chunk_start))
         return torch.cat(outputs, dim=1)
     
     def _run_test_with_cache_naive(
@@ -919,6 +978,7 @@ class FLABackbone(Backbone):
 
         output_tokens = []
         seq_len = test_x.size(1)
+        cache_sequence_offset = self._cache_sequence_offset(cache_params)
     
         for t in range(seq_len):
             current_input = test_x[:, t : t + 1, :]  # shape (batch, 1, dim)
@@ -928,6 +988,7 @@ class FLABackbone(Backbone):
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
+                sequence_offset=cache_sequence_offset + t,
             )
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)
@@ -994,6 +1055,7 @@ class FLABackbone(Backbone):
                 x_batched,
                 cache_params=initial_cache_params,
                 return_cache=state_passing is not None,
+                sequence_offset=self._cache_sequence_offset(initial_cache_params),
             )
             if state_passing is not None:
                 state_passing.remember(cache_params)
@@ -1009,6 +1071,9 @@ class BidirectionalFLABackbone(FLABackbone):
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
         include_self_term: bool = True,
+        delta_rule_decay_power: float = 0.0,
+        delta_rule_decay_train_length: int | None = None,
+        delta_rule_decay_clamp_max: bool = True,
         state_fusion: str = "mean_output_mean_cache",
     ):
         super().__init__(
@@ -1018,6 +1083,9 @@ class BidirectionalFLABackbone(FLABackbone):
             state_passing=state_passing,
             state_passing_dropout=state_passing_dropout,
             include_self_term=include_self_term,
+            delta_rule_decay_power=delta_rule_decay_power,
+            delta_rule_decay_train_length=delta_rule_decay_train_length,
+            delta_rule_decay_clamp_max=delta_rule_decay_clamp_max,
         )
         self.state_fusion = state_fusion
 
