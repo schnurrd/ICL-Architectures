@@ -1,6 +1,6 @@
 # ICL-Architectures
 
-Unified framework for comparing sequence-model architectures for in-context learning on tabular classification tasks. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, Linear Attention, DeltaNet, Gated DeltaNet, Kimi Delta Attention, and Mamba2 backbones.
+Unified framework for comparing sequence-model architectures for in-context learning on tabular classification tasks. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, (Gated) Linear Attention, (Gated) DeltaNet, Kimi Delta Attention, and Mamba2 backbones.
 
 ## Table of Contents
 
@@ -56,7 +56,7 @@ pip install -r requirements/requirements.txt \
 pip install --no-build-isolation causal-conv1d mamba-ssm
 ```
 
-Tested for Nvidia RTX 5070 and Nvidia RTX 2080Ti with CUDA 12.8 and 12.9. For old GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
+Tested for Nvidia RTX 5070 and Nvidia RTX 2080Ti with CUDA 12.8 and 12.9. For older GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
 
 On the clusters with CUDA 11.8, the following versions work:
 
@@ -131,7 +131,7 @@ python PFNs/pfns/run_training_cli.py PFNs/configs/fla/fla_config.py \
 - `--device`: Device to use for training (e.g., 'cuda:0', 'cpu'). If not specified, will auto-detect.
 - `--compile`: Use torch.compile for the model (requires PyTorch 2.0+)
 - `--checkpoint-save-load-prefix`: Path to save/load checkpoint (and default wandb dir).
-- `--checkpoint-save-load-suffix`: Suffix to add to the checkpoint save/load path. this can e.g. be the seed.
+- `--checkpoint-save-load-suffix`: Suffix to add to the checkpoint save/load path. This can, e.g., be the seed.
 - `--wandb` / `--no-wandb`: Enable/disable wandb logging (wandb settings come from the config file).
 - `--continue-from-wandb`: Continue training from a wandb run path (`entity/project/run_id` or `project/runs/run_id`), downloading the checkpoint if needed.
 - `--config-index`: Index of the config to use. This is used to select a config from the config file.
@@ -268,6 +268,8 @@ The main sequence-length, real-world, and hidden-state analysis notebooks are:
 - [Minimal linear-attention sequence-length generalization](PFNs/notebooks/minimal_linear_attention_seq_len_generalization.ipynb)
 - [Sequence-length hidden-state debugging](PFNs/notebooks/seq_len_hidden_state_debug.ipynb)
 
+The Sequence-length comparison and generalization, Real-world experiments, and Sequence-length hidden-state debugging notebooks require trained model checkpoints. Before running these notebooks, register the checkpoints in [model_registry.py](PFNs/pfns/experiments/model_benchmarks/model_registry.py). The minimal sequence-length degradation notebook is intended as a lightweight standalone reproduction.
+
 ## Minimal sequence-length degradation reproduction
 
 The minimal reproduction for the linear-attention sequence-length degradation
@@ -323,7 +325,7 @@ Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for 
 
 ### Encoding
 
-Encoders are a sequence of (learned) transformations (encoding steps) that process the input data (x and y) before into an embedding that is fed into the main sequence model (e.g. Transformer). Different encoding steps can be stacked to form the final encoder. The different encoders currently implemented are in `PFNs/pfns/model/encoders.py` and implement the abstract base class `SeqEncStep`:
+Encoders are a sequence of (learned) transformations (encoding steps) that process the input data (x and y) before mapping it into an embedding that is fed into the main sequence model (e.g. Transformer). Different encoding steps can be stacked to form the final encoder. The different encoders currently implemented are in `PFNs/pfns/model/encoders.py` and implement the abstract base class `SeqEncStep`:
 
 - **ConstantNormalizationInputEncoderStep**: Input normalization with a provided mean and std.
 - **InputNormalizationEncoderStep**: Performs simple outlier soft clipping using logarithmic compression and input normalization to mean 0 and std 1.
@@ -389,7 +391,7 @@ The main features here are:
 
 ### Decoder
 
-The decoder is a simple MLP output head, that maps the y-token embeddings from test items to prediction logits:
+The decoder is a simple MLP output head that maps the y-token embeddings from test items to prediction logits:
 
 1. After the transformer layers, extract the **y-token embedding** (last token in feature dimension) for each **test item**
 2. Pass through MLP: `Linear(d_model → nhid) → GELU → Linear(nhid → n_outputs)`
@@ -440,6 +442,6 @@ This repo builds on:
 # Similar relevant repositories
 
 - [TabPFN](https://github.com/PriorLabs/TabPFN) the TabPFN model and prior implementation.
-- [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) similar to this repository however still in initial stages.
+- [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) open source playground containing nanoTabPFN with more diverse prior support.
 - [nanoTabPFN](https://github.com/automl/nanoTabPFN) small educational version of TabPFN.
-- [TabICL](https://github.com/soda-inria/tabicl) For TabICL model and prior implementation from Inria.
+- [TabICL](https://github.com/soda-inria/tabicl) For the TabICL model and prior implementation from Inria.

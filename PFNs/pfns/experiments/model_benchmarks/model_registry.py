@@ -7,7 +7,7 @@ from pfns.utils import get_default_device
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
-        "eval_autocast_dtype": "fp16", # bf16 is broken on rtx 2080 ti due to the GPU being to old -> OOM error in scaled dot product attention
+        "eval_autocast_dtype": "fp16", # bf16 does not work on rtx 2080 ti due to the GPU being too old -> OOM error in scaled dot product attention
     },
     "Softmax_Transformer_Cat_10_Training": {
         "wandb_run_id": "tabpfn_transformer/runs/m5zgo8r3", 
@@ -222,65 +222,57 @@ MESANET_MODELS: dict[str, dict[str, Any]] = {
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Non_Causal": {
-      "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
+      "wandb_run_id": "linear_attention/runs/83hs69fa", 
       "display_name": "Linear Attention\n(Non-Causal)",
     },
-    "Linear_Attention_Non_Causal_updated": {  # Beats Non-Causal version from before
-      "wandb_run_id": "linear_attention/runs/tn6h2qyb", # new default implementation
-      "display_name": "Linear Attention\n(Non-Causal updated)",
+    "Linear_Attention_Non_Causal_with_k_sum_norm": { 
+      "wandb_run_id": "linear_attention/runs/nnon9bb8", 
+      "display_name": "Linear Attention\n(Non-Causal w. k-sum Norm)",
     },
-    # "Linear_Attention_Non_Causal_with_k_sum_norm": { # worse/equal than without k_sum_norm
-    #   "wandb_run_id": "linear_attention/runs/nnon9bb8", # new default implementation
-    #   "display_name": "Linear Attention\n(Non-Causal w. k-sum Norm)",
-    # },
     "Linear_Attention_Non_Causal_fro_norm": {
-      "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
+      "wandb_run_id": "linear_attention/runs/i960z4r7",
       "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
     },
     # ------linear and element_wise product feature map are worse than the elu one -----
     # "Linear_Attention_Non_Causal_feat_map_elem_product": {
-    #   "wandb_run_id": "linear_attention/runs/02rush9s", # new default implementation
+    #   "wandb_run_id": "linear_attention/runs/02rush9s",
     #   "display_name": "Linear Attention\n(Non-Causal) w. Feature Map Element-wise Product",
     # },
     # "Linear_Attention_Non_Causal_feat_map_linear": {
-    #   "wandb_run_id": "linear_attention/runs/a4rrhp8v", # new default implementation
+    #   "wandb_run_id": "linear_attention/runs/a4rrhp8v", 
     #   "display_name": "Linear Attention\n(Non-Causal) w. Feature Map Linear",
     # },
     # ----------- Causal Models -----------
     "Linear_Attention_Causal_fro_norm_from_non_causal": {
-      "wandb_run_id": "linear_attention/runs/i960z4r7", # new default implementation
+      "wandb_run_id": "linear_attention/runs/i960z4r7",
       "display_name": "Linear Attention\n(Causal) w. Fro Norm From Non-Causal",
       "make_causal": True,
     },
     "Linear_Attention_Non_Causal_fro_norm_from_causal": {
-      "wandb_run_id": "linear_attention/runs/rrakg728", # new default implementation
+      "wandb_run_id": "linear_attention/runs/rrakg728",
       "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm From Causal",
       "make_non_causal": True,
     },
     "Linear_Attention_Comb_ST": {
-      "wandb_run_id": "linear_attention/runs/3jq88aqt", # new default implementation
+      "wandb_run_id": "linear_attention/runs/3jq88aqt",
       "display_name": "Linear Attention\n(Comb_ST)",
     },
     "Linear_Attention_Comb_ST_updated": {
-      "wandb_run_id": "linear_attention/runs/mwelekke", # new default implementation
+      "wandb_run_id": "linear_attention/runs/mwelekke",
       "display_name": "Linear Attention\n(Comb_ST updated)",
     },
     "Linear_Attention_Comb_ST_fro_norm": {
-      "wandb_run_id": "linear_attention/runs/rrakg728", # new default implementation
+      "wandb_run_id": "linear_attention/runs/rrakg728", 
       "display_name": "Linear Attention\n(Comb_ST) w. Fro Norm",
     },
     "Linear_Attention_FLA_Comb_ST": { 
         "wandb_run_id": "icl_arch/fla_models/hqzpuaso",
         "display_name": "Linear Attention (FLA; Comb ST)",
     },
-    "Linear_Attention_FLA_Comb_ST_wo_self_term": { # slightly better ce and roc, and less degradation at long seq lens
+    "Linear_Attention_FLA_Comb_ST_wo_self_term": {
         "wandb_run_id": "icl_arch/fla_models/o404kcbf",
         "display_name": "Linear Attention (FLA; Comb ST) w/o Self-Term",
-    },
-    "Linear_Attention_Comb_ST_old_setup": { # slightly worse acc and ce but slightly better roc auc then new default
-        "wandb_run_id": "linear_attention/runs/7kig0n7a", # with layernorm, no output norm an k_sum_normalization
-        "display_name": "Linear Attention (Comb ST old setup)",
-    },
+    }
 }
 
 BASED_MODELS: dict[str, dict[str, Any]] = {
@@ -391,10 +383,10 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Non-Causal Linear\nAttention",
         "wandb_run_id": "linear_attention/runs/0j5sy87c",
     },
-    # "Linear_Attention_FLA_Comb_ST": { 
-    #     "wandb_run_id": "icl_arch/fla_models/f4rsksje",
-    #     "display_name": "Causal Linear\nAttention (Comb ST)",
-    # },
+    "equal_params:Linear_Attention_FLA_Comb_ST": { 
+        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+        "display_name": "Causal Linear\nAttention (Comb ST)",
+    },
     "equal_params:DeltaNet_Comb_ST": {
         "display_name": "DeltaNet",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
@@ -409,43 +401,43 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
     },
     # "equal_params:DeltaNet_Int_MT": {
     #     "display_name": "DeltaNet (Int MT)",
-    #     "wandb_run_id": "fla_models/runs/v18qqmbk",  # second run 2m9zukic
+    #     "wandb_run_id": "fla_models/runs/v18qqmbk",
     # },
     # "equal_params:Gated_DeltaNet_Int_MT": {
     #     "display_name": "Gated DeltaNet (Int MT)",
-    #     "wandb_run_id": "fla_models/runs/cpcq82tx", # second run 2cm1gdi5
+    #     "wandb_run_id": "fla_models/runs/cpcq82tx",
     # },
     "equal_params:KDA_Comb_ST": {
         "display_name": "Kimi Delta\nAttention",
-        "wandb_run_id": "fla_models/runs/5jfgan9d", # old run qaskm2mq
+        "wandb_run_id": "fla_models/runs/5jfgan9d", 
     },
-    # "equal_params:Mamba2_Comb_ST": {
-    #     "display_name": "Mamba2",
-    #     "wandb_run_id": "fla_models/runs/o9e00w17",
-    # },
+    "equal_params:Mamba2_Comb_ST": {
+        "display_name": "Mamba2",
+        "wandb_run_id": "fla_models/runs/o9e00w17",
+    },
 }
 
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     "Transformer_Non_Causal": {
         "display_name": "Non-Causal", #"Non-Causal (Default)",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/f1lg4ch9", # fp16 version d4mttnjl, fp 32 version pmcn4brd, old 15.2M params version
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/f1lg4ch9", 
         "eval_mode": "forward",
         "eval_autocast_dtype": "fp16",
     },
     # "Transformer_Non_Causal_with_RoPE_pairwise": {
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xsbe5y6d", # old runs: xsbe5y6d, second run with fp32 as comparison: 0xi6dcvc
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xsbe5y6d",
     #     "eval_mode": "forward",
     #     "eval_autocast_dtype": "fp16",
     # },
     # "Transformer_Non_Causal_interleaved_with_RoPE_pairwise": {
     #     "display_name": "Non-Causal Interleaved",
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   # new one uses pairwise rope while old one does not jzs97xfg
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/6kid4bgi",   
     #     "eval_mode": "forward",
     #     "eval_autocast_dtype": "fp16",
     # },
     "masked:Transformer_Comb_ST": {
         "display_name": "Causal Single\nTarget",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/gex7h68b", # fp 16 version 2wrxsh60, old 15.2M params version b56ohkmz
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/gex7h68b", 
         "eval_mode": "forward",
         "eval_autocast_dtype": "fp16",
     },
@@ -462,13 +454,13 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
     },
     # "Transformer_Int_ST_with_RoPE_pairwise": { 
     #     "display_name": "Causal Interleaved\nSingle Target",
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0",  # new one uses pairwise rope while old one does not 7yzlf15p
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/z36s69e0", 
     #     "eval_mode": "forward",
     #     "eval_autocast_dtype": "fp16",
     # },
     # "Transformer_Int_MT_with_RoPE_pairwise": { 
     #     "display_name": "Causal Interleaved\nMulti Target",
-    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3", # old model without pairwise rope m74u7psh
+    #     "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/xiv7f2z3",
     #     "eval_mode": "forward",
     #     "eval_autocast_dtype": "fp16",
     # },
@@ -526,10 +518,10 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
 }
 
 MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
-    # "mimetic:Linear_Attention_FLA_Comb_ST": { 
-    #     "display_name": "Linear Attention\nComb ST (Reference)",
-    #     "wandb_run_id": "icl_arch/fla_models/f4rsksje",
-    # },
+    "mimetic:Linear_Attention_FLA_Comb_ST": { 
+        "display_name": "Linear Attention\nComb ST (Reference)",
+        "wandb_run_id": "icl_arch/fla_models/f4rsksje",
+    },
     "mimetic:GLA_Comb_ST_Ref": {
         "display_name": "GLA Comb ST (Reference)",
         "wandb_run_id": "fla_models/runs/2v2xw7d2",
@@ -586,7 +578,7 @@ BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Bidirectional Mean Output Two Cache Separate Weights (DeltaNet)",
         "wandb_run_id": "icl_arch/fla_models/6lby3bdm",
     },
-    "Bidirectional_Linear_Attention_Comb_ST_mean_output_mean_cache": { # todo retrain as linear attention conf is outdated
+    "Bidirectional_Linear_Attention_Comb_ST_mean_output_mean_cache": { 
         "display_name": "Bidirectional Mean Output Mean Cache (Linear Attention)",
         "wandb_run_id": "icl_arch/fla_models/3j9jgdvx",
     },
