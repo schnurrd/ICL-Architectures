@@ -218,3 +218,8 @@ PFNs/notebooks/exp_outputs/
 PFNs/notebooks/artifacts/
 
 exp_outputs/*
+
+
+PFNs/graphics/*
+PFNs/notebooks/PFNs/graphics/*
+PFNs/notebooks/hidden_state_cache/*
