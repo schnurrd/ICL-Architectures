@@ -39,7 +39,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements/requirements_ci.txt
-          pip install -e ./PFNs -e ./prior-repos/tabpfn-v1-prior -e ./prior-repos/tabularpriors
+          pip install -e ./PFNs -e ./prior-repos/tabpfn-v1-prior
 
       - name: Run tests
         env:

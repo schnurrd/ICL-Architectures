@@ -1,9 +1,3 @@
-[submodule "external/PFNs"]
-	path = external/PFNs
-	url = git@github.com:automl/PFNs.git
-[submodule "prior-repos/tabularpriors"]
-	path = prior-repos/tabularpriors
-	url = git@github.com:automl/tabularpriors.git
 [submodule "prior-repos/tabpfn-v1-prior"]
 	path = prior-repos/tabpfn-v1-prior
 	url = git@github.com:schnurrd/tabpfn-v1-prior.git
