@@ -179,6 +179,48 @@ def test_sampled_seq_len_stages_distributions(distribution: str):
     assert len(set(samples)) > 1
 
 
+def test_shifted_lognormal_matches_default_rows_with_staged_batch_sizes():
+    cfg = BatchShapeSamplerConfig(
+        batch_size=4,
+        max_seq_len=64000,
+        seq_len_stages=[(5, 200, 64000, "shifted_lognormal")],
+        seed=13,
+    )
+
+    samples = [
+        cfg.sample_batch_shape(epoch=1, step=step).seq_len for step in range(50000)
+    ]
+
+    def staged_batch_size(seq_len: int) -> int:
+        for threshold, batch_size in [
+            (10000, 8),
+            (15000, 6),
+            (20000, 4),
+            (30000, 3),
+            (40000, 2),
+            (600000, 1),
+        ]:
+            if seq_len <= threshold:
+                return batch_size
+        raise AssertionError("unreachable")
+
+    assert all(200 <= value <= 64000 for value in samples)
+    mean_rows = sum(staged_batch_size(value) * value for value in samples) / len(samples)
+    assert 7800 <= mean_rows <= 8200
+    assert max(samples) > 30000
+    assert sum(value > 10000 for value in samples) / len(samples) > 0.005
+
+
+def test_shifted_lognormal_rejects_unreachable_target_mean():
+    with pytest.raises(ValueError, match="target mean must be between"):
+        BatchShapeSamplerConfig(
+            batch_size=4,
+            max_seq_len=1000,
+            seq_len_stages=[(5, 200, 1000, "shifted_lognormal")],
+            seed=13,
+        ).sample_batch_shape(epoch=1, step=0)
+
+
 def test_batch_size_stages_and_compensation_progress():
     cfg = BatchShapeSamplerConfig(
         batch_size=16,
