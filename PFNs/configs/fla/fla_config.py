@@ -152,7 +152,7 @@ MODEL_SETTINGS = {
             "num_hidden_layers": 12, # default 21
             "expand_v": 1.0, # default 2.0
             "num_heads": 4, # default 6
-            "head_dim": 60, # default 256
+            "head_dim": 64, # default 256
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
             "norm_eps": 1e-6, # default 1e-6
@@ -230,6 +230,7 @@ def get_config(
     state_passing_dropout: float = 0.1,
     state_weaving: bool = False,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
     task_variant: str = "tabular_prior",
     # Training
     training_setup: str = "high",
@@ -373,6 +374,7 @@ def get_config(
         resolved_config_kwargs.get("hidden_size", model_settings["emsize"])
     )
     resolved_include_self_term = bool(include_self_term)
+    resolved_final_state_readout = bool(final_state_readout)
 
     backbone_kwargs = {
         "model_type": model_type,
@@ -385,6 +387,7 @@ def get_config(
         "state_passing_dropout": float(state_passing_dropout),
         "state_weaving": bool(state_weaving),
         "include_self_term": resolved_include_self_term,
+        "final_state_readout": resolved_final_state_readout,
         "mimetic_init": mimetic_init,
         "mimetic_init_mode": mimetic_init_mode,
         "mimetic_init_layer_indices": mimetic_init_layer_indices,
@@ -444,6 +447,7 @@ def get_config(
         "sp" if state_passing else None,
         f"spd{state_passing_dropout:g}" if state_passing and state_passing_dropout != 0.1 else None,
         "sw" if state_weaving else None,
+        "finalstate" if resolved_final_state_readout else None,
         f"lr{resolved_lr:g}" if lr else None,
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
@@ -465,6 +469,14 @@ def get_config(
     )
     if is_associative_recall:
         wandb_name += "_ar"
+    wandb_tags = [
+        "matched_high_config",
+        f"model_{model_type}",
+        f"emb_{resolved_emsize}",
+        f"hidden_{effective_hidden_size}" if effective_hidden_size is not None else "hidden_na",
+    ]
+    if resolved_final_state_readout:
+        wandb_tags.append("final_state_readout")
     wandb_config = WandbConfig(
         entity="icl_arch",
         project=(
@@ -473,12 +485,7 @@ def get_config(
             else "fla_models"
         ),
         name=wandb_name,
-        tags=[
-            "matched_high_config",
-            f"model_{model_type}",
-            f"emb_{resolved_emsize}",
-            f"hidden_{effective_hidden_size}" if effective_hidden_size is not None else "hidden_na",
-        ],
+        tags=wandb_tags,
         mode="online",
         log_every_n_steps=10,
     )
