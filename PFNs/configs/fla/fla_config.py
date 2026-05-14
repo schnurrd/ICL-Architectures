@@ -231,6 +231,8 @@ def get_config(
     state_weaving: bool = False,
     include_self_term: bool = True,
     final_state_readout: bool = False,
+    deltanet_beta_decay: str = "none",
+    deltanet_beta_decay_t0: int = 1000,
     task_variant: str = "tabular_prior",
     # Training
     training_setup: str = "high",
@@ -375,6 +377,10 @@ def get_config(
     )
     resolved_include_self_term = bool(include_self_term)
     resolved_final_state_readout = bool(final_state_readout)
+    resolved_deltanet_beta_decay = normalize_optional_none_string(
+        deltanet_beta_decay,
+    ) or "none"
+    resolved_deltanet_beta_decay_t0 = int(deltanet_beta_decay_t0)
 
     backbone_kwargs = {
         "model_type": model_type,
@@ -388,6 +394,8 @@ def get_config(
         "state_weaving": bool(state_weaving),
         "include_self_term": resolved_include_self_term,
         "final_state_readout": resolved_final_state_readout,
+        "deltanet_beta_decay": resolved_deltanet_beta_decay,
+        "deltanet_beta_decay_t0": resolved_deltanet_beta_decay_t0,
         "mimetic_init": mimetic_init,
         "mimetic_init_mode": mimetic_init_mode,
         "mimetic_init_layer_indices": mimetic_init_layer_indices,
@@ -448,6 +456,11 @@ def get_config(
         f"spd{state_passing_dropout:g}" if state_passing and state_passing_dropout != 0.1 else None,
         "sw" if state_weaving else None,
         "finalstate" if resolved_final_state_readout else None,
+        (
+            f"betadecay_{resolved_deltanet_beta_decay}_t0{resolved_deltanet_beta_decay_t0}"
+            if resolved_deltanet_beta_decay != "none"
+            else None
+        ),
         f"lr{resolved_lr:g}" if lr else None,
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
@@ -477,6 +490,8 @@ def get_config(
     ]
     if resolved_final_state_readout:
         wandb_tags.append("final_state_readout")
+    if resolved_deltanet_beta_decay != "none":
+        wandb_tags.append(f"deltanet_beta_decay_{resolved_deltanet_beta_decay}")
     wandb_config = WandbConfig(
         entity="icl_arch",
         project=(

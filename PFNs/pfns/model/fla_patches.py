@@ -11,11 +11,82 @@ import torch.nn.functional as F
 from fla.modules.l2norm import l2norm
 
 
+DELTANET_BETA_DECAY_MODES = frozenset({"none", "inverse", "sqrt_inverse"})
+
+
 def _read_kv_state(query: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
     if query.ndim == 5:
         return torch.einsum("blthk,bhkv->blthv", query, state)
     assert query.ndim == 4, f"Expected 4D or 5D query, got shape={tuple(query.shape)}."
     return torch.einsum("bthk,bhkv->bthv", query, state)
+
+
+def _normalize_deltanet_beta_decay(mode: str | None) -> str:
+    mode = "none" if mode is None else str(mode)
+    if mode not in DELTANET_BETA_DECAY_MODES:
+        raise ValueError(
+            "deltanet_beta_decay must be one of "
+            f"{sorted(DELTANET_BETA_DECAY_MODES)}, got {mode!r}."
+        )
+    return mode
+
+
+def _apply_deltanet_beta_decay(
+    beta: torch.Tensor,
+    *,
+    mode: str | None,
+    t0: int,
+    start_position: int = 0,
+    position_dim: int = 1,
+) -> torch.Tensor:
+    mode = _normalize_deltanet_beta_decay(mode)
+    if mode == "none":
+        return beta
+    if t0 <= 0:
+        raise ValueError(f"deltanet_beta_decay_t0 must be > 0, got {t0}.")
+
+    position_dim = position_dim % beta.ndim
+    seq_len = beta.shape[position_dim]
+    if start_position < 0:
+        raise ValueError(
+            f"deltanet beta decay start_position must be >= 0, got {start_position}."
+        )
+    positions = torch.arange(
+        start_position + 1,
+        start_position + seq_len + 1,
+        device=beta.device,
+        dtype=torch.float32,
+    )
+    decay = (float(t0) / positions.clamp_min(float(t0))).clamp(max=1.0)
+    if mode == "sqrt_inverse":
+        decay = decay.sqrt()
+    shape = [1] * beta.ndim
+    shape[position_dim] = seq_len
+    return beta * decay.to(beta.dtype).view(shape)
+
+
+def _deltanet_beta_decay_patch(
+    original_kernel: tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]],
+    *,
+    mode: str | None,
+    t0: int,
+    start_position: int = 0,
+) -> tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]]:
+    mode = _normalize_deltanet_beta_decay(mode)
+    if mode == "none":
+        return original_kernel
+
+    def _kernel(**kwargs: tp.Any) -> tuple[torch.Tensor, torch.Tensor | None]:
+        kwargs = dict(kwargs)
+        kwargs["beta"] = _apply_deltanet_beta_decay(
+            kwargs["beta"],
+            mode=mode,
+            t0=t0,
+            start_position=start_position,
+        )
+        return original_kernel(**kwargs)
+
+    return _kernel
 
 
 @contextmanager
@@ -502,14 +573,30 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
     *,
     include_self_term: bool = True,
     final_state_readout: bool = False,
+    beta_decay: str | None = "none",
+    beta_decay_t0: int = 1000,
+    beta_decay_start: int = 0,
 ):
-    if not enabled and not final_state_readout:
+    beta_decay = _normalize_deltanet_beta_decay(beta_decay)
+    if not enabled and not final_state_readout and beta_decay == "none":
         yield
         return
     import fla.layers.delta_net as deltanet_layer
 
     original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
     original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
+    decay_fused_recurrent_delta_rule = _deltanet_beta_decay_patch(
+        original_fused_recurrent_delta_rule,
+        mode=beta_decay,
+        t0=beta_decay_t0,
+        start_position=beta_decay_start,
+    )
+    decay_chunk_delta_rule = _deltanet_beta_decay_patch(
+        original_chunk_delta_rule,
+        mode=beta_decay,
+        t0=beta_decay_t0,
+        start_position=beta_decay_start,
+    )
 
     @torch.compiler.disable
     def _stateless_deltanet_kernel(
@@ -566,6 +653,13 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
                 output_dtype=dtype,
             )
 
+        beta = _apply_deltanet_beta_decay(
+            beta,
+            mode=beta_decay,
+            t0=beta_decay_t0,
+            start_position=beta_decay_start,
+        )
+
         q = q * scale
 
         if beta.ndim < v.ndim:
@@ -586,13 +680,16 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
     if enabled:
         deltanet_layer.fused_recurrent_delta_rule = _stateless_deltanet_kernel
         deltanet_layer.chunk_delta_rule = _stateless_deltanet_kernel
-    else:
+    elif final_state_readout:
         deltanet_layer.fused_recurrent_delta_rule = _final_state_patch(
-            original_fused_recurrent_delta_rule,
+            decay_fused_recurrent_delta_rule,
         )
         deltanet_layer.chunk_delta_rule = _final_state_patch(
-            original_chunk_delta_rule,
+            decay_chunk_delta_rule,
         )
+    else:
+        deltanet_layer.fused_recurrent_delta_rule = decay_fused_recurrent_delta_rule
+        deltanet_layer.chunk_delta_rule = decay_chunk_delta_rule
 
     try:
         yield
