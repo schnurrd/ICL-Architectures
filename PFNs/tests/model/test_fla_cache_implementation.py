@@ -209,7 +209,148 @@ def test_final_state_readout_kernels_match_native_final_state_readout(case: str)
     torch.testing.assert_close(state, expected_state, rtol=1e-4, atol=1e-4)
 
 
-def test_final_state_readout_comb_mt_eval_uses_full_sequence_path():
+@pytest.mark.parametrize(
+    ("case", "chunk_kernel"),
+    [
+        ("linear_attn", "chunk"),
+        ("linear_attn", "fused_chunk"),
+        ("gla", "chunk"),
+        ("gla", "fused_chunk"),
+        ("kda", "chunk"),
+        ("deltanet", "chunk"),
+        ("gated_deltanet", "chunk"),
+    ],
+)
+def test_final_state_readout_chunk_kernels_match_recurrent_final_state(
+    case: str,
+    chunk_kernel: str,
+):
+    if not torch.cuda.is_available():
+        pytest.skip("FLA final-state readout requires CUDA/Triton.")
+
+    torch.manual_seed(0)
+
+    import fla.layers.delta_net as deltanet_layer
+    import fla.layers.gated_deltanet as gated_deltanet_layer
+    import fla.layers.gla as gla_layer
+    import fla.layers.kda as kda_layer
+    import fla.layers.linear_attn as linear_attn_layer
+    from pfns.model.fla_patches import (
+        _maybe_patch_deltanet_with_stateless_recurrent,
+        _maybe_patch_gated_deltanet_with_stateless_recurrent,
+        _maybe_patch_gla_with_stateless_recurrent,
+        _maybe_patch_kda_with_stateless_recurrent,
+        _maybe_patch_linear_attn_with_stateless_recurrent,
+    )
+
+    device = torch.device("cuda")
+    base_inputs = {
+        "q": torch.randn(2, 80, 3, 4, device=device),
+        "k": torch.randn(2, 80, 3, 4, device=device),
+        "v": torch.randn(2, 80, 3, 6, device=device),
+        "scale": 0.5,
+        "initial_state": torch.randn(2, 3, 4, 6, device=device),
+        "output_final_state": True,
+    }
+    use_l2 = False
+
+    if case == "linear_attn":
+        recurrent_inputs = {**base_inputs, "normalize": False}
+        chunk_inputs = dict(recurrent_inputs)
+        if chunk_kernel == "chunk":
+            chunk_inputs["head_first"] = False
+        original_recurrent = linear_attn_layer.fused_recurrent_linear_attn
+        patched_kernel = (
+            lambda: linear_attn_layer.chunk_linear_attn
+            if chunk_kernel == "chunk"
+            else linear_attn_layer.fused_chunk_linear_attn
+        )
+        patch_context = _maybe_patch_linear_attn_with_stateless_recurrent(
+            False,
+            final_state_readout=True,
+        )
+    elif case == "gla":
+        g = torch.randn(2, 80, 3, 4, device=device).clamp(-2.0, 2.0)
+        recurrent_inputs = {**base_inputs, "gk": g}
+        chunk_inputs = {**base_inputs, "g": g}
+        original_recurrent = gla_layer.fused_recurrent_gla
+        patched_kernel = (
+            lambda: gla_layer.chunk_gla
+            if chunk_kernel == "chunk"
+            else gla_layer.fused_chunk_gla
+        )
+        patch_context = _maybe_patch_gla_with_stateless_recurrent(
+            False,
+            final_state_readout=True,
+        )
+    elif case == "kda":
+        g = torch.randn(2, 80, 3, 4, device=device).clamp(-2.0, 2.0)
+        recurrent_inputs = {
+            **base_inputs,
+            "g": g,
+            "beta": torch.rand(2, 80, 3, device=device),
+            "A_log": torch.log(torch.rand(3, device=device) + 0.5),
+            "dt_bias": torch.randn(12, device=device),
+            "use_qk_l2norm_in_kernel": True,
+            "use_gate_in_kernel": True,
+        }
+        chunk_inputs = dict(recurrent_inputs)
+        use_l2 = True
+        original_recurrent = kda_layer.fused_recurrent_kda
+        patched_kernel = lambda: kda_layer.chunk_kda
+        patch_context = _maybe_patch_kda_with_stateless_recurrent(
+            False,
+            final_state_readout=True,
+        )
+    elif case == "deltanet":
+        recurrent_inputs = {
+            **base_inputs,
+            "beta": torch.rand(2, 80, 3, device=device),
+            "use_qk_l2norm_in_kernel": True,
+        }
+        chunk_inputs = {**recurrent_inputs, "head_first": False}
+        use_l2 = True
+        original_recurrent = deltanet_layer.fused_recurrent_delta_rule
+        patched_kernel = lambda: deltanet_layer.chunk_delta_rule
+        patch_context = _maybe_patch_deltanet_with_stateless_recurrent(
+            False,
+            final_state_readout=True,
+        )
+    elif case == "gated_deltanet":
+        recurrent_inputs = {
+            **base_inputs,
+            "g": torch.randn(2, 80, 3, device=device).clamp(-2.0, 2.0),
+            "beta": torch.rand(2, 80, 3, device=device),
+            "use_qk_l2norm_in_kernel": True,
+        }
+        chunk_inputs = dict(recurrent_inputs)
+        use_l2 = True
+        original_recurrent = gated_deltanet_layer.fused_recurrent_gated_delta_rule
+        patched_kernel = lambda: gated_deltanet_layer.chunk_gated_delta_rule
+        patch_context = _maybe_patch_gated_deltanet_with_stateless_recurrent(
+            False,
+            final_state_readout=True,
+        )
+    else:
+        raise AssertionError(f"Unhandled FLA final-state readout case: {case}")
+
+    _, expected_state = original_recurrent(**recurrent_inputs)
+    expected_out = _expected_final_state_readout(
+        recurrent_inputs["q"],
+        recurrent_inputs["k"],
+        expected_state,
+        scale=recurrent_inputs["scale"],
+        use_qk_l2norm_in_kernel=use_l2,
+    )
+
+    with patch_context:
+        out, state = patched_kernel()(**chunk_inputs)
+
+    torch.testing.assert_close(out, expected_out, rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(state, expected_state, rtol=1e-4, atol=1e-4)
+
+
+def test_final_state_readout_comb_mt_eval_uses_split_path():
     backbone = build_fla_backbone(
         "linear_attn",
         sequence_mode="Comb_MT",
@@ -220,21 +361,52 @@ def test_final_state_readout_comb_mt_eval_uses_full_sequence_path():
     x = torch.randn(2, 5, 1, fla_hidden_size("linear_attn"))
     calls: list[tuple[str, int]] = []
 
-    def _fake_run_fla(x_batched, **kwargs):
-        calls.append(("_run_fla", x_batched.size(1)))
-        return x_batched + 1.0, None
+    def _unexpected_full_path(*args, **kwargs):
+        raise AssertionError("final_state_readout Comb_MT eval should use split cache path")
 
-    def _unexpected_split_path(*args, **kwargs):
-        raise AssertionError("final_state_readout Comb_MT eval should not use split cache path")
+    def _fake_fit(train_x, **kwargs):
+        calls.append(("fit", train_x.size(1)))
+        return train_x + 1.0, {"cache_params": object()}
 
-    backbone._run_fla = _fake_run_fla
-    backbone.incontext_fit = _unexpected_split_path
-    backbone.incontext_predict = _unexpected_split_path
+    def _fake_predict(test_x, state, **kwargs):
+        calls.append(("predict", test_x.size(1)))
+        return test_x + 2.0
+
+    backbone._run_fla = _unexpected_full_path
+    backbone.incontext_fit = _fake_fit
+    backbone.incontext_predict = _fake_predict
 
     out = backbone(x, single_eval_pos=3)
 
-    assert calls == [("_run_fla", x.size(1))]
-    torch.testing.assert_close(out, x + 1.0)
+    expected = x.clone()
+    expected[:, :3] += 1.0
+    expected[:, 3:] += 2.0
+    assert calls == [("fit", 3), ("predict", 2)]
+    torch.testing.assert_close(out, expected)
+
+
+def test_final_state_readout_eval_test_tokens_are_independent():
+    if not torch.cuda.is_available():
+        pytest.skip("FLA final-state readout requires CUDA/Triton.")
+
+    torch.manual_seed(0)
+    backbone = build_fla_backbone(
+        "linear_attn",
+        sequence_mode="Comb_MT",
+        final_state_readout=True,
+    ).to("cuda")
+    backbone.eval()
+
+    x = torch.randn(2, 6, 1, fla_hidden_size("linear_attn"), device="cuda")
+    x_perturbed = x.clone()
+    x_perturbed[:, 5] += 10.0
+
+    with torch.no_grad():
+        out = backbone(x, single_eval_pos=3)
+        out_perturbed = backbone(x_perturbed, single_eval_pos=3)
+
+    torch.testing.assert_close(out[:, 3:5], out_perturbed[:, 3:5])
+    assert not torch.allclose(out[:, 5], out_perturbed[:, 5])
 
 
 def test_final_state_readout_cached_stateless_path_skips_self_term():
@@ -268,6 +440,81 @@ def test_final_state_readout_cached_stateless_path_skips_self_term():
 
     torch.testing.assert_close(out, expected)
     assert not torch.allclose(out, expected + self_term)
+
+
+@pytest.mark.parametrize("model_type", ["gla", "kda", "gated_deltanet"])
+def test_final_state_readout_cached_stateless_path_skips_query_decay(model_type: str):
+    torch.manual_seed(0)
+    backbone = build_fla_backbone(model_type, final_state_readout=True)
+
+    batch_size = 2
+    seq_len = 1
+    num_heads = 3
+    key_dim = 4
+    value_dim = 6
+    q = torch.randn(batch_size, seq_len, num_heads, key_dim)
+    k = torch.randn(batch_size, seq_len, num_heads, key_dim)
+    v = torch.randn(batch_size, seq_len, num_heads, value_dim)
+    initial_state = torch.randn(batch_size, num_heads, key_dim, value_dim)
+    scale = 0.5
+
+    with ExitStack() as stack:
+        for ctx in backbone._patch_contexts(use_custom_recurrent=True):
+            stack.enter_context(ctx)
+        if model_type == "gla":
+            import fla.layers.gla as gla_layer
+
+            g = torch.randn(batch_size, seq_len, num_heads, key_dim).clamp(-2.0, 2.0)
+            out, _ = gla_layer.fused_recurrent_gla(
+                q=q,
+                k=k,
+                v=v,
+                gk=g,
+                scale=scale,
+                initial_state=initial_state,
+            )
+            q_read = q * scale
+            q_decayed = q_read * g.exp()
+        elif model_type == "kda":
+            import fla.layers.kda as kda_layer
+
+            g = torch.randn(batch_size, seq_len, num_heads, key_dim).clamp(-2.0, 2.0)
+            out, _ = kda_layer.fused_recurrent_kda(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                beta=torch.rand(batch_size, seq_len, num_heads),
+                scale=scale,
+                initial_state=initial_state,
+                use_qk_l2norm_in_kernel=False,
+            )
+            q_read = q * scale
+            q_decayed = q_read * g.exp()
+        elif model_type == "gated_deltanet":
+            import fla.layers.gated_deltanet as gated_deltanet_layer
+
+            g = torch.randn(batch_size, seq_len, num_heads).clamp(-2.0, 2.0)
+            out, _ = gated_deltanet_layer.fused_recurrent_gated_delta_rule(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                beta=torch.rand(batch_size, seq_len, num_heads),
+                scale=scale,
+                initial_state=initial_state,
+                use_qk_l2norm_in_kernel=False,
+            )
+            q_read = q * scale
+            q_decayed = q_read * g.exp().unsqueeze(-1)
+        else:
+            raise AssertionError(f"Unhandled model_type={model_type}")
+
+    expected = torch.einsum("bthd,bhdm->bthm", q_read, initial_state)
+    decayed = torch.einsum("bthd,bhdm->bthm", q_decayed, initial_state)
+
+    torch.testing.assert_close(out, expected)
+    assert not torch.allclose(out, decayed)
 
 
 @pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)

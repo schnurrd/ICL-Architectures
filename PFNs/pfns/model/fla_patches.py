@@ -191,10 +191,9 @@ def _maybe_patch_gla_with_stateless_recurrent(
             gk = gk.reshape(cache_batch, flat_len, *gk.shape[2:])
         
         q = q * scale
-        qg = q * gk.exp()
-        term1 = torch.einsum("bthk,bhkv->bthv", qg, h0)
-        o = term1
-        if include_self_term:
+        state_query = q if final_state_readout else q * gk.exp()
+        o = torch.einsum("bthk,bhkv->bthv", state_query, h0)
+        if include_self_term and not final_state_readout:
             qk = (q * k).sum(-1, keepdim=True)
             o = o + qk * v
 
@@ -207,14 +206,19 @@ def _maybe_patch_gla_with_stateless_recurrent(
         gla_layer.fused_chunk_gla = _stateless_gla_kernel
         gla_layer.chunk_gla = _stateless_gla_kernel
     else:
+        recurrent_from_chunk = _adapt_to_recurrent_kernel(
+            original_fused_recurrent,
+            rename={"g": "gk"},
+            drop=("cu_seqlens_cpu",),
+        )
         gla_layer.fused_recurrent_gla = _final_state_patch(
             original_fused_recurrent,
         )
         gla_layer.fused_chunk_gla = _final_state_patch(
-            original_fused_chunked,
+            recurrent_from_chunk,
         )
         gla_layer.chunk_gla = _final_state_patch(
-            original_chunked,
+            recurrent_from_chunk,
         )
     try:
         yield
@@ -291,9 +295,19 @@ def _maybe_patch_kda_with_stateless_recurrent(
         # Use FLA's l2norm to match the original kernel's normalization and don't fail tests
         if use_qk_l2norm_in_kernel:
             q = l2norm(q)
-            k = l2norm(k)
+            if not final_state_readout:
+                k = l2norm(k)
 
         q = q * scale
+
+        if final_state_readout:
+            if q.ndim == 5:
+                o = torch.einsum("blthk,bhkv->blthv", q, s0)
+            else:
+                o = torch.einsum("bthk,bhkv->bthv", q, s0)
+            if orig_batch != cache_batch:
+                o = o.reshape(orig_batch, *o.shape[2:])
+            return o.to(dtype), None
 
         if use_gate_in_kernel and A_log is not None:
             if dt_bias is not None:
@@ -328,7 +342,7 @@ def _maybe_patch_kda_with_stateless_recurrent(
             k_s0 = torch.einsum("bthk,bhkv->bthv", k_decayed, s0)
             
         o = o_base
-        if include_self_term:
+        if include_self_term and not final_state_readout:
             delta = v - k_s0
             qk_dot = (q * k).sum(dim=-1, keepdim=True) # (..., H, 1)
             scaling = beta.unsqueeze(-1) * qk_dot      # (..., H, 1)
@@ -347,7 +361,16 @@ def _maybe_patch_kda_with_stateless_recurrent(
             original_fused_recurrent_kda,
         )
         kda_layer.chunk_kda = _final_state_patch(
-            original_chunk_kda,
+            _adapt_to_recurrent_kernel(
+                original_fused_recurrent_kda,
+                drop=(
+                    "cu_seqlens_cpu",
+                    "safe_gate",
+                    "disable_recompute",
+                    "return_intermediate_states",
+                    "cp_context",
+                ),
+            ),
         )
     try:
         yield
@@ -384,6 +407,13 @@ def _final_state_readout_kv_kernel(
     assert kwargs.get("indices") is None, "final_state_readout does not support indices."
     assert kwargs.get("gv") is None, "final_state_readout does not support gv."
     assert kwargs.get("normalize") in (None, False), "final_state_readout does not support normalize=True."
+    assert kwargs.get("transpose_state_layout") in (None, False), (
+        "final_state_readout expects transpose_state_layout=False."
+    )
+    assert kwargs.get("cp_context") is None, "final_state_readout does not support cp_context."
+    assert kwargs.get("return_intermediate_states") in (None, False), (
+        "final_state_readout does not support return_intermediate_states=True."
+    )
     assert kwargs.get("num_householder") in (None, 1), (
         "final_state_readout supports only num_householder=1."
     )
@@ -421,6 +451,26 @@ def _final_state_patch(
         _final_state_readout_kv_kernel,
         original_kernel,
     )
+
+
+def _adapt_to_recurrent_kernel(
+    original_kernel: tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]],
+    *,
+    rename: dict[str, str] | None = None,
+    drop: tuple[str, ...] = (),
+) -> tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]]:
+    def _kernel(**kwargs: tp.Any) -> tuple[torch.Tensor, torch.Tensor | None]:
+        kwargs = dict(kwargs)
+        for old_name, new_name in (rename or {}).items():
+            if old_name in kwargs:
+                if new_name not in kwargs:
+                    kwargs[new_name] = kwargs[old_name]
+                kwargs.pop(old_name)
+        for name in drop:
+            kwargs.pop(name, None)
+        return original_kernel(**kwargs)
+
+    return _kernel
 
 
 @contextmanager
@@ -479,16 +529,23 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
 
         if use_qk_l2norm_in_kernel:
             q = l2norm(q)
-            k = l2norm(k)
+            if not final_state_readout:
+                k = l2norm(k)
 
         q = q * scale
+
+        if final_state_readout:
+            o = torch.einsum("bthd,bhdm->bthm", q, s0)
+            if orig_batch != cache_batch:
+                o = o.reshape(orig_batch, 1, *o.shape[2:])
+            return o.to(dtype), None
 
         if beta.ndim < v.ndim:
             beta = beta.view(*beta.shape, *([1] * (v.ndim - beta.ndim)))
 
         s0k = torch.einsum("bthd,bhdm->bthm", k, s0)
         o = torch.einsum("bthd,bhdm->bthm", q, s0)
-        if include_self_term:
+        if include_self_term and not final_state_readout:
             qk = (q * k).sum(-1, keepdim=True)
             scaled_qk = qk * beta
             o = o + scaled_qk * v - scaled_qk * s0k
@@ -506,7 +563,10 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
             original_fused_recurrent_delta_rule,
         )
         deltanet_layer.chunk_delta_rule = _final_state_patch(
-            original_chunk_delta_rule,
+            _adapt_to_recurrent_kernel(
+                original_fused_recurrent_delta_rule,
+                drop=("cu_seqlens_cpu", "head_first"),
+            ),
         )
 
     try:
@@ -578,9 +638,16 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
         # Use FLA's l2norm to match the original kernel's normalization and don't fail tests
         if use_qk_l2norm_in_kernel:
             q = l2norm(q)
-            k = l2norm(k)
+            if not final_state_readout:
+                k = l2norm(k)
         
         q = q * scale
+
+        if final_state_readout:
+            o = torch.einsum("bthk,bhkv->bthv", q, s0)
+            if orig_batch != cache_batch:
+                o = o.reshape(orig_batch, 1, *o.shape[2:])
+            return o.to(dtype), None
 
         bsz, seq_len, num_heads, key_dim = q.shape
         value_dim = v.shape[-1]
@@ -610,7 +677,7 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
         k_s0 = torch.einsum("btlhk,bhkv->btlhv", k_decayed, s0)
 
         
-        if include_self_term:
+        if include_self_term and not final_state_readout:
             k_0 = k[:, :, 0]
             v_0 = v[:, :, 0]
             beta_0 = beta[:, :, 0]
@@ -633,7 +700,10 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
             original_fused,
         )
         gated_deltanet_layer.chunk_gated_delta_rule = _final_state_patch(
-            original_chunk,
+            _adapt_to_recurrent_kernel(
+                original_fused,
+                drop=("cu_seqlens_cpu", "cp_context", "num_householder"),
+            ),
         )
     try:
         yield
@@ -994,7 +1064,7 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
             o = torch.einsum("blthk,bhkv->blthv", qf, h0)
         else:
             o = torch.einsum("bthk,bhkv->bthv", qf, h0)
-        if include_self_term:
+        if include_self_term and not final_state_readout:
             o = o + (qf * kf).sum(-1, keepdim=True) * vf
 
         if orig_batch != cache_batch:
@@ -1011,10 +1081,13 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
             original_fused_recurrent,
         )
         linear_attn_layer.chunk_linear_attn = _final_state_patch(
-            original_chunk,
+            _adapt_to_recurrent_kernel(
+                original_fused_recurrent,
+                drop=("head_first",),
+            ),
         )
         linear_attn_layer.fused_chunk_linear_attn = _final_state_patch(
-            original_fused_chunk,
+            original_fused_recurrent,
         )
     try:
         yield

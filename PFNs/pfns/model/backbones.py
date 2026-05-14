@@ -873,16 +873,11 @@ class FLABackbone(Backbone):
                     model_type in FINAL_STATE_READOUT_FLA_MODEL_CLASSES
                 )
                 final_state_readout_active = (
-                    self.final_state_readout
-                    and supports_final_state_readout
-                    and not use_custom_recurrent
-                )
-                # The native final-state wrapper reads from the returned final state.
-                # The custom cached test path reads from the cached train state, so
-                # it must also skip the token-local self term in this mode.
-                include_self_term = self.include_self_term and not (
                     self.final_state_readout and supports_final_state_readout
                 )
+                # Native and custom cached final-state readout both use a pure
+                # q @ state projection, so token-local update terms are skipped.
+                include_self_term = self.include_self_term and not final_state_readout_active
                 extra_kwargs: dict[str, tp.Any] = {}
                 if supports_final_state_readout:
                     extra_kwargs["final_state_readout"] = final_state_readout_active
@@ -1024,9 +1019,7 @@ class FLABackbone(Backbone):
         if initial_cache_params is not None and isinstance(self.fla, DeltaNetModel):
             initial_cache_params = prepare_deltanet_cache_for_fla(initial_cache_params)
 
-        use_split_path = self.sequence_mode in FLA_SPLIT_SEQUENCE_MODES or (
-            not self.training and not self.final_state_readout
-        )
+        use_split_path = self.sequence_mode in FLA_SPLIT_SEQUENCE_MODES or not self.training
         if use_split_path:
             train_out, state = self.incontext_fit(
                 x_batched[:, :train_len],
