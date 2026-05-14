@@ -152,7 +152,7 @@ MODEL_SETTINGS = {
             "num_hidden_layers": 12, # default 21
             "expand_v": 1.0, # default 2.0
             "num_heads": 4, # default 6
-            "head_dim": 60, # default 256
+            "head_dim": 64, # default 256
             "intermediate_size": 320 * 2, # default None -> 4*hidden_size
             "hidden_act": "swish",
             "norm_eps": 1e-6, # default 1e-6
