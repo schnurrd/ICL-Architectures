@@ -614,6 +614,19 @@ ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "subsample_dataset_size": 3_000
     },
+    "oracles:Linear_Attention_Comb_ST_NLMS": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Comb_ST"],
+        "display_name": "Linear Attention\nNLMS Oracle",
+        "linear_attention_state_update_rule": "nlms",
+        "eval_autocast_dtype": "fp32",
+    },
+    "oracles:Linear_Attention_Comb_ST_RLS": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Comb_ST"],
+        "display_name": "Linear Attention\nRLS Oracle",
+        "linear_attention_state_update_rule": "rls",
+        "linear_attention_rls_lambda": 1.0,
+        "eval_autocast_dtype": "fp32",
+    },
     "oracles:Oracle_Hidden_State_DeltaNet_Comb_ST": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
         "display_name": "Oracle Hidden State", # from deltanet

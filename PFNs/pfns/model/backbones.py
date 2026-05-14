@@ -372,6 +372,7 @@ class FLABackboneConfig(BackboneConfig):
     state_passing_dropout: float = 0.1
     state_weaving: bool = False
     include_self_term: bool = True
+    final_state_readout: bool = False
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_init_mode: MimeticInitMode = "gate_only"
@@ -414,6 +415,13 @@ class FLABackboneConfig(BackboneConfig):
                 )
         if self.bidirectional and self.state_passing:
             raise ValueError("Bidirectional FLA does not support state_passing.")
+        if self.final_state_readout:
+            if self.model_type != "deltanet":
+                raise ValueError("final_state_readout currently supports only model_type='deltanet'.")
+            if self.bidirectional:
+                raise ValueError("final_state_readout does not support bidirectional FLA.")
+            if self.state_weaving:
+                raise ValueError("final_state_readout does not support state_weaving.")
         if self.state_weaving:
             if self.sequence_mode != "Comb_ST":
                 raise ValueError("state_weaving currently supports only sequence_mode='Comb_ST'.")
@@ -464,6 +472,7 @@ class FLABackboneConfig(BackboneConfig):
             state_passing=self.state_passing,
             state_passing_dropout=self.state_passing_dropout,
             include_self_term=self.include_self_term,
+            final_state_readout=self.final_state_readout,
         )
         if self.bidirectional:
             backbone_kwargs["state_fusion"] = self.bidirectional_state_fusion
@@ -495,6 +504,7 @@ class FLABackbone(Backbone):
         state_passing_dropout: float = 0.1,
         state_weaving: bool = False,
         include_self_term: bool = True,
+        final_state_readout: bool = False,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
@@ -504,6 +514,7 @@ class FLABackbone(Backbone):
         self.sequence_mode = resolve_sequence_mode(sequence_mode)
         self.cache_chunk_size = cache_chunk_size
         self.include_self_term = bool(include_self_term)
+        self.final_state_readout = bool(final_state_readout)
         self.state_weaving = bool(state_weaving)
         self.state_passing = (
             FLAStatePassing(dropout_prob=state_passing_dropout)
@@ -749,7 +760,11 @@ class FLABackbone(Backbone):
         use_cache = return_cache or (
             cache_params is not None and isinstance(self.fla, Mamba2Model)
         )
-        kwargs: dict[str, tp.Any] = {"inputs_embeds": x, "use_cache": use_cache}
+        kwargs: dict[str, tp.Any] = {
+            "inputs_embeds": x,
+            "use_cache": use_cache,
+            "return_dict": True,
+        }
         if cache_params is not None:
             if isinstance(self.fla, self._CUSTOM_RECURRENT_MODELS):
                 kwargs["past_key_values"] = cache_params
@@ -799,6 +814,7 @@ class FLABackbone(Backbone):
                 inputs_embeds=step_x,
                 past_key_values=current_cache,
                 use_cache=True,
+                return_dict=True,
             )
             if not hasattr(out, "last_hidden_state") or not hasattr(out, "past_key_values"):
                 raise RuntimeError(
@@ -839,10 +855,18 @@ class FLABackbone(Backbone):
         )
         for model_type, ctx_factory in patch_registry:
             if isinstance(model, model_type):
+                include_self_term = self.include_self_term
+                extra_kwargs: dict[str, tp.Any] = {}
+                if model_type is DeltaNetModel:
+                    include_self_term = include_self_term and not self.final_state_readout
+                    extra_kwargs["final_state_readout"] = (
+                        self.final_state_readout and not use_custom_recurrent
+                    )
                 contexts.append(
                     ctx_factory(
                         use_custom_recurrent,
-                        include_self_term=self.include_self_term,
+                        include_self_term=include_self_term,
+                        **extra_kwargs,
                     )
                 )
         return contexts
@@ -1205,14 +1229,16 @@ class LinearAttentionBackbone(Backbone):
     @staticmethod
     def _unpack_recurrent_state(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         recurrent_state = state["recurrent_state"]
-        if "k_sum" in state:
+        if "k_sum" in state or "p_state" in state:
             return {
                 "kv_state": recurrent_state,
-                "k_sum": state["k_sum"],
+                "k_sum": state.get("k_sum"),
+                "p_state": state.get("p_state"),
             }
         return {
             "kv_state": recurrent_state[..., :-1],
             "k_sum": recurrent_state[..., -1],
+            "p_state": None,
         }
 
     def forward(
@@ -1266,6 +1292,7 @@ class LinearAttentionBackbone(Backbone):
                         state={
                             "recurrent_state": state["kv_state"],
                             "k_sum": state["k_sum"],
+                            "p_state": state["p_state"],
                         }
                     )
                     for state in layer_states

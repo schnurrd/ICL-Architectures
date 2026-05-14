@@ -4,10 +4,40 @@ import os
 from typing import Any
 
 from pfns.run_logger import download_model_from_wandb
+from pfns.model.linear_attention import LinearAttention
 from pfns.scripts.tabpfn_interface import load_model_workflow
 from pfns.utils import get_default_device
 
 from .oracle_hidden_state_baseline import build_oracle_hidden_state_baseline
+
+
+def _apply_linear_attention_state_update_override(
+    model: Any,
+    model_config: dict[str, Any],
+) -> None:
+    state_update_rule = model_config.get("linear_attention_state_update_rule")
+    if state_update_rule is None:
+        return
+
+    normalized_rule = LinearAttention._normalize_state_update_rule(
+        str(state_update_rule)
+    )
+    layers = [m for m in model.modules() if isinstance(m, LinearAttention)]
+    if not layers:
+        raise ValueError(
+            "linear_attention_state_update_rule override requires a model with "
+            "pfns.model.linear_attention.LinearAttention layers."
+        )
+
+    for module in layers:
+        module.state_update_rule = normalized_rule
+        module.rls_lambda = float(
+            model_config.get("linear_attention_rls_lambda", module.rls_lambda)
+        )
+        if normalized_rule != "linear":
+            module.use_k_sum_normalization = False
+            module.state_renormalization = None
+            module.state_renormalization_target_norm = None
 
 
 def load_models_for_benchmark(
@@ -41,6 +71,7 @@ def load_models_for_benchmark(
             make_causal=bool(model_config.get("make_causal", False)),
             make_non_causal=bool(model_config.get("make_non_causal", False)),
         )
+        _apply_linear_attention_state_update_override(model, model_config)
         if model_config.get("oracle_hidden_state_baseline"):
             model = build_oracle_hidden_state_baseline(
                 base_model=model,

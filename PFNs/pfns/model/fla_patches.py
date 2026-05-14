@@ -337,11 +337,62 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
 ):
-    if not enabled:
+    if not enabled and not final_state_readout:
         yield
         return
     import fla.layers.delta_net as deltanet_layer
+
+    @torch.compiler.disable
+    def _final_state_readout_delta_kernel(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        beta: torch.Tensor | None = None,
+        scale: float | None = None,
+        initial_state: torch.Tensor | None = None,
+        output_final_state: bool = False,
+        cu_seqlens: torch.LongTensor | None = None,
+        use_qk_l2norm_in_kernel: bool = False,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        assert not kwargs, f"Unsupported extra args: {sorted(kwargs)}"
+        assert cu_seqlens is None, "final_state_readout DeltaNet does not support cu_seqlens."
+        assert beta is not None, "beta is required for final_state_readout DeltaNet."
+
+        scale = k.shape[-1] ** -0.5 if scale is None else scale
+
+        dtype = q.dtype
+        q, k, v, beta = (t.float() for t in (q, k, v, beta))
+        if initial_state is None:
+            recurrent_state = q.new_zeros(q.size(0), q.size(2), q.size(3), v.size(-1))
+        else:
+            recurrent_state = initial_state.float().clone()
+
+        if use_qk_l2norm_in_kernel:
+            q = l2norm(q)
+            k = l2norm(k)
+
+        q = q * scale
+        if beta.ndim < v.ndim:
+            beta = beta.view(*beta.shape, *([1] * (v.ndim - beta.ndim)))
+
+        for t in range(q.shape[1]):
+            k_t = k[:, t]
+            v_t = v[:, t]
+            beta_t = beta[:, t]
+            pred_t = torch.einsum("bhd,bhdm->bhm", k_t, recurrent_state)
+            delta_t = beta_t * (v_t - pred_t)
+            recurrent_state = recurrent_state + torch.einsum(
+                "bhd,bhm->bhdm",
+                k_t,
+                delta_t,
+            )
+
+        o = torch.einsum("bthd,bhdm->bthm", q, recurrent_state)
+        final_state = recurrent_state.to(dtype) if output_final_state else None
+        return o.to(dtype), final_state
 
     @torch.compiler.disable
     def _stateless_deltanet_kernel(
@@ -410,8 +461,11 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
     original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
     original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
     
-    deltanet_layer.fused_recurrent_delta_rule = _stateless_deltanet_kernel
-    deltanet_layer.chunk_delta_rule = _stateless_deltanet_kernel
+    replacement = (
+        _stateless_deltanet_kernel if enabled else _final_state_readout_delta_kernel
+    )
+    deltanet_layer.fused_recurrent_delta_rule = replacement
+    deltanet_layer.chunk_delta_rule = replacement
 
     try:
         yield

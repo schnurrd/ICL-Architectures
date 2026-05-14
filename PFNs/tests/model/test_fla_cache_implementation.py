@@ -75,6 +75,52 @@ def test_fla_linear_attn_matches_gla_without_gating():
     torch.testing.assert_close(final_state_linear, final_state_gla, rtol=0.0, atol=0.0)
 
 
+def test_deltanet_final_state_readout_kernel_reads_final_state():
+    torch.manual_seed(0)
+    import fla.layers.delta_net as deltanet_layer
+
+    from pfns.model.fla_patches import _maybe_patch_deltanet_with_stateless_recurrent
+
+    q = torch.randn(2, 5, 3, 4)
+    k = torch.randn(2, 5, 3, 4)
+    v = torch.randn(2, 5, 3, 6)
+    beta = torch.rand(2, 5, 3)
+    initial_state = torch.randn(2, 3, 4, 6)
+    scale = 0.5
+
+    with _maybe_patch_deltanet_with_stateless_recurrent(
+        False,
+        final_state_readout=True,
+    ):
+        out, state = deltanet_layer.fused_recurrent_delta_rule(
+            q=q,
+            k=k,
+            v=v,
+            beta=beta,
+            scale=scale,
+            initial_state=initial_state,
+            output_final_state=True,
+        )
+
+    expected_state = initial_state.clone()
+    for t in range(q.shape[1]):
+        pred_t = torch.einsum("bhd,bhdm->bhm", k[:, t], expected_state)
+        delta_t = beta[:, t].unsqueeze(-1) * (v[:, t] - pred_t)
+        expected_state = expected_state + torch.einsum(
+            "bhd,bhm->bhdm",
+            k[:, t],
+            delta_t,
+        )
+    expected_out = torch.einsum(
+        "bthd,bhdm->bthm",
+        q * scale,
+        expected_state,
+    )
+
+    torch.testing.assert_close(out, expected_out)
+    torch.testing.assert_close(state, expected_state)
+
+
 @pytest.mark.parametrize("model_type", FLA_MODEL_TYPES)
 def test_fla_test_cache_matches_naive(model_type: str):
     if not torch.cuda.is_available():
