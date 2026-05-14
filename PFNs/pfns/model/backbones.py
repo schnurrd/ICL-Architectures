@@ -95,6 +95,10 @@ FINAL_STATE_READOUT_FLA_MODELS = {
     "deltanet",
     "gated_deltanet",
 }
+FINAL_STATE_READOUT_FLA_MODEL_CLASSES = {
+    FLA_MODEL_REGISTRY[model_type][1]
+    for model_type in FINAL_STATE_READOUT_FLA_MODELS
+}
 
 
 class Backbone(nn.Module, ABC):
@@ -865,13 +869,9 @@ class FLABackbone(Backbone):
         )
         for model_type, ctx_factory in patch_registry:
             if isinstance(model, model_type):
-                supports_final_state_readout = model_type in {
-                    LinearAttentionModel,
-                    GLAModel,
-                    KDAModel,
-                    DeltaNetModel,
-                    GatedDeltaNetModel,
-                }
+                supports_final_state_readout = (
+                    model_type in FINAL_STATE_READOUT_FLA_MODEL_CLASSES
+                )
                 final_state_readout_active = (
                     self.final_state_readout
                     and supports_final_state_readout
