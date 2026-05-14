@@ -486,12 +486,12 @@ class FLABackboneConfig(BackboneConfig):
             state_passing=self.state_passing,
             state_passing_dropout=self.state_passing_dropout,
             include_self_term=self.include_self_term,
-            final_state_readout=self.final_state_readout,
         )
         if self.bidirectional:
             backbone_kwargs["state_fusion"] = self.bidirectional_state_fusion
         else:
             backbone_kwargs["state_weaving"] = self.state_weaving
+            backbone_kwargs["final_state_readout"] = self.final_state_readout
 
         return backbone_cls(**backbone_kwargs)
 
@@ -656,6 +656,30 @@ class FLABackbone(Backbone):
             .transpose(1, 2)
         )
 
+    @staticmethod
+    def _unpack_fla_output(
+        out: tp.Any,
+        *,
+        return_cache: bool,
+        model_name: str = "FLA model",
+    ) -> tuple[torch.Tensor, tp.Any | None]:
+        if hasattr(out, "last_hidden_state"):
+            last_hidden_state = out.last_hidden_state
+        elif isinstance(out, (tuple, list)) and len(out) > 0:
+            last_hidden_state = out[0]
+        else:
+            raise RuntimeError(f"{model_name} output does not contain last_hidden_state.")
+
+        cache_params = None
+        if return_cache:
+            if hasattr(out, "past_key_values"):
+                cache_params = out.past_key_values
+            elif isinstance(out, (tuple, list)) and len(out) > 1:
+                cache_params = out[1]
+            else:
+                raise RuntimeError(f"{model_name} output does not contain past_key_values.")
+        return last_hidden_state, cache_params
+
     def incontext_fit(
         self,
         train_x: torch.Tensor,
@@ -797,18 +821,7 @@ class FLABackbone(Backbone):
                 "FLA model does not support cache usage; required for independent evaluation."
             ) from exc
 
-        if hasattr(out, "last_hidden_state"):
-            last_hidden_state = out.last_hidden_state
-        else:
-            raise RuntimeError("FLA model output does not contain last_hidden_state.")
-
-        cache_params = None
-        if return_cache:
-            if hasattr(out, "past_key_values"):
-                cache_params = out.past_key_values
-            else:
-                raise RuntimeError("FLA model output does not contain past_key_values.")
-        return last_hidden_state, cache_params
+        return self._unpack_fla_output(out, return_cache=return_cache)
 
     def _run_mesanet_with_initial_cache(
         self,
@@ -830,12 +843,12 @@ class FLABackbone(Backbone):
                 use_cache=True,
                 return_dict=True,
             )
-            if not hasattr(out, "last_hidden_state") or not hasattr(out, "past_key_values"):
-                raise RuntimeError(
-                    "MesaNet output does not contain last_hidden_state and past_key_values."
-                )
-            outputs.append(out.last_hidden_state.transpose(0, 1))
-            current_cache = out.past_key_values
+            last_hidden_state, current_cache = self._unpack_fla_output(
+                out,
+                return_cache=True,
+                model_name="MesaNet",
+            )
+            outputs.append(last_hidden_state.transpose(0, 1))
 
         return torch.cat(outputs, dim=1), (current_cache if return_cache else None)
 
@@ -1053,11 +1066,8 @@ class BidirectionalFLABackbone(FLABackbone):
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
         include_self_term: bool = True,
-        final_state_readout: bool = False,
         state_fusion: str = "mean_output_mean_cache",
     ):
-        if final_state_readout:
-            raise ValueError("BidirectionalFLABackbone does not support final_state_readout.")
         super().__init__(
             fla_model=fla_model,
             sequence_mode=sequence_mode,
@@ -1065,7 +1075,6 @@ class BidirectionalFLABackbone(FLABackbone):
             state_passing=state_passing,
             state_passing_dropout=state_passing_dropout,
             include_self_term=include_self_term,
-            final_state_readout=False,
         )
         self.state_fusion = state_fusion
 
