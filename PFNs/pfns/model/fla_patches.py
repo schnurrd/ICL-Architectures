@@ -3,11 +3,66 @@ from __future__ import annotations
 
 import typing as tp
 from contextlib import contextmanager
+from functools import partial
 
 import torch
 import torch.nn.functional as F
 
 from fla.modules.l2norm import l2norm
+
+
+GLA_RECURRENT_ARGS = (
+    "q", "k", "v", "gk", "gv", "scale", "initial_state",
+    "output_final_state", "reverse", "cu_seqlens",
+)
+GLA_CHUNK_ARGS = (
+    "q", "k", "v", "g", "scale", "initial_state",
+    "output_final_state", "cu_seqlens",
+)
+GLA_FUSED_CHUNK_ARGS = GLA_CHUNK_ARGS[:-1]
+
+KDA_RECURRENT_ARGS = (
+    "q", "k", "v", "g", "beta", "A_log", "dt_bias", "scale",
+    "initial_state", "output_final_state", "use_qk_l2norm_in_kernel",
+    "use_gate_in_kernel", "lower_bound", "cu_seqlens",
+    "transpose_state_layout",
+)
+KDA_CHUNK_ARGS = (
+    "q", "k", "v", "g", "beta", "scale", "initial_state",
+    "output_final_state", "use_qk_l2norm_in_kernel", "use_gate_in_kernel",
+    "cu_seqlens", "cu_seqlens_cpu", "safe_gate", "lower_bound",
+    "disable_recompute", "return_intermediate_states", "cp_context",
+    "transpose_state_layout",
+)
+
+DELTA_RULE_ARGS = (
+    "q", "k", "v", "beta", "scale", "initial_state",
+    "output_final_state", "cu_seqlens", "use_qk_l2norm_in_kernel",
+)
+
+GATED_DELTA_RECURRENT_ARGS = (
+    "q", "k", "v", "g", "gk", "gv", "beta", "scale",
+    "initial_state", "output_final_state", "use_qk_l2norm_in_kernel",
+    "cu_seqlens", "transpose_state_layout",
+)
+GATED_DELTA_CHUNK_ARGS = (
+    "q", "k", "v", "g", "beta", "scale", "initial_state",
+    "output_final_state", "use_qk_l2norm_in_kernel", "cu_seqlens",
+    "cu_seqlens_cpu", "cp_context", "transpose_state_layout",
+)
+
+LINEAR_ATTN_RECURRENT_ARGS = (
+    "q", "k", "v", "scale", "initial_state", "output_final_state",
+    "reverse", "normalize", "cu_seqlens",
+)
+LINEAR_ATTN_CHUNK_ARGS = (
+    "q", "k", "v", "scale", "initial_state", "output_final_state",
+    "normalize", "head_first",
+)
+LINEAR_ATTN_FUSED_CHUNK_ARGS = (
+    "q", "k", "v", "scale", "initial_state", "output_final_state",
+    "normalize", "cu_seqlens",
+)
 
 
 @contextmanager
@@ -135,11 +190,16 @@ def _maybe_patch_gla_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
 ):
-    if not enabled:
+    if not enabled and not final_state_readout:
         yield
         return
     import fla.layers.gla as gla_layer
+
+    original_fused_recurrent = gla_layer.fused_recurrent_gla
+    original_chunked = gla_layer.chunk_gla
+    original_fused_chunked = gla_layer.fused_chunk_gla
 
     @torch.compiler.disable
     def _stateless_gla_kernel(
@@ -196,12 +256,29 @@ def _maybe_patch_gla_with_stateless_recurrent(
             o = o.reshape(orig_batch, 1, *o.shape[2:])
         return o.to(dtype), None
 
-    original_fused_recurrent = gla_layer.fused_recurrent_gla
-    original_chunked = gla_layer.chunk_gla
-    original_fused_chunked = gla_layer.fused_chunk_gla
-    gla_layer.fused_recurrent_gla = _stateless_gla_kernel
-    gla_layer.fused_chunk_gla = _stateless_gla_kernel
-    gla_layer.chunk_gla = _stateless_gla_kernel
+    if enabled:
+        gla_layer.fused_recurrent_gla = _stateless_gla_kernel
+        gla_layer.fused_chunk_gla = _stateless_gla_kernel
+        gla_layer.chunk_gla = _stateless_gla_kernel
+    else:
+        gla_layer.fused_recurrent_gla = partial(
+            _final_state_readout_kv_kernel,
+            original_fused_recurrent,
+            gate_mode="exp",
+            kernel_arg_names=GLA_RECURRENT_ARGS,
+        )
+        gla_layer.fused_chunk_gla = partial(
+            _final_state_readout_kv_kernel,
+            original_fused_chunked,
+            gate_mode="exp",
+            kernel_arg_names=GLA_FUSED_CHUNK_ARGS,
+        )
+        gla_layer.chunk_gla = partial(
+            _final_state_readout_kv_kernel,
+            original_chunked,
+            gate_mode="exp",
+            kernel_arg_names=GLA_CHUNK_ARGS,
+        )
     try:
         yield
     finally:
@@ -215,12 +292,16 @@ def _maybe_patch_kda_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
 ):
-    if not enabled:
+    if not enabled and not final_state_readout:
         yield
         return
     import fla.layers.kda as kda_layer
     import torch.nn.functional as F
+
+    original_fused_recurrent_kda = kda_layer.fused_recurrent_kda
+    original_chunk_kda = kda_layer.chunk_kda
 
     @torch.compiler.disable
     def _stateless_kda_kernel(
@@ -322,15 +403,235 @@ def _maybe_patch_kda_with_stateless_recurrent(
 
         return o.to(dtype), None
 
-    original_fused_recurrent_kda = kda_layer.fused_recurrent_kda
-    original_chunk_kda = kda_layer.chunk_kda
-    kda_layer.fused_recurrent_kda = _stateless_kda_kernel
-    kda_layer.chunk_kda = _stateless_kda_kernel
+    if enabled:
+        kda_layer.fused_recurrent_kda = _stateless_kda_kernel
+        kda_layer.chunk_kda = _stateless_kda_kernel
+    else:
+        kda_layer.fused_recurrent_kda = partial(
+            _final_state_readout_kv_kernel,
+            original_fused_recurrent_kda,
+            gate_mode="kda",
+            kernel_arg_names=KDA_RECURRENT_ARGS,
+        )
+        kda_layer.chunk_kda = partial(
+            _final_state_readout_kv_kernel,
+            original_chunk_kda,
+            gate_mode="kda",
+            kernel_arg_names=KDA_CHUNK_ARGS,
+        )
     try:
         yield
     finally:
         kda_layer.fused_recurrent_kda = original_fused_recurrent_kda
         kda_layer.chunk_kda = original_chunk_kda
+
+
+def _naive_final_state_readout_delta_kernel(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    beta: torch.Tensor,
+    *,
+    scale: float,
+    initial_state: torch.Tensor | None,
+    output_final_state: bool,
+    use_qk_l2norm_in_kernel: bool,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    dtype = q.dtype
+    q, k, v, beta = (t.float() for t in (q, k, v, beta))
+    if initial_state is None:
+        recurrent_state = q.new_zeros(q.size(0), q.size(2), q.size(3), v.size(-1))
+    else:
+        recurrent_state = initial_state.float().clone()
+
+    if use_qk_l2norm_in_kernel:
+        q = l2norm(q)
+        k = l2norm(k)
+
+    if beta.ndim < v.ndim:
+        beta = beta.view(*beta.shape, *([1] * (v.ndim - beta.ndim)))
+
+    for t in range(q.shape[1]):
+        k_t = k[:, t]
+        v_t = v[:, t]
+        beta_t = beta[:, t]
+        pred_t = torch.einsum("bhd,bhdm->bhm", k_t, recurrent_state)
+        delta_t = beta_t * (v_t - pred_t)
+        recurrent_state = recurrent_state + torch.einsum(
+            "bhd,bhm->bhdm",
+            k_t,
+            delta_t,
+        )
+
+    o = torch.einsum("bthd,bhdm->bthm", q * scale, recurrent_state)
+    final_state = recurrent_state.to(dtype) if output_final_state else None
+    return o.to(dtype), final_state
+
+
+def _read_from_final_kv_state(
+    q: torch.Tensor,
+    recurrent_state: torch.Tensor,
+    *,
+    scale: float,
+    output_final_state: bool,
+    use_qk_l2norm_in_kernel: bool = False,
+    gate: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    q_read = l2norm(q.float()) if use_qk_l2norm_in_kernel else q.float()
+    q_read = q_read * scale
+    if gate is not None:
+        gate = gate.float()
+        if gate.ndim == q_read.ndim - 1:
+            gate = gate.unsqueeze(-1)
+        q_read = q_read * gate
+    o = torch.einsum("bthk,bhkv->bthv", q_read, recurrent_state.float())
+    return o.to(q.dtype), (recurrent_state if output_final_state else None)
+
+
+@torch.compiler.disable
+def _final_state_readout_kv_kernel(
+    original_kernel: tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]],
+    *,
+    gate_mode: str = "none",
+    cpu_mode: str = "unsupported",
+    kernel_arg_names: tuple[str, ...],
+    **kwargs: tp.Any,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    q, k, v = kwargs["q"], kwargs["k"], kwargs["v"]
+    assert kwargs.get("cu_seqlens") is None, "final_state_readout does not support cu_seqlens."
+    assert kwargs.get("cu_seqlens_cpu") is None, "final_state_readout does not support cu_seqlens_cpu."
+    assert kwargs.get("reverse") in (None, False), "final_state_readout does not support reverse=True."
+    assert kwargs.get("head_first") in (None, False), "final_state_readout expects head_first=False."
+    assert kwargs.get("offsets") is None, "final_state_readout does not support offsets."
+    assert kwargs.get("indices") is None, "final_state_readout does not support indices."
+    assert kwargs.get("gv") is None, "final_state_readout does not support gv."
+    assert kwargs.get("normalize") in (None, False), "final_state_readout does not support normalize=True."
+    assert kwargs.get("num_householder") in (None, 1), (
+        "final_state_readout supports only num_householder=1."
+    )
+
+    output_final_state = bool(kwargs.get("output_final_state", False))
+    use_l2 = bool(kwargs.get("use_qk_l2norm_in_kernel", False))
+    scale = kwargs.get("scale")
+    scale = k.shape[-1] ** -0.5 if scale is None else scale
+
+    if not q.is_cuda and cpu_mode == "delta":
+        return _naive_final_state_readout_delta_kernel(
+            q,
+            k=k,
+            v=v,
+            beta=kwargs["beta"],
+            scale=scale,
+            initial_state=kwargs.get("initial_state"),
+            output_final_state=output_final_state,
+            use_qk_l2norm_in_kernel=use_l2,
+        )
+    if not q.is_cuda and cpu_mode == "linear":
+        recurrent_state = torch.einsum("bthk,bthv->bhkv", k.float(), v.float())
+        if kwargs.get("initial_state") is not None:
+            recurrent_state = recurrent_state + kwargs["initial_state"].float()
+    elif not q.is_cuda:
+        raise ValueError("final_state_readout for this FLA model requires CUDA/FLA kernels.")
+    else:
+        kwargs["scale"] = scale
+        kwargs["output_final_state"] = True
+        kernel_kwargs = {
+            key: value
+            for key, value in kwargs.items()
+            if key in kernel_arg_names
+        }
+        _, recurrent_state = original_kernel(**kernel_kwargs)
+
+    assert recurrent_state is not None, (
+        "final_state_readout requires the underlying FLA kernel to "
+        "return a final recurrent state."
+    )
+    gate = None
+    if gate_mode == "exp":
+        gate = kwargs.get("gk") if kwargs.get("gk") is not None else kwargs.get("g")
+        gate = None if gate is None else gate.exp()
+    elif gate_mode == "kda":
+        gate = kwargs["g"].float()
+        if kwargs.get("use_gate_in_kernel") and kwargs.get("A_log") is not None:
+            dt_bias = kwargs.get("dt_bias")
+            if dt_bias is not None and dt_bias.ndim == 1:
+                dt_bias = dt_bias.view(q.shape[-2], q.shape[-1])
+            A = kwargs["A_log"].exp().view(1, 1, -1, 1)
+            bias = dt_bias.view(1, 1, *dt_bias.shape) if dt_bias is not None else 0.0
+            gate = -A * F.softplus(gate + bias)
+        gate = gate.exp()
+
+    return _read_from_final_kv_state(
+        q,
+        recurrent_state,
+        scale=scale,
+        output_final_state=output_final_state,
+        use_qk_l2norm_in_kernel=use_l2,
+        gate=gate,
+    )
+
+
+@torch.compiler.disable
+def _stateless_deltanet_kernel(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    beta: torch.Tensor | None = None,
+    scale: float | None = None,
+    initial_state: torch.Tensor | None = None,
+    output_final_state: bool = False,
+    cu_seqlens: torch.LongTensor | None = None,
+    use_qk_l2norm_in_kernel: bool = False,
+    include_self_term: bool = True,
+    **kwargs: tp.Any,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    assert not kwargs, f"Unsupported extra args: {sorted(kwargs)}"
+    assert cu_seqlens is None, "native_recurrent_deltanet does not support cu_seqlens."
+    assert beta is not None, "beta is required for native_recurrent_deltanet."
+    assert initial_state is not None, "stateless mode requires an initial_state."
+    assert output_final_state is False, (
+        "output_final_state must be False in stateless_deltanet patch."
+    )
+    assert q.shape[1] == 1, "stateless_deltanet patch only supports decode-like T=1."
+
+    scale = k.shape[-1] ** -0.5 if scale is None else scale
+
+    dtype = q.dtype
+    q, k, v, beta = (t.float() for t in (q, k, v, beta))
+    s0 = initial_state.float()
+
+    orig_batch = q.shape[0]
+    cache_batch = s0.shape[0]
+
+    if orig_batch != cache_batch:
+        assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
+        flat_len = orig_batch // cache_batch
+        q = q.reshape(cache_batch, flat_len, *q.shape[2:])
+        k = k.reshape(cache_batch, flat_len, *k.shape[2:])
+        v = v.reshape(cache_batch, flat_len, *v.shape[2:])
+        beta = beta.reshape(cache_batch, flat_len, *beta.shape[2:])
+
+    if use_qk_l2norm_in_kernel:
+        q = l2norm(q)
+        k = l2norm(k)
+
+    q = q * scale
+
+    if beta.ndim < v.ndim:
+        beta = beta.view(*beta.shape, *([1] * (v.ndim - beta.ndim)))
+
+    s0k = torch.einsum("bthd,bhdm->bthm", k, s0)
+    o = torch.einsum("bthd,bhdm->bthm", q, s0)
+    if include_self_term:
+        qk = (q * k).sum(-1, keepdim=True)
+        scaled_qk = qk * beta
+        o = o + scaled_qk * v - scaled_qk * s0k
+
+    if orig_batch != cache_batch:
+        o = o.reshape(orig_batch, 1, *o.shape[2:])
+
+    return o.to(dtype), None
+
 
 @contextmanager
 def _maybe_patch_deltanet_with_stateless_recurrent(
@@ -347,184 +648,25 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
     original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
     original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
 
-    def _naive_final_state_readout_delta_kernel(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        beta: torch.Tensor,
-        *,
-        scale: float,
-        initial_state: torch.Tensor | None,
-        output_final_state: bool,
-        use_qk_l2norm_in_kernel: bool,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        dtype = q.dtype
-        q, k, v, beta = (t.float() for t in (q, k, v, beta))
-        if initial_state is None:
-            recurrent_state = q.new_zeros(q.size(0), q.size(2), q.size(3), v.size(-1))
-        else:
-            recurrent_state = initial_state.float().clone()
-
-        if use_qk_l2norm_in_kernel:
-            q = l2norm(q)
-            k = l2norm(k)
-
-        if beta.ndim < v.ndim:
-            beta = beta.view(*beta.shape, *([1] * (v.ndim - beta.ndim)))
-
-        for t in range(q.shape[1]):
-            k_t = k[:, t]
-            v_t = v[:, t]
-            beta_t = beta[:, t]
-            pred_t = torch.einsum("bhd,bhdm->bhm", k_t, recurrent_state)
-            delta_t = beta_t * (v_t - pred_t)
-            recurrent_state = recurrent_state + torch.einsum(
-                "bhd,bhm->bhdm",
-                k_t,
-                delta_t,
-            )
-
-        o = torch.einsum("bthd,bhdm->bthm", q * scale, recurrent_state)
-        final_state = recurrent_state.to(dtype) if output_final_state else None
-        return o.to(dtype), final_state
-
-    def _make_final_state_readout_delta_kernel(original_kernel):
-        @torch.compiler.disable
-        def _final_state_readout_delta_kernel(
-            q: torch.Tensor,
-            k: torch.Tensor,
-            v: torch.Tensor,
-            beta: torch.Tensor | None = None,
-            scale: float | None = None,
-            initial_state: torch.Tensor | None = None,
-            output_final_state: bool = False,
-            cu_seqlens: torch.LongTensor | None = None,
-            use_qk_l2norm_in_kernel: bool = False,
-            **kwargs: tp.Any,
-        ) -> tuple[torch.Tensor, torch.Tensor | None]:
-            assert not kwargs, f"Unsupported extra args: {sorted(kwargs)}"
-            assert cu_seqlens is None, "final_state_readout DeltaNet does not support cu_seqlens."
-            assert beta is not None, "beta is required for final_state_readout DeltaNet."
-
-            scale = k.shape[-1] ** -0.5 if scale is None else scale
-            dtype = q.dtype
-
-            if not q.is_cuda:
-                return _naive_final_state_readout_delta_kernel(
-                    q,
-                    k,
-                    v,
-                    beta,
-                    scale=scale,
-                    initial_state=initial_state,
-                    output_final_state=output_final_state,
-                    use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-                )
-
-            _, recurrent_state = original_kernel(
-                q=q,
-                k=k,
-                v=v,
-                beta=beta,
-                scale=scale,
-                initial_state=initial_state,
-                output_final_state=True,
-                cu_seqlens=cu_seqlens,
-                use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
-            )
-            assert recurrent_state is not None, (
-                "DeltaNet final_state_readout requires the underlying kernel to "
-                "return a final recurrent state."
-            )
-
-            q_read = q.float()
-            if use_qk_l2norm_in_kernel:
-                q_read = l2norm(q_read)
-            q_read = q_read * scale
-
-            o = torch.einsum(
-                "bthd,bhdm->bthm",
-                q_read,
-                recurrent_state.float(),
-            )
-            final_state = recurrent_state if output_final_state else None
-            return o.to(dtype), final_state
-
-        return _final_state_readout_delta_kernel
-
-    @torch.compiler.disable
-    def _stateless_deltanet_kernel(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        beta: torch.Tensor | None = None,
-        scale: float | None = None,
-        initial_state: torch.Tensor | None = None,
-        output_final_state: bool = False,
-        cu_seqlens: torch.LongTensor | None = None,
-        use_qk_l2norm_in_kernel: bool = False,
-        **kwargs: tp.Any,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        assert not kwargs, f"Unsupported extra args: {sorted(kwargs)}"
-        assert cu_seqlens is None, "native_recurrent_deltanet does not support cu_seqlens."
-        assert beta is not None, "beta is required for native_recurrent_deltanet."
-        assert initial_state is not None, "stateless mode requires an initial_state."
-        assert output_final_state is False, (
-            "output_final_state must be False in stateless_deltanet patch."
-        )
-        assert q.shape[1] == 1, "stateless_deltanet patch only supports decode-like T=1."
-        
-        scale = k.shape[-1] ** -0.5 if scale is None else scale
-
-        dtype = q.dtype
-        q, k, v, beta = (t.float() for t in (q, k, v, beta))
-        s0 = initial_state.float()
-        
-        orig_batch = q.shape[0]
-        cache_batch = s0.shape[0]
-        
-        if orig_batch != cache_batch:
-            assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
-            flat_len = orig_batch // cache_batch
-            q = q.reshape(cache_batch, flat_len, *q.shape[2:])
-            k = k.reshape(cache_batch, flat_len, *k.shape[2:])
-            v = v.reshape(cache_batch, flat_len, *v.shape[2:])
-            beta = beta.reshape(cache_batch, flat_len, *beta.shape[2:])
-
-        # Use FLA's l2norm to match the original kernel's normalization and don't fail tests
-        if use_qk_l2norm_in_kernel:
-            q = l2norm(q)
-            k = l2norm(k)
-        
-        q = q * scale
-        
-        if beta.ndim < v.ndim:
-            beta = beta.view(*beta.shape, *([1] * (v.ndim - beta.ndim)))
-
-        s0k = torch.einsum("bthd,bhdm->bthm", k, s0)
-
-        term1 = torch.einsum("bthd,bhdm->bthm", q, s0)
-
-        o = term1
-        if include_self_term:
-            qk = (q * k).sum(-1, keepdim=True)
-            scaled_qk = qk * beta
-            o = o + scaled_qk * v - scaled_qk * s0k
-
-        if orig_batch != cache_batch:
-            o = o.reshape(orig_batch, 1, *o.shape[2:])
-            
-        return o.to(dtype), None
-
     if enabled:
-        deltanet_layer.fused_recurrent_delta_rule = _stateless_deltanet_kernel
-        deltanet_layer.chunk_delta_rule = _stateless_deltanet_kernel
-    else:
-        deltanet_layer.fused_recurrent_delta_rule = _make_final_state_readout_delta_kernel(
-            original_fused_recurrent_delta_rule
+        replacement = partial(
+            _stateless_deltanet_kernel,
+            include_self_term=include_self_term,
         )
-        deltanet_layer.chunk_delta_rule = _make_final_state_readout_delta_kernel(
-            original_chunk_delta_rule
+        deltanet_layer.fused_recurrent_delta_rule = replacement
+        deltanet_layer.chunk_delta_rule = replacement
+    else:
+        deltanet_layer.fused_recurrent_delta_rule = partial(
+            _final_state_readout_kv_kernel,
+            original_fused_recurrent_delta_rule,
+            cpu_mode="delta",
+            kernel_arg_names=DELTA_RULE_ARGS,
+        )
+        deltanet_layer.chunk_delta_rule = partial(
+            _final_state_readout_kv_kernel,
+            original_chunk_delta_rule,
+            cpu_mode="delta",
+            kernel_arg_names=DELTA_RULE_ARGS,
         )
 
     try:
@@ -538,11 +680,15 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
 ):
-    if not enabled:
+    if not enabled and not final_state_readout:
         yield
         return
     import fla.layers.gated_deltanet as gated_deltanet_layer
+
+    original_fused = gated_deltanet_layer.fused_recurrent_gated_delta_rule
+    original_chunk = gated_deltanet_layer.chunk_gated_delta_rule
 
     @torch.compiler.disable
     def _stateless_gated_deltanet_kernel(
@@ -639,11 +785,22 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
 
         return o.to(dtype), None
 
-    original_fused = gated_deltanet_layer.fused_recurrent_gated_delta_rule
-    original_chunk = gated_deltanet_layer.chunk_gated_delta_rule
-    
-    gated_deltanet_layer.fused_recurrent_gated_delta_rule = _stateless_gated_deltanet_kernel
-    gated_deltanet_layer.chunk_gated_delta_rule = _stateless_gated_deltanet_kernel
+    if enabled:
+        gated_deltanet_layer.fused_recurrent_gated_delta_rule = _stateless_gated_deltanet_kernel
+        gated_deltanet_layer.chunk_gated_delta_rule = _stateless_gated_deltanet_kernel
+    else:
+        gated_deltanet_layer.fused_recurrent_gated_delta_rule = partial(
+            _final_state_readout_kv_kernel,
+            original_fused,
+            gate_mode="exp",
+            kernel_arg_names=GATED_DELTA_RECURRENT_ARGS,
+        )
+        gated_deltanet_layer.chunk_gated_delta_rule = partial(
+            _final_state_readout_kv_kernel,
+            original_chunk,
+            gate_mode="exp",
+            kernel_arg_names=GATED_DELTA_CHUNK_ARGS,
+        )
     try:
         yield
     finally:
@@ -940,12 +1097,17 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
 ):
     """Patch linear-attention kernels for stateless decode (GLA-style)."""
-    if not enabled:
+    if not enabled and not final_state_readout:
         yield
         return
     import fla.layers.linear_attn as linear_attn_layer
+
+    original_fused_recurrent = linear_attn_layer.fused_recurrent_linear_attn
+    original_chunk = linear_attn_layer.chunk_linear_attn
+    original_fused_chunk = linear_attn_layer.fused_chunk_linear_attn
 
     @torch.compiler.disable
     def _stateless_linear_attn_kernel(
@@ -1006,12 +1168,29 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
 
         return o.to(dtype), None
 
-    original_fused_recurrent = linear_attn_layer.fused_recurrent_linear_attn
-    original_chunk = linear_attn_layer.chunk_linear_attn
-    original_fused_chunk = linear_attn_layer.fused_chunk_linear_attn
-    linear_attn_layer.fused_recurrent_linear_attn = _stateless_linear_attn_kernel
-    linear_attn_layer.chunk_linear_attn = _stateless_linear_attn_kernel
-    linear_attn_layer.fused_chunk_linear_attn = _stateless_linear_attn_kernel
+    if enabled:
+        linear_attn_layer.fused_recurrent_linear_attn = _stateless_linear_attn_kernel
+        linear_attn_layer.chunk_linear_attn = _stateless_linear_attn_kernel
+        linear_attn_layer.fused_chunk_linear_attn = _stateless_linear_attn_kernel
+    else:
+        linear_attn_layer.fused_recurrent_linear_attn = partial(
+            _final_state_readout_kv_kernel,
+            original_fused_recurrent,
+            cpu_mode="linear",
+            kernel_arg_names=LINEAR_ATTN_RECURRENT_ARGS,
+        )
+        linear_attn_layer.chunk_linear_attn = partial(
+            _final_state_readout_kv_kernel,
+            original_chunk,
+            cpu_mode="linear",
+            kernel_arg_names=LINEAR_ATTN_CHUNK_ARGS,
+        )
+        linear_attn_layer.fused_chunk_linear_attn = partial(
+            _final_state_readout_kv_kernel,
+            original_fused_chunk,
+            cpu_mode="linear",
+            kernel_arg_names=LINEAR_ATTN_FUSED_CHUNK_ARGS,
+        )
     try:
         yield
     finally:

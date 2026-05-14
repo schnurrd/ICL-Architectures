@@ -88,6 +88,13 @@ FLA_MODEL_REGISTRY = {
 
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
 FLA_SPLIT_SEQUENCE_MODES = {"Comb_ST", "Int_ST"}
+FINAL_STATE_READOUT_FLA_MODELS = {
+    "linear_attn",
+    "gla",
+    "kda",
+    "deltanet",
+    "gated_deltanet",
+}
 
 
 class Backbone(nn.Module, ABC):
@@ -416,8 +423,11 @@ class FLABackboneConfig(BackboneConfig):
         if self.bidirectional and self.state_passing:
             raise ValueError("Bidirectional FLA does not support state_passing.")
         if self.final_state_readout:
-            if self.model_type != "deltanet":
-                raise ValueError("final_state_readout currently supports only model_type='deltanet'.")
+            if self.model_type not in FINAL_STATE_READOUT_FLA_MODELS:
+                raise ValueError(
+                    "final_state_readout currently supports only model_type in "
+                    f"{sorted(FINAL_STATE_READOUT_FLA_MODELS)}."
+                )
             if self.bidirectional:
                 raise ValueError("final_state_readout does not support bidirectional FLA.")
             if self.state_weaving:
@@ -855,10 +865,18 @@ class FLABackbone(Backbone):
         )
         for model_type, ctx_factory in patch_registry:
             if isinstance(model, model_type):
-                include_self_term = self.include_self_term
+                supports_final_state_readout = model_type in {
+                    LinearAttentionModel,
+                    GLAModel,
+                    KDAModel,
+                    DeltaNetModel,
+                    GatedDeltaNetModel,
+                }
+                include_self_term = self.include_self_term and not (
+                    self.final_state_readout and supports_final_state_readout
+                )
                 extra_kwargs: dict[str, tp.Any] = {}
-                if model_type is DeltaNetModel:
-                    include_self_term = include_self_term and not self.final_state_readout
+                if supports_final_state_readout:
                     extra_kwargs["final_state_readout"] = (
                         self.final_state_readout and not use_custom_recurrent
                     )
