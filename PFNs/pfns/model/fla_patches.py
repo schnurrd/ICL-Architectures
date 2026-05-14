@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import typing as tp
 from contextlib import contextmanager
+from functools import partial
 
 import torch
 import torch.nn.functional as F
@@ -135,11 +136,16 @@ def _maybe_patch_gla_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
 ):
-    if not enabled:
+    if not enabled and not final_state_readout:
         yield
         return
     import fla.layers.gla as gla_layer
+
+    original_fused_recurrent = gla_layer.fused_recurrent_gla
+    original_chunked = gla_layer.chunk_gla
+    original_fused_chunked = gla_layer.fused_chunk_gla
 
     @torch.compiler.disable
     def _stateless_gla_kernel(
@@ -196,12 +202,20 @@ def _maybe_patch_gla_with_stateless_recurrent(
             o = o.reshape(orig_batch, 1, *o.shape[2:])
         return o.to(dtype), None
 
-    original_fused_recurrent = gla_layer.fused_recurrent_gla
-    original_chunked = gla_layer.chunk_gla
-    original_fused_chunked = gla_layer.fused_chunk_gla
-    gla_layer.fused_recurrent_gla = _stateless_gla_kernel
-    gla_layer.fused_chunk_gla = _stateless_gla_kernel
-    gla_layer.chunk_gla = _stateless_gla_kernel
+    if enabled:
+        gla_layer.fused_recurrent_gla = _stateless_gla_kernel
+        gla_layer.fused_chunk_gla = _stateless_gla_kernel
+        gla_layer.chunk_gla = _stateless_gla_kernel
+    else:
+        gla_layer.fused_recurrent_gla = _final_state_patch(
+            original_fused_recurrent,
+        )
+        gla_layer.fused_chunk_gla = _final_state_patch(
+            original_fused_chunked,
+        )
+        gla_layer.chunk_gla = _final_state_patch(
+            original_chunked,
+        )
     try:
         yield
     finally:
@@ -215,12 +229,15 @@ def _maybe_patch_kda_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
 ):
-    if not enabled:
+    if not enabled and not final_state_readout:
         yield
         return
     import fla.layers.kda as kda_layer
-    import torch.nn.functional as F
+
+    original_fused_recurrent_kda = kda_layer.fused_recurrent_kda
+    original_chunk_kda = kda_layer.chunk_kda
 
     @torch.compiler.disable
     def _stateless_kda_kernel(
@@ -322,26 +339,104 @@ def _maybe_patch_kda_with_stateless_recurrent(
 
         return o.to(dtype), None
 
-    original_fused_recurrent_kda = kda_layer.fused_recurrent_kda
-    original_chunk_kda = kda_layer.chunk_kda
-    kda_layer.fused_recurrent_kda = _stateless_kda_kernel
-    kda_layer.chunk_kda = _stateless_kda_kernel
+    if enabled:
+        kda_layer.fused_recurrent_kda = _stateless_kda_kernel
+        kda_layer.chunk_kda = _stateless_kda_kernel
+    else:
+        kda_layer.fused_recurrent_kda = _final_state_patch(
+            original_fused_recurrent_kda,
+        )
+        kda_layer.chunk_kda = _final_state_patch(
+            original_chunk_kda,
+        )
     try:
         yield
     finally:
         kda_layer.fused_recurrent_kda = original_fused_recurrent_kda
         kda_layer.chunk_kda = original_chunk_kda
 
+
+def _read_from_final_kv_state(
+    q: torch.Tensor,
+    recurrent_state: torch.Tensor,
+    *,
+    scale: float,
+    output_final_state: bool,
+    use_qk_l2norm_in_kernel: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    q_read = l2norm(q.float()) if use_qk_l2norm_in_kernel else q.float()
+    q_read = q_read * scale
+    o = torch.einsum("bthk,bhkv->bthv", q_read, recurrent_state.float())
+    return o.to(q.dtype), (recurrent_state if output_final_state else None)
+
+
+@torch.compiler.disable
+def _final_state_readout_kv_kernel(
+    original_kernel: tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]],
+    **kwargs: tp.Any,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    q, k = kwargs["q"], kwargs["k"]
+    assert kwargs.get("cu_seqlens") is None, "final_state_readout does not support cu_seqlens."
+    assert kwargs.get("cu_seqlens_cpu") is None, "final_state_readout does not support cu_seqlens_cpu."
+    assert kwargs.get("reverse") in (None, False), "final_state_readout does not support reverse=True."
+    assert kwargs.get("head_first") in (None, False), "final_state_readout expects head_first=False."
+    assert kwargs.get("offsets") is None, "final_state_readout does not support offsets."
+    assert kwargs.get("indices") is None, "final_state_readout does not support indices."
+    assert kwargs.get("gv") is None, "final_state_readout does not support gv."
+    assert kwargs.get("normalize") in (None, False), "final_state_readout does not support normalize=True."
+    assert kwargs.get("num_householder") in (None, 1), (
+        "final_state_readout supports only num_householder=1."
+    )
+
+    output_final_state = bool(kwargs.get("output_final_state", False))
+    use_l2 = bool(kwargs.get("use_qk_l2norm_in_kernel", False))
+    scale = kwargs.get("scale")
+    scale = k.shape[-1] ** -0.5 if scale is None else scale
+
+    if not q.is_cuda:
+        raise ValueError("final_state_readout for this FLA model requires CUDA/FLA kernels.")
+
+    kwargs["scale"] = scale
+    kwargs["output_final_state"] = True
+    _, recurrent_state = original_kernel(**kwargs)
+
+    assert recurrent_state is not None, (
+        "final_state_readout requires the underlying FLA kernel to "
+        "return a final recurrent state."
+    )
+
+    return _read_from_final_kv_state(
+        q,
+        recurrent_state,
+        scale=scale,
+        output_final_state=output_final_state,
+        use_qk_l2norm_in_kernel=use_l2,
+    )
+
+
+def _final_state_patch(
+    original_kernel: tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]],
+) -> tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]]:
+    return partial(
+        _final_state_readout_kv_kernel,
+        original_kernel,
+    )
+
+
 @contextmanager
 def _maybe_patch_deltanet_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
 ):
-    if not enabled:
+    if not enabled and not final_state_readout:
         yield
         return
     import fla.layers.delta_net as deltanet_layer
+
+    original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
+    original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
 
     @torch.compiler.disable
     def _stateless_deltanet_kernel(
@@ -364,16 +459,16 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
             "output_final_state must be False in stateless_deltanet patch."
         )
         assert q.shape[1] == 1, "stateless_deltanet patch only supports decode-like T=1."
-        
+
         scale = k.shape[-1] ** -0.5 if scale is None else scale
 
         dtype = q.dtype
         q, k, v, beta = (t.float() for t in (q, k, v, beta))
         s0 = initial_state.float()
-        
+
         orig_batch = q.shape[0]
         cache_batch = s0.shape[0]
-        
+
         if orig_batch != cache_batch:
             assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
             flat_len = orig_batch // cache_batch
@@ -382,21 +477,17 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
             v = v.reshape(cache_batch, flat_len, *v.shape[2:])
             beta = beta.reshape(cache_batch, flat_len, *beta.shape[2:])
 
-        # Use FLA's l2norm to match the original kernel's normalization and don't fail tests
         if use_qk_l2norm_in_kernel:
             q = l2norm(q)
             k = l2norm(k)
-        
+
         q = q * scale
-        
+
         if beta.ndim < v.ndim:
             beta = beta.view(*beta.shape, *([1] * (v.ndim - beta.ndim)))
 
         s0k = torch.einsum("bthd,bhdm->bthm", k, s0)
-
-        term1 = torch.einsum("bthd,bhdm->bthm", q, s0)
-
-        o = term1
+        o = torch.einsum("bthd,bhdm->bthm", q, s0)
         if include_self_term:
             qk = (q * k).sum(-1, keepdim=True)
             scaled_qk = qk * beta
@@ -404,14 +495,19 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
 
         if orig_batch != cache_batch:
             o = o.reshape(orig_batch, 1, *o.shape[2:])
-            
+
         return o.to(dtype), None
 
-    original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
-    original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
-    
-    deltanet_layer.fused_recurrent_delta_rule = _stateless_deltanet_kernel
-    deltanet_layer.chunk_delta_rule = _stateless_deltanet_kernel
+    if enabled:
+        deltanet_layer.fused_recurrent_delta_rule = _stateless_deltanet_kernel
+        deltanet_layer.chunk_delta_rule = _stateless_deltanet_kernel
+    else:
+        deltanet_layer.fused_recurrent_delta_rule = _final_state_patch(
+            original_fused_recurrent_delta_rule,
+        )
+        deltanet_layer.chunk_delta_rule = _final_state_patch(
+            original_chunk_delta_rule,
+        )
 
     try:
         yield
@@ -424,11 +520,15 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
 ):
-    if not enabled:
+    if not enabled and not final_state_readout:
         yield
         return
     import fla.layers.gated_deltanet as gated_deltanet_layer
+
+    original_fused = gated_deltanet_layer.fused_recurrent_gated_delta_rule
+    original_chunk = gated_deltanet_layer.chunk_gated_delta_rule
 
     @torch.compiler.disable
     def _stateless_gated_deltanet_kernel(
@@ -525,11 +625,16 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
 
         return o.to(dtype), None
 
-    original_fused = gated_deltanet_layer.fused_recurrent_gated_delta_rule
-    original_chunk = gated_deltanet_layer.chunk_gated_delta_rule
-    
-    gated_deltanet_layer.fused_recurrent_gated_delta_rule = _stateless_gated_deltanet_kernel
-    gated_deltanet_layer.chunk_gated_delta_rule = _stateless_gated_deltanet_kernel
+    if enabled:
+        gated_deltanet_layer.fused_recurrent_gated_delta_rule = _stateless_gated_deltanet_kernel
+        gated_deltanet_layer.chunk_gated_delta_rule = _stateless_gated_deltanet_kernel
+    else:
+        gated_deltanet_layer.fused_recurrent_gated_delta_rule = _final_state_patch(
+            original_fused,
+        )
+        gated_deltanet_layer.chunk_gated_delta_rule = _final_state_patch(
+            original_chunk,
+        )
     try:
         yield
     finally:
@@ -826,12 +931,17 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
     enabled: bool,
     *,
     include_self_term: bool = True,
+    final_state_readout: bool = False,
 ):
     """Patch linear-attention kernels for stateless decode (GLA-style)."""
-    if not enabled:
+    if not enabled and not final_state_readout:
         yield
         return
     import fla.layers.linear_attn as linear_attn_layer
+
+    original_fused_recurrent = linear_attn_layer.fused_recurrent_linear_attn
+    original_chunk = linear_attn_layer.chunk_linear_attn
+    original_fused_chunk = linear_attn_layer.fused_chunk_linear_attn
 
     @torch.compiler.disable
     def _stateless_linear_attn_kernel(
@@ -892,12 +1002,20 @@ def _maybe_patch_linear_attn_with_stateless_recurrent(
 
         return o.to(dtype), None
 
-    original_fused_recurrent = linear_attn_layer.fused_recurrent_linear_attn
-    original_chunk = linear_attn_layer.chunk_linear_attn
-    original_fused_chunk = linear_attn_layer.fused_chunk_linear_attn
-    linear_attn_layer.fused_recurrent_linear_attn = _stateless_linear_attn_kernel
-    linear_attn_layer.chunk_linear_attn = _stateless_linear_attn_kernel
-    linear_attn_layer.fused_chunk_linear_attn = _stateless_linear_attn_kernel
+    if enabled:
+        linear_attn_layer.fused_recurrent_linear_attn = _stateless_linear_attn_kernel
+        linear_attn_layer.chunk_linear_attn = _stateless_linear_attn_kernel
+        linear_attn_layer.fused_chunk_linear_attn = _stateless_linear_attn_kernel
+    else:
+        linear_attn_layer.fused_recurrent_linear_attn = _final_state_patch(
+            original_fused_recurrent,
+        )
+        linear_attn_layer.chunk_linear_attn = _final_state_patch(
+            original_chunk,
+        )
+        linear_attn_layer.fused_chunk_linear_attn = _final_state_patch(
+            original_fused_chunk,
+        )
     try:
         yield
     finally:
