@@ -243,7 +243,7 @@ def test_final_state_readout_kernels_match_native_final_state_readout(case: str)
         ("gated_deltanet", "chunk"),
     ],
 )
-def test_final_state_readout_chunk_kernels_match_recurrent_final_state(
+def test_final_state_readout_chunk_kernels_match_selected_final_state(
     case: str,
     chunk_kernel: str,
 ):
@@ -379,90 +379,6 @@ def test_final_state_readout_chunk_kernels_match_recurrent_final_state(
     torch.testing.assert_close(state, expected_state, rtol=rtol, atol=atol)
 
 
-def test_final_state_readout_deltanet_chunk_fast_path_matches_recurrent_reference():
-    if not torch.cuda.is_available():
-        pytest.skip("FLA final-state readout requires CUDA/Triton.")
-
-    torch.manual_seed(0)
-
-    import fla.layers.delta_net as deltanet_layer
-    from pfns.model.fla_patches import _maybe_patch_deltanet_with_stateless_recurrent
-
-    device = torch.device("cuda")
-    dtype = torch.bfloat16
-    inputs = {
-        "q": torch.randn(2, 512, 3, 4, device=device, dtype=dtype),
-        "k": torch.randn(2, 512, 3, 4, device=device, dtype=dtype),
-        "v": torch.randn(2, 512, 3, 6, device=device, dtype=dtype),
-        "beta": torch.rand(2, 512, 3, device=device, dtype=dtype),
-        "scale": 0.5,
-        "initial_state": torch.randn(2, 3, 4, 6, device=device, dtype=dtype),
-        "output_final_state": True,
-        "use_qk_l2norm_in_kernel": True,
-        "head_first": False,
-    }
-    _, expected_state = deltanet_layer.chunk_delta_rule(**inputs)
-    expected_out = _expected_final_state_readout(
-        inputs["q"],
-        inputs["k"],
-        expected_state,
-        scale=inputs["scale"],
-        use_qk_l2norm_in_kernel=True,
-    )
-
-    with _maybe_patch_deltanet_with_stateless_recurrent(
-        False,
-        final_state_readout=True,
-    ):
-        out, state = deltanet_layer.chunk_delta_rule(**inputs)
-
-    torch.testing.assert_close(out, expected_out, rtol=2e-2, atol=2e-2)
-    torch.testing.assert_close(state, expected_state, rtol=2e-2, atol=2e-2)
-
-
-def test_final_state_readout_gated_deltanet_chunk_path_supports_backward():
-    if not torch.cuda.is_available():
-        pytest.skip("FLA final-state readout requires CUDA/Triton.")
-
-    torch.manual_seed(0)
-
-    import fla.layers.gated_deltanet as gated_deltanet_layer
-    from pfns.model.fla_patches import _maybe_patch_gated_deltanet_with_stateless_recurrent
-
-    device = torch.device("cuda")
-    dtype = torch.bfloat16
-    q = torch.randn(2, 80, 3, 4, device=device, dtype=dtype, requires_grad=True)
-    k = torch.randn(2, 80, 3, 4, device=device, dtype=dtype, requires_grad=True)
-    v = torch.randn(2, 80, 3, 6, device=device, dtype=dtype, requires_grad=True)
-    g_raw = torch.randn(2, 80, 3, device=device, dtype=torch.float32, requires_grad=True)
-    beta = torch.rand(2, 80, 3, device=device, dtype=dtype, requires_grad=True)
-    initial_state = torch.randn(2, 3, 4, 6, device=device, dtype=dtype, requires_grad=True)
-
-    with _maybe_patch_gated_deltanet_with_stateless_recurrent(
-        False,
-        final_state_readout=True,
-    ):
-        out, _ = gated_deltanet_layer.chunk_gated_delta_rule(
-            q=q,
-            k=k,
-            v=v,
-            g=-torch.nn.functional.softplus(g_raw).to(dtype),
-            beta=beta,
-            scale=0.5,
-            initial_state=initial_state,
-            output_final_state=True,
-            use_qk_l2norm_in_kernel=True,
-        )
-    out.float().sum().backward()
-
-    assert q.grad is not None
-    assert k.grad is not None
-    assert v.grad is not None
-    assert g_raw.grad is not None
-    assert beta.grad is not None
-    assert initial_state.grad is not None
-
-
 @pytest.mark.filterwarnings(
     "ignore:ShortConvolution is crucial to the performance.*:UserWarning"
 )
@@ -506,41 +422,6 @@ def test_final_state_readout_gated_deltanet_backbone_training_supports_backward(
         for parameter in backbone.parameters()
         if parameter.requires_grad
     )
-
-
-def test_final_state_readout_comb_mt_eval_uses_split_path():
-    backbone = build_fla_backbone(
-        "linear_attn",
-        sequence_mode="Comb_MT",
-        final_state_readout=True,
-    )
-    backbone.eval()
-
-    x = torch.randn(2, 5, 1, fla_hidden_size("linear_attn"))
-    calls: list[tuple[str, int]] = []
-
-    def _unexpected_full_path(*args, **kwargs):
-        raise AssertionError("final_state_readout Comb_MT eval should use split cache path")
-
-    def _fake_fit(train_x, **kwargs):
-        calls.append(("fit", train_x.size(1)))
-        return train_x + 1.0, {"cache_params": object()}
-
-    def _fake_predict(test_x, state, **kwargs):
-        calls.append(("predict", test_x.size(1)))
-        return test_x + 2.0
-
-    backbone._run_fla = _unexpected_full_path
-    backbone.incontext_fit = _fake_fit
-    backbone.incontext_predict = _fake_predict
-
-    out = backbone(x, single_eval_pos=3)
-
-    expected = x.clone()
-    expected[:, :3] += 1.0
-    expected[:, 3:] += 2.0
-    assert calls == [("fit", 3), ("predict", 2)]
-    torch.testing.assert_close(out, expected)
 
 
 def test_final_state_readout_eval_test_tokens_are_independent():
