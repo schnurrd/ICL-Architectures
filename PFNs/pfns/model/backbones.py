@@ -1033,8 +1033,11 @@ class BidirectionalFLABackbone(FLABackbone):
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
         include_self_term: bool = True,
+        final_state_readout: bool = False,
         state_fusion: str = "mean_output_mean_cache",
     ):
+        if final_state_readout:
+            raise ValueError("BidirectionalFLABackbone does not support final_state_readout.")
         super().__init__(
             fla_model=fla_model,
             sequence_mode=sequence_mode,
@@ -1042,6 +1045,7 @@ class BidirectionalFLABackbone(FLABackbone):
             state_passing=state_passing,
             state_passing_dropout=state_passing_dropout,
             include_self_term=include_self_term,
+            final_state_readout=False,
         )
         self.state_fusion = state_fusion
 
