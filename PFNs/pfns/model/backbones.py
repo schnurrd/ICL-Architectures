@@ -384,6 +384,10 @@ class FLABackboneConfig(BackboneConfig):
     state_weaving: bool = False
     include_self_term: bool = True
     final_state_readout: bool = False
+    state_renormalization: str | None = None
+    learnable_state_renorm_scale: bool = True
+    state_renormalization_target_norm: float | None = None
+    state_renormalization_eps: float = 1e-6
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_init_mode: MimeticInitMode = "gate_only"
@@ -436,6 +440,31 @@ class FLABackboneConfig(BackboneConfig):
                 raise ValueError("final_state_readout does not support bidirectional FLA.")
             if self.state_weaving:
                 raise ValueError("final_state_readout does not support state_weaving.")
+        if self.state_renormalization not in {None, "none"}:
+            if self.state_renormalization != "sqrt_d_fro":
+                raise ValueError(
+                    "FLA state_renormalization currently supports only "
+                    f"'sqrt_d_fro', got {self.state_renormalization!r}."
+                )
+            if not self.final_state_readout:
+                raise ValueError(
+                    "FLA state_renormalization is only supported when "
+                    "final_state_readout=True."
+                )
+            if self.model_type != "deltanet":
+                raise ValueError(
+                    "FLA state_renormalization is currently implemented only "
+                    "for model_type='deltanet'."
+                )
+            if self.bidirectional:
+                raise ValueError("state_renormalization does not support bidirectional FLA.")
+        if (
+            self.state_renormalization_target_norm is not None
+            and self.state_renormalization_target_norm <= 0
+        ):
+            raise ValueError("state_renormalization_target_norm must be > 0.")
+        if self.state_renormalization_eps <= 0:
+            raise ValueError("state_renormalization_eps must be > 0.")
         if self.state_weaving:
             if self.sequence_mode != "Comb_ST":
                 raise ValueError("state_weaving currently supports only sequence_mode='Comb_ST'.")
@@ -492,6 +521,16 @@ class FLABackboneConfig(BackboneConfig):
         else:
             backbone_kwargs["state_weaving"] = self.state_weaving
             backbone_kwargs["final_state_readout"] = self.final_state_readout
+            backbone_kwargs["state_renormalization"] = self.state_renormalization
+            backbone_kwargs["learnable_state_renorm_scale"] = (
+                self.learnable_state_renorm_scale
+            )
+            backbone_kwargs["state_renormalization_target_norm"] = (
+                self.state_renormalization_target_norm
+            )
+            backbone_kwargs["state_renormalization_eps"] = (
+                self.state_renormalization_eps
+            )
 
         return backbone_cls(**backbone_kwargs)
 
@@ -519,6 +558,10 @@ class FLABackbone(Backbone):
         state_weaving: bool = False,
         include_self_term: bool = True,
         final_state_readout: bool = False,
+        state_renormalization: str | None = None,
+        learnable_state_renorm_scale: bool = True,
+        state_renormalization_target_norm: float | None = None,
+        state_renormalization_eps: float = 1e-6,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
@@ -530,6 +573,24 @@ class FLABackbone(Backbone):
         self.include_self_term = bool(include_self_term)
         self.final_state_readout = bool(final_state_readout)
         self.state_weaving = bool(state_weaving)
+        self.state_renormalization = state_renormalization
+        self.state_renormalization_target_norm = state_renormalization_target_norm
+        self.state_renormalization_eps = float(state_renormalization_eps)
+        if state_renormalization not in {None, "none"}:
+            layers = _get_fla_layers(self.fla)
+            if len(layers) == 0:
+                raise ValueError("Cannot configure state renormalization without FLA layers.")
+            for layer in layers:
+                attn = getattr(layer, "attn", None)
+                num_heads = getattr(attn, "num_heads", None)
+                if num_heads is None:
+                    raise ValueError("Cannot infer FLA num_heads for state renormalization.")
+                log_scale = torch.zeros(int(num_heads))
+                attn.state_renormalization = state_renormalization
+                if learnable_state_renorm_scale:
+                    attn.state_renorm_log_scale = nn.Parameter(log_scale)
+                else:
+                    attn.register_buffer("state_renorm_log_scale", log_scale)
         self.state_passing = (
             FLAStatePassing(dropout_prob=state_passing_dropout)
             if state_passing
@@ -894,6 +955,14 @@ class FLABackbone(Backbone):
                 extra_kwargs: dict[str, tp.Any] = {}
                 if supports_final_state_readout:
                     extra_kwargs["final_state_readout"] = final_state_readout_active
+                if model_type is DeltaNetModel and final_state_readout_active:
+                    extra_kwargs["state_renormalization"] = self.state_renormalization
+                    extra_kwargs["state_renormalization_target_norm"] = (
+                        self.state_renormalization_target_norm
+                    )
+                    extra_kwargs["state_renormalization_eps"] = (
+                        self.state_renormalization_eps
+                    )
                 contexts.append(
                     ctx_factory(
                         use_custom_recurrent,

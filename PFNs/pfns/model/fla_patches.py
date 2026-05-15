@@ -10,6 +10,8 @@ import torch.nn.functional as F
 
 from fla.modules.l2norm import l2norm
 
+from pfns.model.attention_utils import renormalize_state_frobenius
+
 
 def _read_kv_state(query: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
     if query.ndim == 5:
@@ -419,6 +421,7 @@ def _read_from_final_kv_state(
 @torch.compiler.disable
 def _final_state_readout_kv_kernel(
     original_kernel: tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]],
+    state_transform: tp.Callable[[torch.Tensor], torch.Tensor] | None = None,
     **kwargs: tp.Any,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     q, k = kwargs["q"], kwargs["k"]
@@ -457,6 +460,8 @@ def _final_state_readout_kv_kernel(
         "final_state_readout requires the underlying FLA kernel to "
         "return a final recurrent state."
     )
+    if state_transform is not None:
+        recurrent_state = state_transform(recurrent_state)
 
     return _read_from_final_kv_state(
         q,
@@ -469,10 +474,13 @@ def _final_state_readout_kv_kernel(
 
 def _final_state_patch(
     original_kernel: tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]],
+    *,
+    state_transform: tp.Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]]:
     return partial(
         _final_state_readout_kv_kernel,
         original_kernel,
+        state_transform,
     )
 
 
@@ -502,7 +510,17 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
     *,
     include_self_term: bool = True,
     final_state_readout: bool = False,
+    state_renormalization: str | None = None,
+    state_renorm_head_scale: torch.Tensor | None = None,
+    state_renormalization_target_norm: float | None = None,
+    state_renormalization_eps: float = 1e-6,
 ):
+    use_state_renorm = state_renormalization not in {None, "none"}
+    if use_state_renorm and not final_state_readout:
+        raise ValueError(
+            "DeltaNet state_renormalization is only supported with "
+            "final_state_readout=True."
+        )
     if not enabled and not final_state_readout:
         yield
         return
@@ -510,6 +528,36 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
 
     original_fused_recurrent_delta_rule = deltanet_layer.fused_recurrent_delta_rule
     original_chunk_delta_rule = deltanet_layer.chunk_delta_rule
+    original_forward = deltanet_layer.DeltaNet.forward
+    active_state_renorm_head_scale = state_renorm_head_scale
+    if state_renorm_head_scale is not None and state_renorm_head_scale.ndim != 1:
+        raise ValueError("state_renorm_head_scale must have shape (heads,).")
+
+    def _renormalize_delta_state(state: torch.Tensor) -> torch.Tensor:
+        if state_renormalization in {None, "none"}:
+            return state
+        return renormalize_state_frobenius(
+            state,
+            mode=state_renormalization,
+            target_norm=state_renormalization_target_norm,
+            head_scale=active_state_renorm_head_scale,
+            eps=state_renormalization_eps,
+        )
+
+    def _forward_with_state_renorm_scale(
+        self,
+        *args: tp.Any,
+        **kwargs: tp.Any,
+    ) -> tp.Any:
+        nonlocal active_state_renorm_head_scale
+        previous_scale = active_state_renorm_head_scale
+        log_scale = getattr(self, "state_renorm_log_scale", None)
+        if log_scale is not None:
+            active_state_renorm_head_scale = log_scale.exp()
+        try:
+            return original_forward(self, *args, **kwargs)
+        finally:
+            active_state_renorm_head_scale = previous_scale
 
     @torch.compiler.disable
     def _stateless_deltanet_kernel(
@@ -556,9 +604,10 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
                 k = l2norm(k)
 
         if final_state_readout:
+            state = _renormalize_delta_state(s0) if use_state_renorm else s0
             return _read_from_final_kv_state(
                 q,
-                s0,
+                state,
                 scale=scale,
                 output_final_state=False,
                 flatten_batch=orig_batch if orig_batch != cache_batch else None,
@@ -587,18 +636,24 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
         deltanet_layer.fused_recurrent_delta_rule = _stateless_deltanet_kernel
         deltanet_layer.chunk_delta_rule = _stateless_deltanet_kernel
     else:
+        state_transform = _renormalize_delta_state if use_state_renorm else None
         deltanet_layer.fused_recurrent_delta_rule = _final_state_patch(
             original_fused_recurrent_delta_rule,
+            state_transform=state_transform,
         )
         deltanet_layer.chunk_delta_rule = _final_state_patch(
             original_chunk_delta_rule,
+            state_transform=state_transform,
         )
+    if use_state_renorm:
+        deltanet_layer.DeltaNet.forward = _forward_with_state_renorm_scale
 
     try:
         yield
     finally:
         deltanet_layer.fused_recurrent_delta_rule = original_fused_recurrent_delta_rule
         deltanet_layer.chunk_delta_rule = original_chunk_delta_rule
+        deltanet_layer.DeltaNet.forward = original_forward
 
 @contextmanager
 def _maybe_patch_gated_deltanet_with_stateless_recurrent(

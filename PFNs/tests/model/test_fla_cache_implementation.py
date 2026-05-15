@@ -379,6 +379,80 @@ def test_final_state_readout_chunk_kernels_match_selected_final_state(
     torch.testing.assert_close(state, expected_state, rtol=rtol, atol=atol)
 
 
+def test_deltanet_final_state_readout_applies_frobenius_state_renormalization():
+    import fla.layers.delta_net as deltanet_layer
+    from pfns.model.attention_utils import renormalize_state_frobenius
+    from pfns.model.fla_patches import _maybe_patch_deltanet_with_stateless_recurrent
+
+    torch.manual_seed(0)
+    q = torch.randn(2, 1, 3, 4)
+    k = torch.randn(2, 1, 3, 4)
+    v = torch.randn(2, 1, 3, 6)
+    beta = torch.rand(2, 1, 3)
+    initial_state = torch.randn(2, 3, 4, 6)
+    head_scale = torch.tensor([1.0, 0.5, 2.0])
+    scale = 0.7
+
+    with _maybe_patch_deltanet_with_stateless_recurrent(
+        True,
+        final_state_readout=True,
+        state_renormalization="sqrt_d_fro",
+        state_renorm_head_scale=head_scale,
+    ):
+        out, state = deltanet_layer.fused_recurrent_delta_rule(
+            q=q,
+            k=k,
+            v=v,
+            beta=beta,
+            scale=scale,
+            initial_state=initial_state,
+            output_final_state=False,
+            use_qk_l2norm_in_kernel=False,
+        )
+
+    q_scaled = q.float() * scale
+    state_float = initial_state.float()
+    expected_state = renormalize_state_frobenius(
+        state_float,
+        mode="sqrt_d_fro",
+        head_scale=head_scale,
+        eps=1e-6,
+    )
+    expected = torch.einsum("bthk,bhkv->bthv", q_scaled, expected_state)
+
+    assert state is None
+    torch.testing.assert_close(out, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_deltanet_backbone_state_renorm_scale_is_layer_local():
+    from pfns.model.backbones import FLABackboneConfig
+
+    kwargs = fla_model_config_kwargs("deltanet", size="small")
+    backbone = FLABackboneConfig(
+        model_type="deltanet",
+        config_kwargs=kwargs,
+        final_state_readout=True,
+        state_renormalization="sqrt_d_fro",
+    ).create_backbone(ninp=int(kwargs["hidden_size"]), attention_between_features=False)
+
+    for layer in backbone.layers:
+        assert layer.attn.state_renormalization == "sqrt_d_fro"
+        assert tuple(layer.attn.state_renorm_log_scale.shape) == (
+            int(layer.attn.num_heads),
+        )
+
+
+def test_deltanet_state_renorm_requires_final_state_readout():
+    from pfns.model.backbones import FLABackboneConfig
+
+    with pytest.raises(ValueError, match="final_state_readout=True"):
+        FLABackboneConfig(
+            model_type="deltanet",
+            config_kwargs=fla_model_config_kwargs("deltanet", size="small"),
+            state_renormalization="sqrt_d_fro",
+        )
+
+
 @pytest.mark.filterwarnings(
     "ignore:ShortConvolution is crucial to the performance.*:UserWarning"
 )

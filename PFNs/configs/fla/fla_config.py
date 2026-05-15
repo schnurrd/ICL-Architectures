@@ -231,6 +231,10 @@ def get_config(
     state_weaving: bool = False,
     include_self_term: bool = True,
     final_state_readout: bool = False,
+    state_renormalization: str | None = None,
+    learnable_state_renorm_scale: bool = True,
+    state_renormalization_target_norm: float | None = None,
+    state_renormalization_eps: float = 1e-6,
     task_variant: str = "tabular_prior",
     # Training
     training_setup: str = "high",
@@ -258,6 +262,7 @@ def get_config(
     feature_positional_embedding = normalize_optional_none_string(
         feature_positional_embedding
     )
+    state_renormalization = normalize_optional_none_string(state_renormalization)
     model_type = _normalize_model_type(model_type)
     sequence_mode = resolve_sequence_mode(sequence_mode)
     training_setup = training_setup.strip().lower()
@@ -388,6 +393,10 @@ def get_config(
         "state_weaving": bool(state_weaving),
         "include_self_term": resolved_include_self_term,
         "final_state_readout": resolved_final_state_readout,
+        "state_renormalization": state_renormalization,
+        "learnable_state_renorm_scale": bool(learnable_state_renorm_scale),
+        "state_renormalization_target_norm": state_renormalization_target_norm,
+        "state_renormalization_eps": float(state_renormalization_eps),
         "mimetic_init": mimetic_init,
         "mimetic_init_mode": mimetic_init_mode,
         "mimetic_init_layer_indices": mimetic_init_layer_indices,
@@ -448,6 +457,17 @@ def get_config(
         f"spd{state_passing_dropout:g}" if state_passing and state_passing_dropout != 0.1 else None,
         "sw" if state_weaving else None,
         "finalstate" if resolved_final_state_readout else None,
+        f"staterenorm_{state_renormalization}" if state_renormalization else None,
+        (
+            "fixedstaterenorm"
+            if state_renormalization and not learnable_state_renorm_scale
+            else None
+        ),
+        (
+            f"staterenormtarget{state_renormalization_target_norm:g}"
+            if state_renormalization_target_norm is not None
+            else None
+        ),
         f"lr{resolved_lr:g}" if lr else None,
         f"agg{resolved_aggregate_k}" if aggregate_k_gradients else None,
         f"steps{resolved_steps_per_epoch}" if steps_per_epoch else None,
@@ -477,6 +497,8 @@ def get_config(
     ]
     if resolved_final_state_readout:
         wandb_tags.append("final_state_readout")
+    if state_renormalization:
+        wandb_tags.append(f"state_renormalization_{state_renormalization}")
     wandb_config = WandbConfig(
         entity="icl_arch",
         project=(
