@@ -137,6 +137,49 @@ def test_deltanet_beta_decay_scales_late_positions():
         expected_inverse.sqrt().expand_as(beta),
     )
 
+    sqrt_length_inverse = _apply_deltanet_beta_decay(
+        beta,
+        mode="sqrt_length_inverse",
+        t0=2,
+    )
+    expected_length_scale = torch.full_like(beta, (2 / 5) ** 0.5)
+    torch.testing.assert_close(sqrt_length_inverse, expected_length_scale)
+
+    offset_sqrt_length_inverse = _apply_deltanet_beta_decay(
+        beta,
+        mode="sqrt_length_inverse",
+        t0=8,
+        start_position=7,
+    )
+    expected_offset_length_scale = torch.full_like(beta, (8 / 12) ** 0.5)
+    torch.testing.assert_close(offset_sqrt_length_inverse, expected_offset_length_scale)
+
+    online_inverse = _apply_deltanet_beta_decay(beta, mode="online_inverse", t0=2)
+    expected_online = torch.tensor([1.0, 2 / 3, 0.5, 0.4, 2 / 6]).view(1, 5, 1)
+    torch.testing.assert_close(online_inverse, expected_online.expand_as(beta))
+
+    offset_online_inverse = _apply_deltanet_beta_decay(
+        beta,
+        mode="online_inverse",
+        t0=2,
+        start_position=3,
+    )
+    expected_offset_online = torch.tensor(
+        [2 / 5, 2 / 6, 2 / 7, 0.25, 2 / 9]
+    ).view(1, 5, 1)
+    torch.testing.assert_close(
+        offset_online_inverse,
+        expected_offset_online.expand_as(beta),
+    )
+
+    online_sqrt_inverse = _apply_deltanet_beta_decay(
+        beta, mode="online_sqrt_inverse", t0=2
+    )
+    torch.testing.assert_close(
+        online_sqrt_inverse,
+        expected_online.sqrt().expand_as(beta),
+    )
+
 
 def test_deltanet_beta_decay_validates_backbone_config():
     from pfns.model.backbones import FLABackboneConfig

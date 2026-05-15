@@ -11,7 +11,16 @@ import torch.nn.functional as F
 from fla.modules.l2norm import l2norm
 
 
-DELTANET_BETA_DECAY_MODES = frozenset({"none", "inverse", "sqrt_inverse"})
+DELTANET_BETA_DECAY_MODES = frozenset(
+    {
+        "none",
+        "inverse",
+        "sqrt_inverse",
+        "sqrt_length_inverse",
+        "online_inverse",
+        "online_sqrt_inverse",
+    }
+)
 
 
 def _read_kv_state(query: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
@@ -51,6 +60,24 @@ def _apply_deltanet_beta_decay(
         raise ValueError(
             f"deltanet beta decay start_position must be >= 0, got {start_position}."
         )
+    if mode == "sqrt_length_inverse":
+        total_length = start_position + seq_len
+        decay = (float(t0) / max(total_length, t0)) ** 0.5
+        return beta * beta.new_tensor(decay)
+    if mode in {"online_inverse", "online_sqrt_inverse"}:
+        positions = torch.arange(
+            start_position,
+            start_position + seq_len,
+            device=beta.device,
+            dtype=torch.float32,
+        )
+        decay = float(t0) / (float(t0) + positions)
+        if mode == "online_sqrt_inverse":
+            decay = decay.sqrt()
+        shape = [1] * beta.ndim
+        shape[position_dim] = seq_len
+        return beta * decay.to(beta.dtype).view(shape)
+
     positions = torch.arange(
         start_position + 1,
         start_position + seq_len + 1,

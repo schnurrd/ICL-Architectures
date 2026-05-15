@@ -385,7 +385,14 @@ class FLABackboneConfig(BackboneConfig):
     state_weaving: bool = False
     include_self_term: bool = True
     final_state_readout: bool = False
-    deltanet_beta_decay: tp.Literal["none", "inverse", "sqrt_inverse"] = "none"
+    deltanet_beta_decay: tp.Literal[
+        "none",
+        "inverse",
+        "sqrt_inverse",
+        "sqrt_length_inverse",
+        "online_inverse",
+        "online_sqrt_inverse",
+    ] = "none"
     deltanet_beta_decay_t0: int = 1000
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
