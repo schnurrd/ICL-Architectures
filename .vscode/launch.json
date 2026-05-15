@@ -47,7 +47,7 @@
                 "--config-arg", "model_type='deltanet'",
                 "--config-arg", "sequence_mode='comb_st'",
                 //"--config-arg", "interleaved_pair_positional_embedding='sinusoidal'" 
-                "--config-arg", "bidirectional=True",
+                // "--config-arg", "bidirectional=True",
                 // "--config-arg", "bidirectional_test_time=True",
                 // "--config-arg", "mimetic_init=True",
                 // "--config-arg", "sequence_mode='cached'",
@@ -55,6 +55,7 @@
                 // "--config-arg", "training_setup='low'",
                 // "--config-arg", "batch_size=2",
                 // "--config-index", "-1"
+                "--config-arg", "final_state_readout=True",
             ],
             "justMyCode": false
         },

@@ -868,6 +868,13 @@ ORACLE_HIDDEN_STATE_MODELS: dict[str, dict[str, Any]] = {
     # },
 }
 
+NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
+    "Non_Causal_DeltaNet": { 
+        "display_name": "Non-Causal DeltaNet (Comb ST)",
+        "wandb_run_id": "icl_arch/fla_models/dj7xmlsb",
+    },
+}
+
 OTHER_MODELS: dict[str, dict[str, Any]] = {}
 
 BASELINE_MODEL_NAMES: tuple[str, ...] = (
@@ -914,6 +921,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
         #**GATED_DELTANET_MODELS_SEQ_LEN_CHANGES,
         #**DELTANET_MODELS_SIZE_CHANGES,
     },
+    "non_causal_fla": NON_CAUSAL_FLA_MODELS,
     "other": OTHER_MODELS,
 }
 

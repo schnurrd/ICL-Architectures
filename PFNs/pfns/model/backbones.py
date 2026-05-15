@@ -95,6 +95,10 @@ FINAL_STATE_READOUT_FLA_MODELS = {
     "deltanet",
     "gated_deltanet",
 }
+FINAL_STATE_READOUT_FLA_MODEL_CLASSES = {
+    FLA_MODEL_REGISTRY[model_type][1]
+    for model_type in FINAL_STATE_READOUT_FLA_MODELS
+}
 
 
 class Backbone(nn.Module, ABC):
@@ -488,6 +492,7 @@ class FLABackboneConfig(BackboneConfig):
             backbone_kwargs["state_fusion"] = self.bidirectional_state_fusion
         else:
             backbone_kwargs["state_weaving"] = self.state_weaving
+            backbone_kwargs["final_state_readout"] = self.final_state_readout
 
         return backbone_cls(**backbone_kwargs)
 
@@ -652,6 +657,30 @@ class FLABackbone(Backbone):
             .transpose(1, 2)
         )
 
+    @staticmethod
+    def _unpack_fla_output(
+        out: tp.Any,
+        *,
+        return_cache: bool,
+        model_name: str = "FLA model",
+    ) -> tuple[torch.Tensor, tp.Any | None]:
+        if hasattr(out, "last_hidden_state"):
+            last_hidden_state = out.last_hidden_state
+        elif isinstance(out, (tuple, list)) and len(out) > 0:
+            last_hidden_state = out[0]
+        else:
+            raise RuntimeError(f"{model_name} output does not contain last_hidden_state.")
+
+        cache_params = None
+        if return_cache:
+            if hasattr(out, "past_key_values"):
+                cache_params = out.past_key_values
+            elif isinstance(out, (tuple, list)) and len(out) > 1:
+                cache_params = out[1]
+            else:
+                raise RuntimeError(f"{model_name} output does not contain past_key_values.")
+        return last_hidden_state, cache_params
+
     def incontext_fit(
         self,
         train_x: torch.Tensor,
@@ -793,18 +822,7 @@ class FLABackbone(Backbone):
                 "FLA model does not support cache usage; required for independent evaluation."
             ) from exc
 
-        if hasattr(out, "last_hidden_state"):
-            last_hidden_state = out.last_hidden_state
-        else:
-            raise RuntimeError("FLA model output does not contain last_hidden_state.")
-
-        cache_params = None
-        if return_cache:
-            if hasattr(out, "past_key_values"):
-                cache_params = out.past_key_values
-            else:
-                raise RuntimeError("FLA model output does not contain past_key_values.")
-        return last_hidden_state, cache_params
+        return self._unpack_fla_output(out, return_cache=return_cache)
 
     def _run_mesanet_with_initial_cache(
         self,
@@ -826,12 +844,12 @@ class FLABackbone(Backbone):
                 use_cache=True,
                 return_dict=True,
             )
-            if not hasattr(out, "last_hidden_state") or not hasattr(out, "past_key_values"):
-                raise RuntimeError(
-                    "MesaNet output does not contain last_hidden_state and past_key_values."
-                )
-            outputs.append(out.last_hidden_state.transpose(0, 1))
-            current_cache = out.past_key_values
+            last_hidden_state, current_cache = self._unpack_fla_output(
+                out,
+                return_cache=True,
+                model_name="MesaNet",
+            )
+            outputs.append(last_hidden_state.transpose(0, 1))
 
         return torch.cat(outputs, dim=1), (current_cache if return_cache else None)
 
@@ -865,21 +883,18 @@ class FLABackbone(Backbone):
         )
         for model_type, ctx_factory in patch_registry:
             if isinstance(model, model_type):
-                supports_final_state_readout = model_type in {
-                    LinearAttentionModel,
-                    GLAModel,
-                    KDAModel,
-                    DeltaNetModel,
-                    GatedDeltaNetModel,
-                }
-                include_self_term = self.include_self_term and not (
+                supports_final_state_readout = (
+                    model_type in FINAL_STATE_READOUT_FLA_MODEL_CLASSES
+                )
+                final_state_readout_active = (
                     self.final_state_readout and supports_final_state_readout
                 )
+                # Native and custom cached final-state readout both use a pure
+                # q @ state projection, so token-local update terms are skipped.
+                include_self_term = self.include_self_term and not final_state_readout_active
                 extra_kwargs: dict[str, tp.Any] = {}
                 if supports_final_state_readout:
-                    extra_kwargs["final_state_readout"] = (
-                        self.final_state_readout and not use_custom_recurrent
-                    )
+                    extra_kwargs["final_state_readout"] = final_state_readout_active
                 contexts.append(
                     ctx_factory(
                         use_custom_recurrent,
@@ -1018,7 +1033,8 @@ class FLABackbone(Backbone):
         if initial_cache_params is not None and isinstance(self.fla, DeltaNetModel):
             initial_cache_params = prepare_deltanet_cache_for_fla(initial_cache_params)
 
-        if self.sequence_mode in FLA_SPLIT_SEQUENCE_MODES or not self.training:
+        use_split_path = self.sequence_mode in FLA_SPLIT_SEQUENCE_MODES or not self.training
+        if use_split_path:
             train_out, state = self.incontext_fit(
                 x_batched[:, :train_len],
                 initial_cache_params=initial_cache_params,
