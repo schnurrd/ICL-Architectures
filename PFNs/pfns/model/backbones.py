@@ -585,7 +585,11 @@ class FLABackbone(Backbone):
                 num_heads = getattr(attn, "num_heads", None)
                 if num_heads is None:
                     raise ValueError("Cannot infer FLA num_heads for state renormalization.")
-                log_scale = torch.zeros(int(num_heads))
+                first_param = next(attn.parameters(), None)
+                log_scale_kwargs = {}
+                if first_param is not None:
+                    log_scale_kwargs["device"] = first_param.device
+                log_scale = torch.zeros(int(num_heads), **log_scale_kwargs)
                 attn.state_renormalization = state_renormalization
                 if learnable_state_renorm_scale:
                     attn.state_renorm_log_scale = nn.Parameter(log_scale)

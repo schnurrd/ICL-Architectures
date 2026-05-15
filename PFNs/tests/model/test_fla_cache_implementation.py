@@ -437,6 +437,9 @@ def test_deltanet_backbone_state_renorm_scale_is_layer_local():
 
     for layer in backbone.layers:
         assert layer.attn.state_renormalization == "sqrt_d_fro"
+        first_param = next(layer.attn.parameters(), None)
+        assert first_param is not None
+        assert layer.attn.state_renorm_log_scale.device == first_param.device
         assert tuple(layer.attn.state_renorm_log_scale.shape) == (
             int(layer.attn.num_heads),
         )
