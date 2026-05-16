@@ -333,6 +333,8 @@ class LinearAttention(nn.Module):
         self,
         k: torch.Tensor,
         v: torch.Tensor,
+        *,
+        use_normal_equations: bool = False,
     ) -> torch.Tensor:
         """Return the ridgeless minimum-norm linear least-squares memory."""
         if k.shape[1] == 0:
@@ -351,7 +353,15 @@ class LinearAttention(nn.Module):
         with autocast_context:
             k_bh = k.transpose(1, 2).to(compute_dtype)
             v_bh = v.transpose(1, 2).to(compute_dtype)
-            state = torch.matmul(torch.linalg.pinv(k_bh), v_bh)
+            state = None
+            if use_normal_equations and k.shape[1] >= k.shape[-1]:
+                gram = torch.matmul(k_bh.transpose(-1, -2), k_bh)
+                cross = torch.matmul(k_bh.transpose(-1, -2), v_bh)
+                chol, info = torch.linalg.cholesky_ex(gram, check_errors=False)
+                if bool(torch.all(info == 0)):
+                    state = torch.cholesky_solve(cross, chol)
+            if state is None:
+                state = torch.matmul(torch.linalg.pinv(k_bh), v_bh)
         return state.to(v.dtype)
 
     def _ridge_state(
@@ -388,10 +398,16 @@ class LinearAttention(nn.Module):
         self,
         k: torch.Tensor,
         v: torch.Tensor,
+        *,
+        use_normal_equations: bool = False,
     ) -> torch.Tensor:
         if self.state_update_rule == "ridge":
             return self._ridge_state(k, v)
-        return self._least_squares_state(k, v)
+        return self._least_squares_state(
+            k,
+            v,
+            use_normal_equations=use_normal_equations,
+        )
 
     def _least_squares_causal_attention(
         self,
@@ -436,10 +452,6 @@ class LinearAttention(nn.Module):
             else nullcontext()
         )
         with autocast_context:
-            q_compute = q.to(compute_dtype)
-            k_compute = k.to(compute_dtype)
-            v_compute = v.to(compute_dtype)
-
             batch_size, _, num_heads, qk_dim = k.shape
             value_dim = v.shape[-1]
             eye = torch.eye(qk_dim, dtype=compute_dtype, device=k.device)
@@ -456,8 +468,9 @@ class LinearAttention(nn.Module):
             outputs = []
             state = cross
             for t in range(k.shape[1]):
-                k_t = k_compute[:, t]
-                v_t = v_compute[:, t]
+                q_t = q[:, t].to(compute_dtype)
+                k_t = k[:, t].to(compute_dtype)
+                v_t = v[:, t].to(compute_dtype)
                 precision_k = torch.einsum("bhfg,bhg->bhf", precision, k_t)
                 denom = 1.0 + torch.einsum("bhf,bhf->bh", k_t, precision_k)
                 precision = precision - torch.einsum(
@@ -466,10 +479,12 @@ class LinearAttention(nn.Module):
                 cross = cross + torch.einsum("bhf,bhd->bhfd", k_t, v_t)
                 state = torch.einsum("bhfg,bhgd->bhfd", precision, cross)
                 outputs.append(
-                    torch.einsum("bhf,bhfd->bhd", q_compute[:, t], state).unsqueeze(1)
+                    torch.einsum("bhf,bhfd->bhd", q_t, state)
+                    .to(v.dtype)
+                    .unsqueeze(1)
                 )
 
-        return torch.cat(outputs, dim=1).to(v.dtype), state.to(v.dtype)
+        return torch.cat(outputs, dim=1), state.to(v.dtype)
 
     def _noncausal_attention(
         self,
@@ -479,7 +494,11 @@ class LinearAttention(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         q, k = self._apply_query_key_feature_maps(q, k)
         if self.state_update_rule != "linear":
-            kv_state = self._oracle_state(k, v)
+            kv_state = self._oracle_state(
+                k,
+                v,
+                use_normal_equations=self.state_update_rule == "least_squares",
+            )
             return self._read_from_kv_state(q, kv_state, None), kv_state, None
         # k: (batch_times_features, seq, heads, qk_dim)
         # v: (batch_times_features, seq, heads, v_dim)
