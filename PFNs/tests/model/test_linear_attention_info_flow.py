@@ -33,6 +33,15 @@ def _least_squares_state(k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     )
 
 
+def _ridge_state(k: torch.Tensor, v: torch.Tensor, ridge_lambda: float) -> torch.Tensor:
+    k_bh = k.transpose(1, 2)
+    v_bh = v.transpose(1, 2)
+    gram = torch.matmul(k_bh.transpose(-1, -2), k_bh)
+    cross = torch.matmul(k_bh.transpose(-1, -2), v_bh)
+    eye = torch.eye(k.shape[-1], dtype=k.dtype, device=k.device)
+    return torch.linalg.solve(gram + ridge_lambda * eye, cross)
+
+
 def _run_test_token_permutation_case(
     layer: LinearAttention,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -163,7 +172,83 @@ def test_linear_attention_least_squares_matches_noncausal_solution():
     assert k_sum is None
 
 
-@pytest.mark.parametrize("state_update_rule", ["least_squares", "rls"])
+def test_linear_attention_ridge_matches_noncausal_solution():
+    torch.manual_seed(0)
+    layer = _build_layer(
+        feature_map="identity",
+        use_query_scale=False,
+        use_k_sum_normalization=False,
+        state_update_rule="ridge",
+        ridge_lambda=0.7,
+    )
+    layer.eval()
+
+    q = torch.randn(2, 5, 2, 4)
+    k = torch.randn(2, 5, 2, 4)
+    v = torch.randn(2, 5, 2, 3)
+
+    with torch.no_grad():
+        attn, state, k_sum = layer._noncausal_attention(q, k, v)
+
+    expected_state = _ridge_state(k, v, layer.ridge_lambda)
+    expected_attn = torch.einsum("bshf,bhfd->bshd", q, expected_state)
+
+    torch.testing.assert_close(attn, expected_attn, rtol=2e-5, atol=2e-6)
+    torch.testing.assert_close(state, expected_state, rtol=2e-5, atol=2e-6)
+    assert k_sum is None
+
+
+def test_linear_attention_ridge_state_uses_fp32_linalg_under_autocast():
+    torch.manual_seed(0)
+    layer = _build_layer(
+        feature_map="identity",
+        use_query_scale=False,
+        use_k_sum_normalization=False,
+        state_update_rule="ridge",
+        ridge_lambda=100.0,
+    )
+    layer.eval()
+
+    k = torch.randn(2, 5, 2, 4).bfloat16()
+    v = torch.randn(2, 5, 2, 3).bfloat16()
+
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        state = layer._ridge_state(k, v)
+
+    assert state.dtype == v.dtype
+
+
+def test_linear_attention_ridge_matches_prefix_solution():
+    torch.manual_seed(0)
+    layer = _build_layer(
+        causal=True,
+        feature_map="identity",
+        use_query_scale=False,
+        use_k_sum_normalization=False,
+        state_update_rule="ridge",
+        ridge_lambda=0.7,
+    )
+    layer.eval()
+
+    q = torch.randn(2, 5, 2, 4)
+    k = torch.randn(2, 5, 2, 4)
+    v = torch.randn(2, 5, 2, 3)
+
+    with torch.no_grad():
+        attn, state, _ = layer._causal_attention(q, k, v)
+
+    expected = []
+    for t in range(k.shape[1]):
+        expected_state_t = _ridge_state(k[:, : t + 1], v[:, : t + 1], layer.ridge_lambda)
+        expected.append(torch.einsum("bhf,bhfd->bhd", q[:, t], expected_state_t).unsqueeze(1))
+
+    expected_state = _ridge_state(k, v, layer.ridge_lambda)
+
+    torch.testing.assert_close(attn, torch.cat(expected, dim=1), rtol=2e-5, atol=2e-6)
+    torch.testing.assert_close(state, expected_state, rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("state_update_rule", ["least_squares", "ridge", "rls"])
 def test_linear_attention_oracle_update_incontext_predict_matches_forward(state_update_rule: str):
     torch.manual_seed(0)
     layer = _build_layer(

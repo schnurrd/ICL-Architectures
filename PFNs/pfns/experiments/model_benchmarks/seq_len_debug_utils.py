@@ -55,6 +55,8 @@ _METRIC_DISPLAY_NAMES = {
     "state_renorm_scale": "State Renorm Scale",
     "output_norm": "Readout Norm",
     "output_cosine_to_reference": "Readout Cosine to Reference",
+    "state_cosine_to_previous": "State Cosine to Previous Context",
+    "output_cosine_to_previous": "Readout Cosine to Previous Context",
 }
 
 
@@ -471,6 +473,9 @@ def run_hidden_state_tracking(
                             row["state_cosine_to_reference"] = float("nan") # add a placeholder
                             row["state_top_subspace_to_reference"] = float("nan")
                             row["output_cosine_to_reference"] = float("nan")
+                            row["previous_seqlen"] = float("nan")
+                            row["state_cosine_to_previous"] = float("nan")
+                            row["output_cosine_to_previous"] = float("nan")
                             key = (int(seqlen), name, int(layer_idx), int(head_idx))
                             state_matrices[key] = matrix.detach().float().cpu()
                             if readout is not None:
@@ -511,6 +516,41 @@ def run_hidden_state_tracking(
                         output,
                         reference_output,
                     )
+                sorted_seqlens = cfg.sorted_seqlens
+                previous_by_seqlen = {
+                    int(seqlen): int(sorted_seqlens[idx - 1])
+                    for idx, seqlen in enumerate(sorted_seqlens)
+                    if idx > 0
+                }
+                for key, matrix in state_matrices.items():
+                    previous_seqlen = previous_by_seqlen.get(key[0])
+                    if previous_seqlen is None:
+                        continue
+                    previous_matrix = state_matrices.get((previous_seqlen, *key[1:]))
+                    if previous_matrix is None:
+                        continue
+                    row = rows[state_row_indices[key]]
+                    row["previous_seqlen"] = int(previous_seqlen)
+                    row["state_cosine_to_previous"] = float(
+                        torch.nn.functional.cosine_similarity(
+                            matrix.reshape(1, -1),
+                            previous_matrix.reshape(1, -1),
+                            dim=-1,
+                        ).item()
+                    )
+                for key, output in output_tensors.items():
+                    previous_seqlen = previous_by_seqlen.get(key[0])
+                    if previous_seqlen is None:
+                        continue
+                    previous_output = output_tensors.get((previous_seqlen, *key[1:]))
+                    if previous_output is None:
+                        continue
+                    row = rows[state_row_indices[key]]
+                    row["previous_seqlen"] = int(previous_seqlen)
+                    row["output_cosine_to_previous"] = _sequence_prefix_cosine(
+                        output,
+                        previous_output,
+                    )
     return pd.DataFrame(rows)
 
 
@@ -528,6 +568,8 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
         ("state_top_subspace_to_reference", float("nan")),
         ("output_norm", float("nan")),
         ("output_cosine_to_reference", float("nan")),
+        ("state_cosine_to_previous", float("nan")),
+        ("output_cosine_to_previous", float("nan")),
     ):
         if col not in df.columns:
             df[col] = default
@@ -541,6 +583,8 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             "state_top_subspace_to_reference_mean",
             "output_norm_mean",
             "output_cosine_to_reference_mean",
+            "state_cosine_to_previous_mean",
+            "output_cosine_to_previous_mean",
         ]
         return pd.DataFrame(columns=cols)
     group_cols = [c for c in ("model", "tensor_name", "layer_idx", "head_idx", "seqlen") if c in df.columns]
@@ -560,6 +604,8 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             state_top_subspace_to_reference_mean=("state_top_subspace_to_reference", "mean"),
             output_norm_mean=("output_norm", "mean"),
             output_cosine_to_reference_mean=("output_cosine_to_reference", "mean"),
+            state_cosine_to_previous_mean=("state_cosine_to_previous", "mean"),
+            output_cosine_to_previous_mean=("output_cosine_to_previous", "mean"),
             n=("rep", "nunique"),
         )
         .reset_index()

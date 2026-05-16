@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -54,9 +56,11 @@ class LinearAttention(nn.Module):
         normalized = state_update_rule.strip().lower().replace("-", "_")
         if normalized in {"rls", "least_squares_oracle", "oracle"}:
             normalized = "least_squares"
-        if normalized not in {"linear", "least_squares"}:
+        if normalized == "ridge_oracle":
+            normalized = "ridge"
+        if normalized not in {"linear", "least_squares", "ridge"}:
             raise ValueError(
-                "state_update_rule must be one of {'linear', 'least_squares', 'rls'}, "
+                "state_update_rule must be one of {'linear', 'least_squares', 'ridge', 'rls'}, "
                 f"got {state_update_rule!r}."
             )
         return normalized
@@ -106,6 +110,7 @@ class LinearAttention(nn.Module):
         fuse_swiglu: bool = False,
         # Recurrent state handling.
         state_update_rule: str = "linear",
+        ridge_lambda: float = 1.0,
         state_renormalization: str | None = None,
         learnable_state_renorm_scale: bool = True,
         state_renormalization_target_norm: float | None = None,
@@ -135,6 +140,8 @@ class LinearAttention(nn.Module):
         normalized_state_update_rule = self._normalize_state_update_rule(
             state_update_rule
         )
+        if ridge_lambda <= 0:
+            raise ValueError("ridge_lambda must be > 0.")
         if normalized_state_update_rule != "linear" and use_k_sum_normalization:
             raise ValueError(
                 "use_k_sum_normalization is only defined for state_update_rule='linear'."
@@ -173,6 +180,7 @@ class LinearAttention(nn.Module):
         self.use_k_sum_normalization = use_k_sum_normalization
 
         self.state_update_rule = normalized_state_update_rule
+        self.ridge_lambda = float(ridge_lambda)
         self.state_renormalization = state_renormalization
         self.state_renormalization_target_norm = state_renormalization_target_norm
         self.eps = eps
@@ -335,10 +343,55 @@ class LinearAttention(nn.Module):
             if k.dtype in {torch.float16, torch.bfloat16}
             else k.dtype
         )
-        k_bh = k.transpose(1, 2).to(compute_dtype)
-        v_bh = v.transpose(1, 2).to(compute_dtype)
-        state = torch.matmul(torch.linalg.pinv(k_bh), v_bh)
+        autocast_context = (
+            torch.autocast(device_type=k.device.type, enabled=False)
+            if k.device.type in {"cpu", "cuda"}
+            else nullcontext()
+        )
+        with autocast_context:
+            k_bh = k.transpose(1, 2).to(compute_dtype)
+            v_bh = v.transpose(1, 2).to(compute_dtype)
+            state = torch.matmul(torch.linalg.pinv(k_bh), v_bh)
         return state.to(v.dtype)
+
+    def _ridge_state(
+        self,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> torch.Tensor:
+        if k.shape[1] == 0:
+            return k.new_zeros(k.shape[0], k.shape[2], k.shape[3], v.shape[-1])
+
+        compute_dtype = (
+            torch.float32
+            if k.dtype in {torch.float16, torch.bfloat16}
+            else k.dtype
+        )
+        autocast_context = (
+            torch.autocast(device_type=k.device.type, enabled=False)
+            if k.device.type in {"cpu", "cuda"}
+            else nullcontext()
+        )
+        with autocast_context:
+            k_bh = k.transpose(1, 2).to(compute_dtype)
+            v_bh = v.transpose(1, 2).to(compute_dtype)
+            gram = torch.matmul(k_bh.transpose(-1, -2), k_bh)
+            cross = torch.matmul(k_bh.transpose(-1, -2), v_bh)
+            eye = torch.eye(k.shape[-1], dtype=compute_dtype, device=k.device)
+            state = torch.linalg.solve(
+                gram + self.ridge_lambda * eye,
+                cross,
+            )
+        return state.to(v.dtype)
+
+    def _oracle_state(
+        self,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.state_update_rule == "ridge":
+            return self._ridge_state(k, v)
+        return self._least_squares_state(k, v)
 
     def _least_squares_causal_attention(
         self,
@@ -348,11 +401,11 @@ class LinearAttention(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         outputs = []
         for t in range(k.shape[1]):
-            state_t = self._least_squares_state(k[:, : t + 1], v[:, : t + 1])
+            state_t = self._oracle_state(k[:, : t + 1], v[:, : t + 1])
             outputs.append(
                 torch.einsum("bhf,bhfd->bhd", q[:, t], state_t).unsqueeze(1)
             )
-        kv_state = self._least_squares_state(k, v)
+        kv_state = self._oracle_state(k, v)
         if not outputs:
             return v, kv_state
         return torch.cat(outputs, dim=1), kv_state
@@ -365,7 +418,7 @@ class LinearAttention(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         q, k = self._apply_query_key_feature_maps(q, k)
         if self.state_update_rule != "linear":
-            kv_state = self._least_squares_state(k, v)
+            kv_state = self._oracle_state(k, v)
             return self._read_from_kv_state(q, kv_state, None), kv_state, None
         # k: (batch_times_features, seq, heads, qk_dim)
         # v: (batch_times_features, seq, heads, v_dim)
