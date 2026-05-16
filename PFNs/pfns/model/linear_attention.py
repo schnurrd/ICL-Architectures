@@ -410,6 +410,67 @@ class LinearAttention(nn.Module):
             return v, kv_state
         return torch.cat(outputs, dim=1), kv_state
 
+    def _ridge_causal_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Causal ridge reads via a streaming Sherman-Morrison update.
+
+        This computes the same prefix solution as repeatedly solving
+        ``(K_t^T K_t + lambda I)^-1 K_t^T V_t``, but avoids materializing every
+        growing prefix during causal training.
+        """
+        if k.shape[1] == 0:
+            return v, self._ridge_state(k, v)
+
+        compute_dtype = (
+            torch.float32
+            if k.dtype in {torch.float16, torch.bfloat16}
+            else k.dtype
+        )
+        autocast_context = (
+            torch.autocast(device_type=k.device.type, enabled=False)
+            if k.device.type in {"cpu", "cuda"}
+            else nullcontext()
+        )
+        with autocast_context:
+            q_compute = q.to(compute_dtype)
+            k_compute = k.to(compute_dtype)
+            v_compute = v.to(compute_dtype)
+
+            batch_size, _, num_heads, qk_dim = k.shape
+            value_dim = v.shape[-1]
+            eye = torch.eye(qk_dim, dtype=compute_dtype, device=k.device)
+            precision = eye.expand(batch_size, num_heads, qk_dim, qk_dim).clone()
+            precision = precision / self.ridge_lambda
+            cross = k.new_zeros(
+                batch_size,
+                num_heads,
+                qk_dim,
+                value_dim,
+                dtype=compute_dtype,
+            )
+
+            outputs = []
+            state = cross
+            for t in range(k.shape[1]):
+                k_t = k_compute[:, t]
+                v_t = v_compute[:, t]
+                precision_k = torch.einsum("bhfg,bhg->bhf", precision, k_t)
+                denom = 1.0 + torch.einsum("bhf,bhf->bh", k_t, precision_k)
+                precision = precision - torch.einsum(
+                    "bhf,bhg->bhfg", precision_k, precision_k
+                ) / denom[..., None, None]
+                cross = cross + torch.einsum("bhf,bhd->bhfd", k_t, v_t)
+                state = torch.einsum("bhfg,bhgd->bhfd", precision, cross)
+                outputs.append(
+                    torch.einsum("bhf,bhfd->bhd", q_compute[:, t], state).unsqueeze(1)
+                )
+
+        return torch.cat(outputs, dim=1).to(v.dtype), state.to(v.dtype)
+
     def _noncausal_attention(
         self,
         q: torch.Tensor,
@@ -445,7 +506,10 @@ class LinearAttention(nn.Module):
                     "Least-squares oracle cannot be continued from a fitted "
                     "memory state alone."
                 )
-            attn, kv_state = self._least_squares_causal_attention(q, k, v)
+            if self.state_update_rule == "ridge":
+                attn, kv_state = self._ridge_causal_attention(q, k, v)
+            else:
+                attn, kv_state = self._least_squares_causal_attention(q, k, v)
             return attn, kv_state, None
 
         if q.shape[1] == 0:
