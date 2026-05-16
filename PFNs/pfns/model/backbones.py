@@ -392,6 +392,9 @@ class FLABackboneConfig(BackboneConfig):
         "sqrt_length_inverse",
         "online_inverse",
         "online_sqrt_inverse",
+        "nlms",
+        "nlms_inverse",
+        "nlms_sqrt_inverse",
     ] = "none"
     deltanet_beta_decay_t0: int = 1000
     mimetic_init: bool = False

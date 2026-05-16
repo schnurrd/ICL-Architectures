@@ -180,6 +180,36 @@ def test_deltanet_beta_decay_scales_late_positions():
         expected_online.sqrt().expand_as(beta),
     )
 
+    k = torch.ones(1, 5, 2, 3)
+    nlms = _apply_deltanet_beta_decay(beta, mode="nlms", t0=1, k=k, eps=0.0)
+    torch.testing.assert_close(nlms, torch.full_like(beta, 1 / 3))
+
+    nlms_l2 = _apply_deltanet_beta_decay(
+        beta,
+        mode="nlms",
+        t0=1,
+        k=k * 2,
+        use_qk_l2norm_in_kernel=True,
+        eps=0.0,
+    )
+    torch.testing.assert_close(nlms_l2, beta)
+
+    nlms_inverse = _apply_deltanet_beta_decay(
+        beta, mode="nlms_inverse", t0=1, k=k, eps=0.0
+    )
+    expected_nlms_inverse = torch.tensor(
+        [1.0, 0.5, 1 / 3, 0.25, 0.2]
+    ).view(1, 5, 1) / 3
+    torch.testing.assert_close(nlms_inverse, expected_nlms_inverse.expand_as(beta))
+
+    nlms_sqrt_inverse = _apply_deltanet_beta_decay(
+        beta, mode="nlms_sqrt_inverse", t0=1, k=k, eps=0.0
+    )
+    torch.testing.assert_close(
+        nlms_sqrt_inverse,
+        expected_nlms_inverse.mul(3).sqrt().div(3).expand_as(beta),
+    )
+
 
 def test_deltanet_beta_decay_validates_backbone_config():
     from pfns.model.backbones import FLABackboneConfig
