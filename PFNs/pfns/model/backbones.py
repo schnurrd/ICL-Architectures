@@ -486,7 +486,6 @@ class FLABackboneConfig(BackboneConfig):
             state_passing=self.state_passing,
             state_passing_dropout=self.state_passing_dropout,
             include_self_term=self.include_self_term,
-            final_state_readout=self.final_state_readout,
         )
         if self.bidirectional:
             backbone_kwargs["state_fusion"] = self.bidirectional_state_fusion
@@ -1067,11 +1066,8 @@ class BidirectionalFLABackbone(FLABackbone):
         state_passing: bool = False,
         state_passing_dropout: float = 0.1,
         include_self_term: bool = True,
-        final_state_readout: bool = False,
         state_fusion: str = "mean_output_mean_cache",
     ):
-        if final_state_readout:
-            raise ValueError("BidirectionalFLABackbone does not support final_state_readout.")
         super().__init__(
             fla_model=fla_model,
             sequence_mode=sequence_mode,
@@ -1079,7 +1075,6 @@ class BidirectionalFLABackbone(FLABackbone):
             state_passing=state_passing,
             state_passing_dropout=state_passing_dropout,
             include_self_term=include_self_term,
-            final_state_readout=False,
         )
         self.state_fusion = state_fusion
 
@@ -1267,16 +1262,14 @@ class LinearAttentionBackbone(Backbone):
     @staticmethod
     def _unpack_recurrent_state(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         recurrent_state = state["recurrent_state"]
-        if "k_sum" in state or "p_state" in state:
+        if "k_sum" in state:
             return {
                 "kv_state": recurrent_state,
-                "k_sum": state.get("k_sum"),
-                "p_state": state.get("p_state"),
+                "k_sum": state["k_sum"],
             }
         return {
             "kv_state": recurrent_state[..., :-1],
             "k_sum": recurrent_state[..., -1],
-            "p_state": None,
         }
 
     def forward(
@@ -1330,7 +1323,6 @@ class LinearAttentionBackbone(Backbone):
                         state={
                             "recurrent_state": state["kv_state"],
                             "k_sum": state["k_sum"],
-                            "p_state": state["p_state"],
                         }
                     )
                     for state in layer_states

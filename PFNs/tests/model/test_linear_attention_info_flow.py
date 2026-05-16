@@ -26,6 +26,13 @@ def _assert_close(actual, expected) -> None:
     torch.testing.assert_close(actual, expected, rtol=RTOL, atol=ATOL)
 
 
+def _least_squares_state(k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    return torch.matmul(
+        torch.linalg.pinv(k.transpose(1, 2)),
+        v.transpose(1, 2),
+    )
+
+
 def _run_test_token_permutation_case(
     layer: LinearAttention,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -90,7 +97,7 @@ def test_linear_attention_causal_matches_prefix_reads_with_scaled_query():
     q, k = layer._apply_query_key_feature_maps(q_raw, k_raw)
 
     with torch.no_grad():
-        attn, _, _, _ = layer._causal_attention(q_raw, k_raw, v)
+        attn, _, _ = layer._causal_attention(q_raw, k_raw, v)
 
     expected = []
     for t in range(q.shape[1]):
@@ -100,7 +107,7 @@ def test_linear_attention_causal_matches_prefix_reads_with_scaled_query():
     _assert_close(attn, torch.cat(expected, dim=1))
 
 
-def test_linear_attention_rls_matches_prefix_ridge_solution():
+def test_linear_attention_least_squares_matches_prefix_solution():
     torch.manual_seed(0)
     layer = _build_layer(
         causal=True,
@@ -108,7 +115,6 @@ def test_linear_attention_rls_matches_prefix_ridge_solution():
         use_query_scale=False,
         use_k_sum_normalization=False,
         state_update_rule="rls",
-        rls_lambda=0.7,
     )
     layer.eval()
 
@@ -117,38 +123,28 @@ def test_linear_attention_rls_matches_prefix_ridge_solution():
     v = torch.randn(2, 5, 2, 3)
 
     with torch.no_grad():
-        attn, state, _, p_state = layer._causal_attention(q, k, v)
+        attn, state, _ = layer._causal_attention(q, k, v)
 
     expected = []
-    eye = torch.eye(k.shape[-1])
     for t in range(k.shape[1]):
         k_prefix = k[:, : t + 1]
         v_prefix = v[:, : t + 1]
-        gram = torch.einsum("bshf,bshg->bhfg", k_prefix, k_prefix)
-        cross = torch.einsum("bshf,bshd->bhfd", k_prefix, v_prefix)
-        w_star = torch.linalg.solve(gram + layer.rls_lambda * eye, cross)
+        w_star = _least_squares_state(k_prefix, v_prefix)
         expected.append(torch.einsum("bhf,bhfd->bhd", q[:, t], w_star).unsqueeze(1))
 
-    final_gram = torch.einsum("bshf,bshg->bhfg", k, k)
-    final_cross = torch.einsum("bshf,bshd->bhfd", k, v)
-    expected_state = torch.linalg.solve(final_gram + layer.rls_lambda * eye, final_cross)
-    expected_p = torch.linalg.inv(final_gram + layer.rls_lambda * eye)
+    expected_state = _least_squares_state(k, v)
 
     torch.testing.assert_close(attn, torch.cat(expected, dim=1), rtol=2e-5, atol=2e-6)
     torch.testing.assert_close(state, expected_state, rtol=2e-5, atol=2e-6)
-    torch.testing.assert_close(p_state, expected_p, rtol=2e-5, atol=2e-6)
 
 
-def test_linear_attention_rls_final_state_readout_uses_full_state():
+def test_linear_attention_least_squares_matches_noncausal_solution():
     torch.manual_seed(0)
     layer = _build_layer(
-        causal=True,
         feature_map="identity",
         use_query_scale=False,
         use_k_sum_normalization=False,
         state_update_rule="rls",
-        rls_lambda=0.7,
-        final_state_readout=True,
     )
     layer.eval()
 
@@ -157,48 +153,17 @@ def test_linear_attention_rls_final_state_readout_uses_full_state():
     v = torch.randn(2, 5, 2, 3)
 
     with torch.no_grad():
-        attn, state, _, p_state = layer._causal_attention(q, k, v)
+        attn, state, k_sum = layer._noncausal_attention(q, k, v)
 
-    eye = torch.eye(k.shape[-1])
-    gram = torch.einsum("bshf,bshg->bhfg", k, k)
-    cross = torch.einsum("bshf,bshd->bhfd", k, v)
-    expected_state = torch.linalg.solve(gram + layer.rls_lambda * eye, cross)
-    expected_p = torch.linalg.inv(gram + layer.rls_lambda * eye)
+    expected_state = _least_squares_state(k, v)
     expected_attn = torch.einsum("bshf,bhfd->bshd", q, expected_state)
 
     torch.testing.assert_close(attn, expected_attn, rtol=2e-5, atol=2e-6)
     torch.testing.assert_close(state, expected_state, rtol=2e-5, atol=2e-6)
-    torch.testing.assert_close(p_state, expected_p, rtol=2e-5, atol=2e-6)
+    assert k_sum is None
 
 
-def test_linear_attention_nlms_solves_single_current_association():
-    torch.manual_seed(0)
-    layer = _build_layer(
-        causal=True,
-        feature_map="identity",
-        use_query_scale=False,
-        use_k_sum_normalization=False,
-        state_update_rule="kaczmarz",
-        eps=1e-12,
-    )
-    layer.eval()
-
-    k = torch.randn(2, 1, 2, 4)
-    v = torch.randn(2, 1, 2, 3)
-
-    with torch.no_grad():
-        attn, state, _, _ = layer._causal_attention(k, k, v)
-
-    torch.testing.assert_close(attn, v, rtol=1e-5, atol=1e-6)
-    torch.testing.assert_close(
-        torch.einsum("bshf,bhfd->bshd", k, state),
-        v,
-        rtol=1e-5,
-        atol=1e-6,
-    )
-
-
-@pytest.mark.parametrize("state_update_rule", ["nlms", "rls"])
+@pytest.mark.parametrize("state_update_rule", ["least_squares", "rls"])
 def test_linear_attention_oracle_update_incontext_predict_matches_forward(state_update_rule: str):
     torch.manual_seed(0)
     layer = _build_layer(

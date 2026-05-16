@@ -52,8 +52,6 @@ BATCH_SIZE = 16
 HIDDEN_SIZE = 128
 NUM_LAYERS = 16
 NUM_HEADS = 4
-STATE_UPDATE_RULES = ('linear', 'nlms', 'rls')
-RLS_LAMBDA = 1.0
 LR = 3e-4
 WEIGHT_DECAY = 1e-2
 GRAD_CLIP_NORM = 1.0
@@ -265,20 +263,12 @@ class SimpleLinearAttentionPFN(nn.Module):
         return self.decoder(encoded[:, context_len:, -1])
 
 
-def make_linear_attention_model(
-    *,
-    causal_train_only: bool,
-    state_update_rule: str = 'linear',
-    rls_lambda: float = 1.0,
-    device: torch.device,
-) -> SimpleLinearAttentionPFN:
+def make_linear_attention_model(*, causal_train_only: bool, device: torch.device) -> SimpleLinearAttentionPFN:
     layer_kwargs: dict[str, Any] = {
         'causal_train_only': causal_train_only,
         'feature_map': 'elu',
         'norm_type': 'layernorm',
         'use_k_sum_normalization': False,
-        'state_update_rule': state_update_rule,
-        'rls_lambda': rls_lambda,
     }
     backbone = LinearAttentionBackboneConfig(
         nlayers=NUM_LAYERS,
@@ -297,13 +287,11 @@ MODEL_CONFIGS = [
     {
         'name': 'non_causal',
         'causal_train_only': False,
-        'state_update_rule': 'linear',
         'display_name': 'Non-causal train context',
     },
     {
         'name': 'causal_train_only',
         'causal_train_only': True,
-        'state_update_rule': 'linear',
         'display_name': 'Causal train context',
     },
 ]
@@ -370,15 +358,11 @@ def pretrain_model(
     name: str,
     *,
     causal_train_only: bool,
-    state_update_rule: str = 'linear',
-    rls_lambda: float = 1.0,
     device: torch.device,
 ) -> tuple[SimpleLinearAttentionPFN, list[dict[str, float]]]:
     seed_everything(SEED)
     model = make_linear_attention_model(
         causal_train_only=causal_train_only,
-        state_update_rule=state_update_rule,
-        rls_lambda=rls_lambda,
         device=device,
     )
     train_model = torch.compile(model) if COMPILE_MODEL else model
@@ -447,8 +431,6 @@ def experiment_signature() -> dict[str, Any]:
         'hidden_size': HIDDEN_SIZE,
         'num_layers': NUM_LAYERS,
         'num_heads': NUM_HEADS,
-        'state_update_rules': tuple(STATE_UPDATE_RULES),
-        'rls_lambda': RLS_LAMBDA,
         'lr': LR,
         'weight_decay': WEIGHT_DECAY,
         'grad_clip_norm': GRAD_CLIP_NORM,
@@ -462,16 +444,11 @@ def experiment_signature() -> dict[str, Any]:
     }
 
 
-def checkpoint_args(
-    name: str,
-    causal_train_only: bool,
-    state_update_rule: str = 'linear',
-) -> dict[str, Any]:
+def checkpoint_args(name: str, causal_train_only: bool) -> dict[str, Any]:
     return {
         **experiment_signature(),
         'name': name,
         'causal_train_only': causal_train_only,
-        'state_update_rule': state_update_rule,
     }
 
 
@@ -480,14 +457,8 @@ def model_checkpoint_path_from_args(args: dict[str, Any]) -> Path:
     return CHECKPOINT_DIR / f"{args['name']}_{key}.pt"
 
 
-def model_checkpoint_path(
-    name: str,
-    causal_train_only: bool,
-    state_update_rule: str = 'linear',
-) -> Path:
-    return model_checkpoint_path_from_args(
-        checkpoint_args(name, causal_train_only, state_update_rule)
-    )
+def model_checkpoint_path(name: str, causal_train_only: bool) -> Path:
+    return model_checkpoint_path_from_args(checkpoint_args(name, causal_train_only))
 
 
 def save_trained_model(
@@ -496,9 +467,8 @@ def save_trained_model(
     history: list[dict[str, float]],
     *,
     causal_train_only: bool,
-    state_update_rule: str = 'linear',
 ) -> Path:
-    args = checkpoint_args(name, causal_train_only, state_update_rule)
+    args = checkpoint_args(name, causal_train_only)
     path = model_checkpoint_path_from_args(args)
     torch.save(
         {
@@ -515,19 +485,13 @@ def load_trained_model(
     name: str,
     *,
     causal_train_only: bool,
-    state_update_rule: str = 'linear',
     device: torch.device = DEVICE,
 ) -> tuple[SimpleLinearAttentionPFN, list[dict[str, float]]] | None:
-    path = model_checkpoint_path(name, causal_train_only, state_update_rule)
+    path = model_checkpoint_path(name, causal_train_only)
     if not path.exists():
         return None
     checkpoint = torch.load(path, map_location=device)
-    model = make_linear_attention_model(
-        causal_train_only=causal_train_only,
-        state_update_rule=state_update_rule,
-        rls_lambda=RLS_LAMBDA,
-        device=device,
-    )
+    model = make_linear_attention_model(causal_train_only=causal_train_only, device=device)
     model.load_state_dict(checkpoint['model'])
     model.eval()
     print(f'Loaded {name} from {path}')
@@ -538,20 +502,16 @@ def train_or_load_model(
     name: str,
     *,
     causal_train_only: bool,
-    state_update_rule: str = 'linear',
 ) -> tuple[SimpleLinearAttentionPFN, list[dict[str, float]]]:
     loaded = None if FORCE_RETRAIN else load_trained_model(
         name,
         causal_train_only=causal_train_only,
-        state_update_rule=state_update_rule,
     )
     if loaded is not None:
         return loaded
     model, history = pretrain_model(
         name,
         causal_train_only=causal_train_only,
-        state_update_rule=state_update_rule,
-        rls_lambda=RLS_LAMBDA,
         device=DEVICE,
     )
     path = save_trained_model(
@@ -559,7 +519,6 @@ def train_or_load_model(
         model,
         history,
         causal_train_only=causal_train_only,
-        state_update_rule=state_update_rule,
     )
     print(f'Saved {name} to {path}')
     return model, history
@@ -737,13 +696,11 @@ def _set_model_configs(model_selection: str) -> None:
         'non_causal': {
             'name': 'non_causal',
             'causal_train_only': False,
-            'state_update_rule': 'linear',
             'display_name': 'Non-causal train context',
         },
         'causal': {
             'name': 'causal_train_only',
             'causal_train_only': True,
-            'state_update_rule': 'linear',
             'display_name': 'Causal train context',
         },
     }
@@ -751,17 +708,6 @@ def _set_model_configs(model_selection: str) -> None:
         MODEL_CONFIGS = [configs['non_causal'], configs['causal']]
     else:
         MODEL_CONFIGS = [configs[model_selection]]
-    if STATE_UPDATE_RULES != ('linear',):
-        MODEL_CONFIGS = [
-            {
-                **model_cfg,
-                'name': f"{model_cfg['name']}_{rule}",
-                'state_update_rule': rule,
-                'display_name': f"{model_cfg['display_name']} ({rule.upper()})",
-            }
-            for model_cfg in MODEL_CONFIGS
-            for rule in STATE_UPDATE_RULES
-        ]
 
 
 def _make_run_dir(output_root: Path, run_name: str | None, *, resume_run: bool = False) -> Path:
@@ -849,7 +795,6 @@ def run_experiment(
         model, history = train_or_load_model(
             model_cfg['name'],
             causal_train_only=model_cfg['causal_train_only'],
-            state_update_rule=model_cfg.get('state_update_rule', 'linear'),
         )
         models[model_cfg['name']] = model
         histories[model_cfg['name']] = history
@@ -930,13 +875,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--hidden-size', type=int, default=HIDDEN_SIZE)
     parser.add_argument('--num-layers', type=int, default=NUM_LAYERS)
     parser.add_argument('--num-heads', type=int, default=NUM_HEADS)
-    parser.add_argument(
-        '--state-update-rules',
-        type=_parse_str_tuple,
-        default=STATE_UPDATE_RULES,
-        help="Comma-separated update rules to train, e.g. linear,nlms,rls.",
-    )
-    parser.add_argument('--rls-lambda', type=float, default=RLS_LAMBDA)
     parser.add_argument('--lr', type=float, default=LR)
     parser.add_argument('--weight-decay', type=float, default=WEIGHT_DECAY)
     parser.add_argument('--grad-clip-norm', type=float, default=GRAD_CLIP_NORM)
@@ -957,8 +895,7 @@ def apply_args(args: argparse.Namespace) -> None:
     global SEED, FORCE_RETRAIN, COMPILE_MODEL, LOG_EVERY
     global LOG_RESAMPLING
     global TRAIN_STEPS, BATCH_SIZE, MAX_TRAIN_CONTEXT_LEN, TEST_LEN
-    global HIDDEN_SIZE, NUM_LAYERS, NUM_HEADS, STATE_UPDATE_RULES, RLS_LAMBDA
-    global LR, WEIGHT_DECAY, GRAD_CLIP_NORM
+    global HIDDEN_SIZE, NUM_LAYERS, NUM_HEADS, LR, WEIGHT_DECAY, GRAD_CLIP_NORM
     global PRIOR_MLP_HIDDEN_SIZE, PRIOR_MLP_MAX_HIDDEN_LAYERS, PRIOR_ACTIVATIONS
     global NUM_CLASSES, QUANTILE_BOUNDARY_NOISE
     global PRIOR_ACTIVATION_MODULES
@@ -981,14 +918,6 @@ def apply_args(args: argparse.Namespace) -> None:
     HIDDEN_SIZE = args.hidden_size
     NUM_LAYERS = args.num_layers
     NUM_HEADS = args.num_heads
-    STATE_UPDATE_RULES = tuple(
-        rule.strip().lower().replace('-', '_') for rule in args.state_update_rules
-    )
-    invalid_rules = sorted(set(STATE_UPDATE_RULES) - {'linear', 'nlms', 'rls', 'kaczmarz'})
-    if invalid_rules:
-        raise ValueError(f'Unknown state update rules: {invalid_rules}')
-    STATE_UPDATE_RULES = tuple('nlms' if rule == 'kaczmarz' else rule for rule in STATE_UPDATE_RULES)
-    RLS_LAMBDA = float(args.rls_lambda)
     LR = args.lr
     WEIGHT_DECAY = args.weight_decay
     GRAD_CLIP_NORM = args.grad_clip_norm

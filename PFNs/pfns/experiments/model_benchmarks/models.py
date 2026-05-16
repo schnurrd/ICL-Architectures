@@ -31,9 +31,6 @@ def _apply_linear_attention_state_update_override(
 
     for module in layers:
         module.state_update_rule = normalized_rule
-        module.rls_lambda = float(
-            model_config.get("linear_attention_rls_lambda", module.rls_lambda)
-        )
         if normalized_rule != "linear":
             module.use_k_sum_normalization = False
             module.state_renormalization = None

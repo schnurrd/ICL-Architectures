@@ -35,12 +35,9 @@ class BasedLinearAttention(LinearAttention):
         use_mlp_norm: bool = True,
         norm_type: str = "rmsnorm",
         fuse_swiglu: bool = False,
-        state_update_rule: str = "linear",
-        rls_lambda: float = 1.0,
         state_renormalization: str | None = None,
         learnable_state_renorm_scale: bool = True,
         state_renormalization_target_norm: float | None = None,
-        final_state_readout: bool = False,
         eps: float = 1e-6,
     ) -> None:
         resolved_mlp_hidden_dim = (
@@ -84,12 +81,9 @@ class BasedLinearAttention(LinearAttention):
             use_output_norm=use_output_norm,
             norm_type=norm_type,
             fuse_swiglu=fuse_swiglu,
-            state_update_rule=state_update_rule,
-            rls_lambda=rls_lambda,
             state_renormalization=state_renormalization,
             learnable_state_renorm_scale=learnable_state_renorm_scale,
             state_renormalization_target_norm=state_renormalization_target_norm,
-            final_state_readout=final_state_readout,
             eps=eps,
         )
         if self.key_dim != key_dim:

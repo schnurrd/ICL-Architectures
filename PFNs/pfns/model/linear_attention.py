@@ -52,11 +52,11 @@ class LinearAttention(nn.Module):
     @staticmethod
     def _normalize_state_update_rule(state_update_rule: str) -> str:
         normalized = state_update_rule.strip().lower().replace("-", "_")
-        if normalized == "kaczmarz":
-            normalized = "nlms"
-        if normalized not in {"linear", "nlms", "rls"}:
+        if normalized in {"rls", "least_squares_oracle", "oracle"}:
+            normalized = "least_squares"
+        if normalized not in {"linear", "least_squares"}:
             raise ValueError(
-                "state_update_rule must be one of {'linear', 'nlms', 'kaczmarz', 'rls'}, "
+                "state_update_rule must be one of {'linear', 'least_squares', 'rls'}, "
                 f"got {state_update_rule!r}."
             )
         return normalized
@@ -106,11 +106,9 @@ class LinearAttention(nn.Module):
         fuse_swiglu: bool = False,
         # Recurrent state handling.
         state_update_rule: str = "linear",
-        rls_lambda: float = 1.0,
         state_renormalization: str | None = None,
         learnable_state_renorm_scale: bool = True,
         state_renormalization_target_norm: float | None = None,
-        final_state_readout: bool = False,
         # Numerical stability.
         eps: float = 1e-6,
     ):
@@ -137,8 +135,6 @@ class LinearAttention(nn.Module):
         normalized_state_update_rule = self._normalize_state_update_rule(
             state_update_rule
         )
-        if rls_lambda <= 0:
-            raise ValueError("rls_lambda must be > 0.")
         if normalized_state_update_rule != "linear" and use_k_sum_normalization:
             raise ValueError(
                 "use_k_sum_normalization is only defined for state_update_rule='linear'."
@@ -177,10 +173,8 @@ class LinearAttention(nn.Module):
         self.use_k_sum_normalization = use_k_sum_normalization
 
         self.state_update_rule = normalized_state_update_rule
-        self.rls_lambda = float(rls_lambda)
         self.state_renormalization = state_renormalization
         self.state_renormalization_target_norm = state_renormalization_target_norm
-        self.final_state_readout = bool(final_state_readout)
         self.eps = eps
         if state_renormalization in {None, "none"}:
             self.state_renorm_log_scale = None
@@ -327,75 +321,59 @@ class LinearAttention(nn.Module):
         denom = torch.einsum("bshf,bhf->bsh", q, k_sum)
         return num / (denom.unsqueeze(-1) + self.eps)
 
-    def _initial_inverse_covariance(self, k: torch.Tensor) -> torch.Tensor:
-        eye = torch.eye(
-            k.shape[-1],
-            dtype=k.dtype,
-            device=k.device,
-        )
-        return eye.expand(k.shape[0], k.shape[2], -1, -1) / self.rls_lambda
+    def _least_squares_state(
+        self,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return the ridgeless minimum-norm linear least-squares memory."""
+        if k.shape[1] == 0:
+            return k.new_zeros(k.shape[0], k.shape[2], k.shape[3], v.shape[-1])
 
-    def _oracle_attention(
+        compute_dtype = (
+            torch.float32
+            if k.dtype in {torch.float16, torch.bfloat16}
+            else k.dtype
+        )
+        k_bh = k.transpose(1, 2).to(compute_dtype)
+        v_bh = v.transpose(1, 2).to(compute_dtype)
+        state = torch.matmul(torch.linalg.pinv(k_bh), v_bh)
+        return state.to(v.dtype)
+
+    def _least_squares_causal_attention(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
-        *,
-        kv_state_prefix: torch.Tensor | None = None,
-        p_state_prefix: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
-        kv_state = (
-            k.new_zeros(k.shape[0], k.shape[2], k.shape[3], v.shape[-1])
-            if kv_state_prefix is None
-            else kv_state_prefix
-        )
-        p_state = (
-            self._initial_inverse_covariance(k)
-            if self.state_update_rule == "rls" and p_state_prefix is None
-            else p_state_prefix
-        )
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         outputs = []
-        for t in range(q.shape[1]):
-            k_t = k[:, t]
-            v_t = v[:, t]
-            pred_t = torch.einsum("bhf,bhfd->bhd", k_t, kv_state)
-            err_t = v_t - pred_t
-            if self.state_update_rule == "rls":
-                assert p_state is not None
-                p_k = torch.einsum("bhfg,bhg->bhf", p_state, k_t)
-                denom = 1.0 + torch.einsum("bhf,bhf->bh", k_t, p_k)
-                gain_t = p_k / denom.unsqueeze(-1)
-                k_p = torch.einsum("bhf,bhfg->bhg", k_t, p_state)
-                p_state = p_state - torch.einsum("bhf,bhg->bhfg", gain_t, k_p)
-            else:
-                gain_t = k_t / (k_t.square().sum(dim=-1, keepdim=True) + self.eps)
-            kv_state = kv_state + torch.einsum("bhf,bhd->bhfd", gain_t, err_t)
+        for t in range(k.shape[1]):
+            state_t = self._least_squares_state(k[:, : t + 1], v[:, : t + 1])
             outputs.append(
-                torch.einsum("bhf,bhfd->bhd", q[:, t], kv_state).unsqueeze(1)
+                torch.einsum("bhf,bhfd->bhd", q[:, t], state_t).unsqueeze(1)
             )
+        kv_state = self._least_squares_state(k, v)
         if not outputs:
-            return v, kv_state, p_state
-        if self.final_state_readout:
-            return self._read_from_kv_state(q, kv_state, None), kv_state, p_state
-        return torch.cat(outputs, dim=1), kv_state, p_state
+            return v, kv_state
+        return torch.cat(outputs, dim=1), kv_state
 
     def _noncausal_attention(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         q, k = self._apply_query_key_feature_maps(q, k)
         if self.state_update_rule != "linear":
-            _, kv_state, p_state = self._oracle_attention(q, k, v)
-            return self._read_from_kv_state(q, kv_state, None), kv_state, None, p_state
+            kv_state = self._least_squares_state(k, v)
+            return self._read_from_kv_state(q, kv_state, None), kv_state, None
         # k: (batch_times_features, seq, heads, qk_dim)
         # v: (batch_times_features, seq, heads, v_dim)
         kv_state = torch.einsum("bshf,bshd->bhfd", k, v)
         k_sum = None
         if self.use_k_sum_normalization:
             k_sum = k.sum(dim=1)
-        return self._read_from_kv_state(q, kv_state, k_sum), kv_state, k_sum, None
+        return self._read_from_kv_state(q, kv_state, k_sum), kv_state, k_sum
 
     def _causal_attention(
         self,
@@ -405,38 +383,20 @@ class LinearAttention(nn.Module):
         *,
         kv_state_prefix: torch.Tensor | None = None,
         k_sum_prefix: torch.Tensor | None = None,
-        p_state_prefix: torch.Tensor | None = None,
-    ) -> tuple[
-        torch.Tensor,
-        torch.Tensor | None,
-        torch.Tensor | None,
-        torch.Tensor | None,
-    ]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         q, k = self._apply_query_key_feature_maps(q, k)
 
         if self.state_update_rule != "linear":
-            attn, kv_state, p_state = self._oracle_attention(
-                q,
-                k,
-                v,
-                kv_state_prefix=kv_state_prefix,
-                p_state_prefix=p_state_prefix,
-            )
-            return attn, kv_state, None, p_state
+            if kv_state_prefix is not None:
+                raise ValueError(
+                    "Least-squares oracle cannot be continued from a fitted "
+                    "memory state alone."
+                )
+            attn, kv_state = self._least_squares_causal_attention(q, k, v)
+            return attn, kv_state, None
 
         if q.shape[1] == 0:
-            return v, kv_state_prefix, k_sum_prefix, p_state_prefix
-
-        if self.final_state_readout:
-            kv_state = torch.einsum("bshf,bshd->bhfd", k, v)
-            if kv_state_prefix is not None:
-                kv_state = kv_state + kv_state_prefix
-            k_sum = None
-            if self.use_k_sum_normalization:
-                k_sum = k.sum(dim=1)
-                if k_sum_prefix is not None:
-                    k_sum = k_sum + k_sum_prefix
-            return self._read_from_kv_state(q, kv_state, k_sum), kv_state, k_sum, None
+            return v, kv_state_prefix, k_sum_prefix
 
         chunk_size = self.causal_chunk_size
         if chunk_size is None:
@@ -475,7 +435,7 @@ class LinearAttention(nn.Module):
             kv_state = kv_chunk_raw[:, -1]
             k_sum = None if k_chunk_sum is None else k_chunk_sum[:, -1]
 
-        return torch.cat(outputs, dim=1), kv_state, k_sum, None
+        return torch.cat(outputs, dim=1), kv_state, k_sum
 
     def _train_attention(
         self,
@@ -484,11 +444,11 @@ class LinearAttention(nn.Module):
         v: torch.Tensor,
         *,
         causal: bool,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         if causal:
-            attn, kv_state, k_sum, p_state = self._causal_attention(q, k, v)
+            attn, kv_state, k_sum = self._causal_attention(q, k, v)
             assert kv_state is not None
-            return attn, kv_state, k_sum, p_state
+            return attn, kv_state, k_sum
         return self._noncausal_attention(q, k, v)
 
     def _split_attention(
@@ -501,7 +461,7 @@ class LinearAttention(nn.Module):
         assert not (self.causal and self.training), (
             "split_attention should not be used in full causal training"
         )
-        attn_train, kv_state, k_sum, _ = self._train_attention(
+        attn_train, kv_state, k_sum = self._train_attention(
             q[:, :single_eval_pos],
             k[:, :single_eval_pos],
             v[:, :single_eval_pos],
@@ -549,7 +509,7 @@ class LinearAttention(nn.Module):
 
         q, k, v = self._project_qkv(x)
         if self.causal and self.training:
-            attn, _, _, _ = self._causal_attention(q, k, v)
+            attn, _, _ = self._causal_attention(q, k, v)
         else:
             attn = self._split_attention(q, k, v, single_eval_pos)
         return self._apply_output(x, attn)
@@ -561,17 +521,13 @@ class LinearAttention(nn.Module):
         assert x.dim() == 4, f"Expected x to have 4 dims, got shape {tuple(x.shape)}."
 
         q, k, v = self._project_qkv(x)
-        attn, kv_state, k_sum, p_state = self._train_attention(
+        attn, kv_state, k_sum = self._train_attention(
             q,
             k,
             v,
             causal=self.causal or self.causal_train_only,
         )
-        return self._apply_output(x, attn), {
-            "kv_state": kv_state,
-            "k_sum": k_sum,
-            "p_state": p_state,
-        }
+        return self._apply_output(x, attn), {"kv_state": kv_state, "k_sum": k_sum}
 
     def incontext_predict(
         self,
@@ -582,13 +538,12 @@ class LinearAttention(nn.Module):
 
         q, k, v = self._project_qkv(x)
         if self.causal and self.training:
-            attn, _, _, _ = self._causal_attention(
+            attn, _, _ = self._causal_attention(
                 q,
                 k,
                 v,
                 kv_state_prefix=state["kv_state"],
                 k_sum_prefix=state.get("k_sum"),
-                p_state_prefix=state.get("p_state"),
             )
         else:
             q = self._apply_feature_map(

@@ -53,7 +53,8 @@ _METRIC_DISPLAY_NAMES = {
     "state_cosine_to_reference": "State Cosine to Reference",
     "state_top_subspace_to_reference": "Top Singular Subspace to Reference",
     "state_renorm_scale": "State Renorm Scale",
-    "output_norm": "Output Norm",
+    "output_norm": "Readout Norm",
+    "output_cosine_to_reference": "Readout Cosine to Reference",
 }
 
 
@@ -299,6 +300,61 @@ def _top_subspace_similarity(
     return float(((left + right) / 2).item())
 
 
+def _linear_attention_readouts(
+    model: Any,
+    *,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    style: torch.Tensor | None,
+    y_style: torch.Tensor | None,
+    categorical_inds: list[int] | None,
+) -> dict[tuple[int, int], torch.Tensor]:
+    base_model = getattr(model, "base_model", model)
+    backbone = getattr(base_model, "transformer_layers", None)
+    if backbone is None or backbone.__class__.__name__ != "LinearAttentionBackbone":
+        return {}
+
+    x_bf, y_bf, _ = base_model._prepare_batch_first_inputs(x, y, None)
+    assert x_bf is not None and y_bf is not None
+    embedded_input, _, _, _ = base_model._build_embedded_input(
+        x_bf,
+        y_bf,
+        single_eval_pos=y_bf.shape[1],
+        style=style,
+        y_style=y_style,
+        categorical_inds=categorical_inds,
+        cache_trainset_representation=True,
+    )
+
+    readouts: dict[tuple[int, int], torch.Tensor] = {}
+    out = embedded_input
+    for layer_idx, layer in enumerate(backbone.layers):
+        q_raw, k_raw, v = layer._project_qkv(out)
+        if layer.causal or layer.causal_train_only:
+            attn, _, _ = layer._causal_attention(q_raw, k_raw, v)
+        else:
+            attn, _, _ = layer._noncausal_attention(q_raw, k_raw, v)
+        for head_idx in range(int(attn.shape[2])):
+            readouts[(int(layer_idx), int(head_idx))] = (
+                attn[:, :, head_idx].detach().float().cpu()
+            )
+        out = layer._apply_output(out, attn)
+    return readouts
+
+
+def _sequence_prefix_cosine(matrix: torch.Tensor, reference: torch.Tensor) -> float:
+    overlap = min(int(matrix.shape[1]), int(reference.shape[1]))
+    if overlap <= 0:
+        return float("nan")
+    return float(
+        torch.nn.functional.cosine_similarity(
+            matrix[:, :overlap].reshape(1, -1),
+            reference[:, :overlap].reshape(1, -1),
+            dim=-1,
+        ).item()
+    )
+
+
 def run_hidden_state_tracking(
     *,
     experiment: HiddenStateTrackingConfig | Mapping[str, Any],
@@ -331,6 +387,7 @@ def run_hidden_state_tracking(
         for raw_name, model in models.items():
             model_name = str(raw_name)
             state_matrices: dict[tuple[int, str, int, int], torch.Tensor] = {}
+            output_tensors: dict[tuple[int, str, int, int], torch.Tensor] = {}
             state_row_indices: dict[tuple[int, str, int, int], int] = {}
             for seqlen in cfg.sorted_seqlens:
                 x = base_batch.x[:, :seqlen]
@@ -358,6 +415,15 @@ def run_hidden_state_tracking(
                     raise
                 extra = {"rep": int(rep), "seqlen": int(seqlen)}
                 k_sum_norms = _k_sum_norms_by_layer(state)
+                try:
+                    readouts = _run_autocast(
+                        lambda: _linear_attention_readouts(model, **fit_kwargs),
+                        model_name=model_name,
+                        autocast_models=autocast_models,
+                    )
+                except torch.cuda.OutOfMemoryError:
+                    torch.cuda.empty_cache()
+                    readouts = {}
                 for name, tensor in _iter_hidden_tensors(state, tensor_name_patterns):
                     lowered_name = name.lower()
                     if "recurrent_state" not in lowered_name and "kv_state" not in lowered_name:
@@ -393,15 +459,22 @@ def run_hidden_state_tracking(
                             "k_sum_norm": k_sum_norm,
                             "joint_hidden_state_norm": joint_hidden_state_norm,
                             "kv_over_ksum_ratio": kv_over_ksum_ratio,
+                            "output_norm": float("nan"),
                             "layer_idx": layer_idx,
                             "head_idx": int(head_idx),
                         }
+                        readout = readouts.get((int(layer_idx), int(head_idx)))
+                        if readout is not None:
+                            row["output_norm"] = float(torch.linalg.vector_norm(readout).item())
                         if reference_seqlen is not None:
                             row["reference_seqlen"] = int(reference_seqlen)
                             row["state_cosine_to_reference"] = float("nan") # add a placeholder
                             row["state_top_subspace_to_reference"] = float("nan")
+                            row["output_cosine_to_reference"] = float("nan")
                             key = (int(seqlen), name, int(layer_idx), int(head_idx))
                             state_matrices[key] = matrix.detach().float().cpu()
+                            if readout is not None:
+                                output_tensors[key] = readout
                             state_row_indices[key] = len(rows)
                         rows.append(row)
             if reference_seqlen is not None:
@@ -425,6 +498,19 @@ def run_hidden_state_tracking(
                         reference,
                         rank=reference_subspace_rank,
                     )
+                ref_outputs_by_state = {
+                    key[1:]: output
+                    for key, output in output_tensors.items()
+                    if key[0] == int(reference_seqlen)
+                }
+                for key, output in output_tensors.items():
+                    reference_output = ref_outputs_by_state.get(key[1:])
+                    if reference_output is None:
+                        continue
+                    rows[state_row_indices[key]]["output_cosine_to_reference"] = _sequence_prefix_cosine(
+                        output,
+                        reference_output,
+                    )
     return pd.DataFrame(rows)
 
 
@@ -440,6 +526,8 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
         ("kv_over_ksum_ratio", float("nan")),
         ("state_cosine_to_reference", float("nan")),
         ("state_top_subspace_to_reference", float("nan")),
+        ("output_norm", float("nan")),
+        ("output_cosine_to_reference", float("nan")),
     ):
         if col not in df.columns:
             df[col] = default
@@ -451,6 +539,8 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             "kv_state_norm_mean", "k_sum_norm_mean", "joint_hidden_state_norm_mean", "kv_over_ksum_ratio_mean",
             "state_cosine_to_reference_mean",
             "state_top_subspace_to_reference_mean",
+            "output_norm_mean",
+            "output_cosine_to_reference_mean",
         ]
         return pd.DataFrame(columns=cols)
     group_cols = [c for c in ("model", "tensor_name", "layer_idx", "head_idx", "seqlen") if c in df.columns]
@@ -468,6 +558,8 @@ def summarize_hidden_state_by_seqlen(hidden_state_df: pd.DataFrame) -> pd.DataFr
             kv_over_ksum_ratio_mean=("kv_over_ksum_ratio", "mean"),
             state_cosine_to_reference_mean=("state_cosine_to_reference", "mean"),
             state_top_subspace_to_reference_mean=("state_top_subspace_to_reference", "mean"),
+            output_norm_mean=("output_norm", "mean"),
+            output_cosine_to_reference_mean=("output_cosine_to_reference", "mean"),
             n=("rep", "nunique"),
         )
         .reset_index()
