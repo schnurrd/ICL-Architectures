@@ -487,13 +487,14 @@ class LinearAttention(nn.Module):
                         "bhf,bhg->bhfg", precision_k, precision_k
                     ) / denom[..., None, None]
                     cross = cross + torch.einsum("bhf,bhd->bhfd", k_t, v_t)
-                    kv_state = torch.einsum("bhfg,bhgd->bhfd", precision, cross)
+                    q_precision = torch.einsum("bhf,bhfg->bhg", q_t, precision)
                     outputs.append(
-                        torch.einsum("bhf,bhfd->bhd", q_t, kv_state)
+                        torch.einsum("bhg,bhgd->bhd", q_precision, cross)
                         .to(v.dtype)
                         .unsqueeze(1)
                     )
 
+                kv_state = torch.einsum("bhfg,bhgd->bhfd", precision, cross)
             return torch.cat(outputs, dim=1), kv_state.to(v.dtype), None
 
         if q.shape[1] == 0:
