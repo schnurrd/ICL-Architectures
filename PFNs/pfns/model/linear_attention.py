@@ -58,9 +58,10 @@ class LinearAttention(nn.Module):
             normalized = "least_squares"
         if normalized == "ridge_oracle":
             normalized = "ridge"
-        if normalized not in {"linear", "least_squares", "ridge"}:
+        if normalized not in {"linear", "least_squares", "ridge", "scaled_ridge"}:
             raise ValueError(
-                "state_update_rule must be one of {'linear', 'least_squares', 'ridge', 'rls'}, "
+                "state_update_rule must be one of "
+                "{'linear', 'least_squares', 'ridge', 'scaled_ridge', 'rls'}, "
                 f"got {state_update_rule!r}."
             )
         return normalized
@@ -372,6 +373,8 @@ class LinearAttention(nn.Module):
         if k.shape[1] == 0:
             return k.new_zeros(k.shape[0], k.shape[2], k.shape[3], v.shape[-1])
 
+        regularization_scale = k.shape[1] if self.state_update_rule == "scaled_ridge" else 1.0
+        effective_lambda = self.ridge_lambda * regularization_scale
         compute_dtype = (
             torch.float32
             if k.dtype in {torch.float16, torch.bfloat16}
@@ -389,7 +392,7 @@ class LinearAttention(nn.Module):
             cross = torch.matmul(k_bh.transpose(-1, -2), v_bh)
             eye = torch.eye(k.shape[-1], dtype=compute_dtype, device=k.device)
             state = torch.linalg.solve(
-                gram + self.ridge_lambda * eye,
+                gram + effective_lambda * eye,
                 cross,
             )
         return state.to(v.dtype)
@@ -401,7 +404,7 @@ class LinearAttention(nn.Module):
         *,
         use_normal_equations: bool = False,
     ) -> torch.Tensor:
-        if self.state_update_rule == "ridge":
+        if self.state_update_rule in {"ridge", "scaled_ridge"}:
             return self._ridge_state(k, v)
         return self._least_squares_state(
             k,
@@ -435,12 +438,14 @@ class LinearAttention(nn.Module):
         """Causal ridge reads via a streaming Sherman-Morrison update.
 
         This computes the same prefix solution as repeatedly solving
-        ``(K_t^T K_t + lambda I)^-1 K_t^T V_t``, but avoids materializing every
-        growing prefix during causal training.
+        ``(K_t^T K_t + lambda_eff I)^-1 K_t^T V_t``, but avoids materializing
+        every growing prefix during causal training.
         """
         if k.shape[1] == 0:
             return v, self._ridge_state(k, v)
 
+        regularization_scale = k.shape[1] if self.state_update_rule == "scaled_ridge" else 1.0
+        effective_lambda = self.ridge_lambda * regularization_scale
         compute_dtype = (
             torch.float32
             if k.dtype in {torch.float16, torch.bfloat16}
@@ -456,7 +461,7 @@ class LinearAttention(nn.Module):
             value_dim = v.shape[-1]
             eye = torch.eye(qk_dim, dtype=compute_dtype, device=k.device)
             precision = eye.expand(batch_size, num_heads, qk_dim, qk_dim).clone()
-            precision = precision / self.ridge_lambda
+            precision = precision / effective_lambda
             cross = k.new_zeros(
                 batch_size,
                 num_heads,
@@ -525,7 +530,7 @@ class LinearAttention(nn.Module):
                     "Least-squares oracle cannot be continued from a fitted "
                     "memory state alone."
                 )
-            if self.state_update_rule == "ridge":
+            if self.state_update_rule in {"ridge", "scaled_ridge"}:
                 attn, kv_state = self._ridge_causal_attention(q, k, v)
             else:
                 attn, kv_state = self._least_squares_causal_attention(q, k, v)

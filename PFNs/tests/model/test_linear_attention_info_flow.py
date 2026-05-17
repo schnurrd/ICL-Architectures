@@ -33,13 +33,19 @@ def _least_squares_state(k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
     )
 
 
-def _ridge_state(k: torch.Tensor, v: torch.Tensor, ridge_lambda: float) -> torch.Tensor:
+def _ridge_state(
+    k: torch.Tensor,
+    v: torch.Tensor,
+    ridge_lambda: float,
+    regularization_scale: float = 1.0,
+) -> torch.Tensor:
     k_bh = k.transpose(1, 2)
     v_bh = v.transpose(1, 2)
     gram = torch.matmul(k_bh.transpose(-1, -2), k_bh)
     cross = torch.matmul(k_bh.transpose(-1, -2), v_bh)
     eye = torch.eye(k.shape[-1], dtype=k.dtype, device=k.device)
-    return torch.linalg.solve(gram + ridge_lambda * eye, cross)
+    regularized_gram = gram + ridge_lambda * regularization_scale * eye
+    return torch.linalg.solve(regularized_gram, cross)
 
 
 def _run_test_token_permutation_case(
@@ -172,13 +178,14 @@ def test_linear_attention_least_squares_matches_noncausal_solution():
     assert k_sum is None
 
 
-def test_linear_attention_ridge_matches_noncausal_solution():
+@pytest.mark.parametrize("state_update_rule", ["ridge", "scaled_ridge"])
+def test_linear_attention_ridge_matches_noncausal_solution(state_update_rule: str):
     torch.manual_seed(0)
     layer = _build_layer(
         feature_map="identity",
         use_query_scale=False,
         use_k_sum_normalization=False,
-        state_update_rule="ridge",
+        state_update_rule=state_update_rule,
         ridge_lambda=0.7,
     )
     layer.eval()
@@ -190,7 +197,13 @@ def test_linear_attention_ridge_matches_noncausal_solution():
     with torch.no_grad():
         attn, state, k_sum = layer._noncausal_attention(q, k, v)
 
-    expected_state = _ridge_state(k, v, layer.ridge_lambda)
+    regularization_scale = k.shape[1] if state_update_rule == "scaled_ridge" else 1.0
+    expected_state = _ridge_state(
+        k,
+        v,
+        layer.ridge_lambda,
+        regularization_scale=regularization_scale,
+    )
     expected_attn = torch.einsum("bshf,bhfd->bshd", q, expected_state)
 
     torch.testing.assert_close(attn, expected_attn, rtol=2e-5, atol=2e-6)
@@ -218,14 +231,15 @@ def test_linear_attention_ridge_state_uses_fp32_linalg_under_autocast():
     assert state.dtype == v.dtype
 
 
-def test_linear_attention_ridge_matches_prefix_solution():
+@pytest.mark.parametrize("state_update_rule", ["ridge", "scaled_ridge"])
+def test_linear_attention_ridge_matches_prefix_solution(state_update_rule: str):
     torch.manual_seed(0)
     layer = _build_layer(
         causal=True,
         feature_map="identity",
         use_query_scale=False,
         use_k_sum_normalization=False,
-        state_update_rule="ridge",
+        state_update_rule=state_update_rule,
         ridge_lambda=0.7,
     )
     layer.eval()
@@ -238,18 +252,36 @@ def test_linear_attention_ridge_matches_prefix_solution():
         attn, state, _ = layer._causal_attention(q, k, v)
 
     expected = []
+    regularization_scale = k.shape[1] if state_update_rule == "scaled_ridge" else 1.0
     for t in range(k.shape[1]):
-        expected_state_t = _ridge_state(k[:, : t + 1], v[:, : t + 1], layer.ridge_lambda)
-        expected.append(torch.einsum("bhf,bhfd->bhd", q[:, t], expected_state_t).unsqueeze(1))
+        expected_state_t = _ridge_state(
+            k[:, : t + 1],
+            v[:, : t + 1],
+            layer.ridge_lambda,
+            regularization_scale=regularization_scale,
+        )
+        expected.append(
+            torch.einsum("bhf,bhfd->bhd", q[:, t], expected_state_t).unsqueeze(1)
+        )
 
-    expected_state = _ridge_state(k, v, layer.ridge_lambda)
+    expected_state = _ridge_state(
+        k,
+        v,
+        layer.ridge_lambda,
+        regularization_scale=regularization_scale,
+    )
 
     torch.testing.assert_close(attn, torch.cat(expected, dim=1), rtol=2e-5, atol=2e-6)
     torch.testing.assert_close(state, expected_state, rtol=2e-5, atol=2e-6)
 
 
-@pytest.mark.parametrize("state_update_rule", ["least_squares", "ridge", "rls"])
-def test_linear_attention_oracle_update_incontext_predict_matches_forward(state_update_rule: str):
+@pytest.mark.parametrize(
+    "state_update_rule",
+    ["least_squares", "ridge", "scaled_ridge", "rls"],
+)
+def test_linear_attention_oracle_update_incontext_predict_matches_forward(
+    state_update_rule: str,
+):
     torch.manual_seed(0)
     layer = _build_layer(
         causal_train_only=True,
