@@ -54,14 +54,10 @@ class LinearAttention(nn.Module):
     @staticmethod
     def _normalize_state_update_rule(state_update_rule: str) -> str:
         normalized = state_update_rule.strip().lower().replace("-", "_")
-        if normalized in {"rls", "least_squares_oracle", "oracle"}:
-            normalized = "least_squares"
-        if normalized == "ridge_oracle":
-            normalized = "ridge"
         if normalized not in {"linear", "least_squares", "ridge", "scaled_ridge"}:
             raise ValueError(
                 "state_update_rule must be one of "
-                "{'linear', 'least_squares', 'ridge', 'scaled_ridge', 'rls'}, "
+                "{'linear', 'least_squares', 'ridge', 'scaled_ridge'}, "
                 f"got {state_update_rule!r}."
             )
         return normalized
@@ -330,39 +326,36 @@ class LinearAttention(nn.Module):
         denom = torch.einsum("bshf,bhf->bsh", q, k_sum)
         return num / (denom.unsqueeze(-1) + self.eps)
 
+    @staticmethod
+    def _linalg_compute_dtype(x: torch.Tensor) -> torch.dtype:
+        if x.dtype in {torch.float16, torch.bfloat16}:
+            return torch.float32
+        return x.dtype
+
+    @staticmethod
+    def _linalg_autocast_context(x: torch.Tensor):
+        if x.device.type in {"cpu", "cuda"}:
+            return torch.autocast(device_type=x.device.type, enabled=False)
+        return nullcontext()
+
+    def _effective_ridge_lambda(self, seq_len: int) -> float:
+        scale = seq_len if self.state_update_rule == "scaled_ridge" else 1.0
+        return self.ridge_lambda * scale
+
     def _least_squares_state(
         self,
         k: torch.Tensor,
         v: torch.Tensor,
-        *,
-        use_normal_equations: bool = False,
     ) -> torch.Tensor:
         """Return the ridgeless minimum-norm linear least-squares memory."""
         if k.shape[1] == 0:
             return k.new_zeros(k.shape[0], k.shape[2], k.shape[3], v.shape[-1])
 
-        compute_dtype = (
-            torch.float32
-            if k.dtype in {torch.float16, torch.bfloat16}
-            else k.dtype
-        )
-        autocast_context = (
-            torch.autocast(device_type=k.device.type, enabled=False)
-            if k.device.type in {"cpu", "cuda"}
-            else nullcontext()
-        )
-        with autocast_context:
+        compute_dtype = self._linalg_compute_dtype(k)
+        with self._linalg_autocast_context(k):
             k_bh = k.transpose(1, 2).to(compute_dtype)
             v_bh = v.transpose(1, 2).to(compute_dtype)
-            state = None
-            if use_normal_equations and k.shape[1] >= k.shape[-1]:
-                gram = torch.matmul(k_bh.transpose(-1, -2), k_bh)
-                cross = torch.matmul(k_bh.transpose(-1, -2), v_bh)
-                chol, info = torch.linalg.cholesky_ex(gram, check_errors=False)
-                if bool(torch.all(info == 0)):
-                    state = torch.cholesky_solve(cross, chol)
-            if state is None:
-                state = torch.matmul(torch.linalg.pinv(k_bh), v_bh)
+            state = torch.matmul(torch.linalg.pinv(k_bh), v_bh)
         return state.to(v.dtype)
 
     def _ridge_state(
@@ -373,24 +366,15 @@ class LinearAttention(nn.Module):
         if k.shape[1] == 0:
             return k.new_zeros(k.shape[0], k.shape[2], k.shape[3], v.shape[-1])
 
-        regularization_scale = k.shape[1] if self.state_update_rule == "scaled_ridge" else 1.0
-        effective_lambda = self.ridge_lambda * regularization_scale
-        compute_dtype = (
-            torch.float32
-            if k.dtype in {torch.float16, torch.bfloat16}
-            else k.dtype
-        )
-        autocast_context = (
-            torch.autocast(device_type=k.device.type, enabled=False)
-            if k.device.type in {"cpu", "cuda"}
-            else nullcontext()
-        )
-        with autocast_context:
+        effective_lambda = self._effective_ridge_lambda(k.shape[1])
+        compute_dtype = self._linalg_compute_dtype(k)
+        with self._linalg_autocast_context(k):
             k_bh = k.transpose(1, 2).to(compute_dtype)
             v_bh = v.transpose(1, 2).to(compute_dtype)
             gram = torch.matmul(k_bh.transpose(-1, -2), k_bh)
             cross = torch.matmul(k_bh.transpose(-1, -2), v_bh)
             eye = torch.eye(k.shape[-1], dtype=compute_dtype, device=k.device)
+            # solve_ex(..., check_errors=False)[0] is equivalent and might be marginally faster.
             state = torch.linalg.solve(
                 gram + effective_lambda * eye,
                 cross,
@@ -401,18 +385,16 @@ class LinearAttention(nn.Module):
         self,
         k: torch.Tensor,
         v: torch.Tensor,
-        *,
-        use_normal_equations: bool = False,
     ) -> torch.Tensor:
+        if self.state_update_rule == "least_squares":
+            return self._least_squares_state(k, v)
         if self.state_update_rule in {"ridge", "scaled_ridge"}:
             return self._ridge_state(k, v)
-        return self._least_squares_state(
-            k,
-            v,
-            use_normal_equations=use_normal_equations,
+        raise RuntimeError(
+            f"Unsupported oracle state_update_rule: {self.state_update_rule!r}."
         )
 
-    def _least_squares_causal_attention(
+    def _oracle_causal_attention(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
@@ -429,68 +411,6 @@ class LinearAttention(nn.Module):
             return v, kv_state
         return torch.cat(outputs, dim=1), kv_state
 
-    def _ridge_causal_attention(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Causal ridge reads via a streaming Sherman-Morrison update.
-
-        This computes the same prefix solution as repeatedly solving
-        ``(K_t^T K_t + lambda_eff I)^-1 K_t^T V_t``, but avoids materializing
-        every growing prefix during causal training.
-        """
-        if k.shape[1] == 0:
-            return v, self._ridge_state(k, v)
-
-        regularization_scale = k.shape[1] if self.state_update_rule == "scaled_ridge" else 1.0
-        effective_lambda = self.ridge_lambda * regularization_scale
-        compute_dtype = (
-            torch.float32
-            if k.dtype in {torch.float16, torch.bfloat16}
-            else k.dtype
-        )
-        autocast_context = (
-            torch.autocast(device_type=k.device.type, enabled=False)
-            if k.device.type in {"cpu", "cuda"}
-            else nullcontext()
-        )
-        with autocast_context:
-            batch_size, _, num_heads, qk_dim = k.shape
-            value_dim = v.shape[-1]
-            eye = torch.eye(qk_dim, dtype=compute_dtype, device=k.device)
-            precision = eye.expand(batch_size, num_heads, qk_dim, qk_dim).clone()
-            precision = precision / effective_lambda
-            cross = k.new_zeros(
-                batch_size,
-                num_heads,
-                qk_dim,
-                value_dim,
-                dtype=compute_dtype,
-            )
-
-            outputs = []
-            state = cross
-            for t in range(k.shape[1]):
-                q_t = q[:, t].to(compute_dtype)
-                k_t = k[:, t].to(compute_dtype)
-                v_t = v[:, t].to(compute_dtype)
-                precision_k = torch.einsum("bhfg,bhg->bhf", precision, k_t)
-                denom = 1.0 + torch.einsum("bhf,bhf->bh", k_t, precision_k)
-                precision = precision - torch.einsum(
-                    "bhf,bhg->bhfg", precision_k, precision_k
-                ) / denom[..., None, None]
-                cross = cross + torch.einsum("bhf,bhd->bhfd", k_t, v_t)
-                state = torch.einsum("bhfg,bhgd->bhfd", precision, cross)
-                outputs.append(
-                    torch.einsum("bhf,bhfd->bhd", q_t, state)
-                    .to(v.dtype)
-                    .unsqueeze(1)
-                )
-
-        return torch.cat(outputs, dim=1), state.to(v.dtype)
-
     def _noncausal_attention(
         self,
         q: torch.Tensor,
@@ -499,11 +419,7 @@ class LinearAttention(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         q, k = self._apply_query_key_feature_maps(q, k)
         if self.state_update_rule != "linear":
-            kv_state = self._oracle_state(
-                k,
-                v,
-                use_normal_equations=self.state_update_rule == "least_squares",
-            )
+            kv_state = self._oracle_state(k, v)
             return self._read_from_kv_state(q, kv_state, None), kv_state, None
         # k: (batch_times_features, seq, heads, qk_dim)
         # v: (batch_times_features, seq, heads, v_dim)
@@ -525,16 +441,60 @@ class LinearAttention(nn.Module):
         q, k = self._apply_query_key_feature_maps(q, k)
 
         if self.state_update_rule != "linear":
-            if kv_state_prefix is not None:
+            if kv_state_prefix is not None or k_sum_prefix is not None:
                 raise ValueError(
-                    "Least-squares oracle cannot be continued from a fitted "
+                    "Oracle state updates cannot be continued from a fitted "
                     "memory state alone."
                 )
-            if self.state_update_rule in {"ridge", "scaled_ridge"}:
-                attn, kv_state = self._ridge_causal_attention(q, k, v)
-            else:
-                attn, kv_state = self._least_squares_causal_attention(q, k, v)
-            return attn, kv_state, None
+
+            if self.state_update_rule in {"least_squares", "scaled_ridge"}:
+                attn, kv_state = self._oracle_causal_attention(q, k, v)
+                return attn, kv_state, None
+
+            if k.shape[1] == 0:
+                return v, self._ridge_state(k, v), None
+
+            effective_lambda = self._effective_ridge_lambda(k.shape[1])
+            compute_dtype = self._linalg_compute_dtype(k)
+            with self._linalg_autocast_context(k):
+                batch_size, _, num_heads, qk_dim = k.shape
+                value_dim = v.shape[-1]
+                eye = torch.eye(qk_dim, dtype=compute_dtype, device=k.device)
+                precision = eye.expand(
+                    batch_size,
+                    num_heads,
+                    qk_dim,
+                    qk_dim,
+                ).clone()
+                precision = precision / effective_lambda
+                cross = k.new_zeros(
+                    batch_size,
+                    num_heads,
+                    qk_dim,
+                    value_dim,
+                    dtype=compute_dtype,
+                )
+
+                outputs = []
+                kv_state = cross
+                for t in range(k.shape[1]):
+                    q_t = q[:, t].to(compute_dtype)
+                    k_t = k[:, t].to(compute_dtype)
+                    v_t = v[:, t].to(compute_dtype)
+                    precision_k = torch.einsum("bhfg,bhg->bhf", precision, k_t)
+                    denom = 1.0 + torch.einsum("bhf,bhf->bh", k_t, precision_k)
+                    precision = precision - torch.einsum(
+                        "bhf,bhg->bhfg", precision_k, precision_k
+                    ) / denom[..., None, None]
+                    cross = cross + torch.einsum("bhf,bhd->bhfd", k_t, v_t)
+                    kv_state = torch.einsum("bhfg,bhgd->bhfd", precision, cross)
+                    outputs.append(
+                        torch.einsum("bhf,bhfd->bhd", q_t, kv_state)
+                        .to(v.dtype)
+                        .unsqueeze(1)
+                    )
+
+            return torch.cat(outputs, dim=1), kv_state.to(v.dtype), None
 
         if q.shape[1] == 0:
             return v, kv_state_prefix, k_sum_prefix

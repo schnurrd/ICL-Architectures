@@ -129,7 +129,7 @@ def test_linear_attention_least_squares_matches_prefix_solution():
         feature_map="identity",
         use_query_scale=False,
         use_k_sum_normalization=False,
-        state_update_rule="rls",
+        state_update_rule="least_squares",
     )
     layer.eval()
 
@@ -159,7 +159,7 @@ def test_linear_attention_least_squares_matches_noncausal_solution():
         feature_map="identity",
         use_query_scale=False,
         use_k_sum_normalization=False,
-        state_update_rule="rls",
+        state_update_rule="least_squares",
     )
     layer.eval()
 
@@ -252,18 +252,23 @@ def test_linear_attention_ridge_matches_prefix_solution(state_update_rule: str):
         attn, state, _ = layer._causal_attention(q, k, v)
 
     expected = []
-    regularization_scale = k.shape[1] if state_update_rule == "scaled_ridge" else 1.0
     for t in range(k.shape[1]):
+        k_prefix = k[:, : t + 1]
+        v_prefix = v[:, : t + 1]
+        regularization_scale_t = (
+            k_prefix.shape[1] if state_update_rule == "scaled_ridge" else 1.0
+        )
         expected_state_t = _ridge_state(
-            k[:, : t + 1],
-            v[:, : t + 1],
+            k_prefix,
+            v_prefix,
             layer.ridge_lambda,
-            regularization_scale=regularization_scale,
+            regularization_scale=regularization_scale_t,
         )
         expected.append(
             torch.einsum("bhf,bhfd->bhd", q[:, t], expected_state_t).unsqueeze(1)
         )
 
+    regularization_scale = k.shape[1] if state_update_rule == "scaled_ridge" else 1.0
     expected_state = _ridge_state(
         k,
         v,
@@ -277,7 +282,7 @@ def test_linear_attention_ridge_matches_prefix_solution(state_update_rule: str):
 
 @pytest.mark.parametrize(
     "state_update_rule",
-    ["least_squares", "ridge", "scaled_ridge", "rls"],
+    ["least_squares", "ridge", "scaled_ridge"],
 )
 def test_linear_attention_oracle_update_incontext_predict_matches_forward(
     state_update_rule: str,
@@ -305,9 +310,20 @@ def test_linear_attention_oracle_update_incontext_predict_matches_forward(
 def test_linear_attention_oracle_update_rejects_k_sum_normalization():
     with pytest.raises(ValueError, match="use_k_sum_normalization"):
         _build_layer(
-            state_update_rule="rls",
+            state_update_rule="least_squares",
             use_k_sum_normalization=True,
         )
+
+
+@pytest.mark.parametrize(
+    "state_update_rule",
+    ["rls", "oracle", "least_squares_oracle", "ridge_oracle"],
+)
+def test_linear_attention_rejects_unsupported_oracle_aliases(
+    state_update_rule: str,
+):
+    with pytest.raises(ValueError, match="state_update_rule"):
+        _build_layer(state_update_rule=state_update_rule)
 
 
 def test_linear_attention_chunked_causal_matches_unchunked_with_state_renormalization():
