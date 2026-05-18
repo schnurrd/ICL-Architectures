@@ -356,6 +356,7 @@ class LinearAttention(nn.Module):
             k_bh = k.transpose(1, 2).to(compute_dtype)
             v_bh = v.transpose(1, 2).to(compute_dtype)
             state = torch.matmul(torch.linalg.pinv(k_bh), v_bh)
+            # state = torch.linalg.lstsq(k_bh, v_bh).solution # <- faster but on GPU assumes full rank which we can't guarantee
         return state.to(v.dtype)
 
     def _ridge_state(
@@ -429,7 +430,63 @@ class LinearAttention(nn.Module):
             k_sum = k.sum(dim=1)
         return self._read_from_kv_state(q, kv_state, k_sum), kv_state, k_sum
 
-    def _causal_attention(
+    def _analytical_causal_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+        if self.state_update_rule in {"least_squares", "scaled_ridge"}:
+            attn, kv_state = self._oracle_causal_attention(q, k, v)
+            return attn, kv_state, None
+
+        if k.shape[1] == 0:
+            return v, self._ridge_state(k, v), None
+
+        effective_lambda = self._effective_ridge_lambda(k.shape[1])
+        compute_dtype = self._linalg_compute_dtype(k)
+        with self._linalg_autocast_context(k):
+            batch_size, _, num_heads, qk_dim = k.shape
+            value_dim = v.shape[-1]
+            eye = torch.eye(qk_dim, dtype=compute_dtype, device=k.device)
+            precision = eye.expand(
+                batch_size,
+                num_heads,
+                qk_dim,
+                qk_dim,
+            ).clone()
+            precision = precision / effective_lambda
+            cross = k.new_zeros(
+                batch_size,
+                num_heads,
+                qk_dim,
+                value_dim,
+                dtype=compute_dtype,
+            )
+
+            outputs = []
+            kv_state = cross
+            for t in range(k.shape[1]):
+                q_t = q[:, t].to(compute_dtype)
+                k_t = k[:, t].to(compute_dtype)
+                v_t = v[:, t].to(compute_dtype)
+                precision_k = torch.einsum("bhfg,bhg->bhf", precision, k_t)
+                denom = 1.0 + torch.einsum("bhf,bhf->bh", k_t, precision_k)
+                precision = precision - torch.einsum(
+                    "bhf,bhg->bhfg", precision_k, precision_k
+                ) / denom[..., None, None]
+                cross = cross + torch.einsum("bhf,bhd->bhfd", k_t, v_t)
+                q_precision = torch.einsum("bhf,bhfg->bhg", q_t, precision)
+                outputs.append(
+                    torch.einsum("bhg,bhgd->bhd", q_precision, cross)
+                    .to(v.dtype)
+                    .unsqueeze(1)
+                )
+
+            kv_state = torch.einsum("bhfg,bhgd->bhfd", precision, cross)
+        return torch.cat(outputs, dim=1), kv_state.to(v.dtype), None
+
+    def _linear_causal_attention(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
@@ -438,65 +495,6 @@ class LinearAttention(nn.Module):
         kv_state_prefix: torch.Tensor | None = None,
         k_sum_prefix: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
-        q, k = self._apply_query_key_feature_maps(q, k)
-
-        if self.state_update_rule != "linear":
-            if kv_state_prefix is not None or k_sum_prefix is not None:
-                raise ValueError(
-                    "Oracle state updates cannot be continued from a fitted "
-                    "memory state alone."
-                )
-
-            if self.state_update_rule in {"least_squares", "scaled_ridge"}:
-                attn, kv_state = self._oracle_causal_attention(q, k, v)
-                return attn, kv_state, None
-
-            if k.shape[1] == 0:
-                return v, self._ridge_state(k, v), None
-
-            effective_lambda = self._effective_ridge_lambda(k.shape[1])
-            compute_dtype = self._linalg_compute_dtype(k)
-            with self._linalg_autocast_context(k):
-                batch_size, _, num_heads, qk_dim = k.shape
-                value_dim = v.shape[-1]
-                eye = torch.eye(qk_dim, dtype=compute_dtype, device=k.device)
-                precision = eye.expand(
-                    batch_size,
-                    num_heads,
-                    qk_dim,
-                    qk_dim,
-                ).clone()
-                precision = precision / effective_lambda
-                cross = k.new_zeros(
-                    batch_size,
-                    num_heads,
-                    qk_dim,
-                    value_dim,
-                    dtype=compute_dtype,
-                )
-
-                outputs = []
-                kv_state = cross
-                for t in range(k.shape[1]):
-                    q_t = q[:, t].to(compute_dtype)
-                    k_t = k[:, t].to(compute_dtype)
-                    v_t = v[:, t].to(compute_dtype)
-                    precision_k = torch.einsum("bhfg,bhg->bhf", precision, k_t)
-                    denom = 1.0 + torch.einsum("bhf,bhf->bh", k_t, precision_k)
-                    precision = precision - torch.einsum(
-                        "bhf,bhg->bhfg", precision_k, precision_k
-                    ) / denom[..., None, None]
-                    cross = cross + torch.einsum("bhf,bhd->bhfd", k_t, v_t)
-                    q_precision = torch.einsum("bhf,bhfg->bhg", q_t, precision)
-                    outputs.append(
-                        torch.einsum("bhg,bhgd->bhd", q_precision, cross)
-                        .to(v.dtype)
-                        .unsqueeze(1)
-                    )
-
-                kv_state = torch.einsum("bhfg,bhgd->bhfd", precision, cross)
-            return torch.cat(outputs, dim=1), kv_state.to(v.dtype), None
-
         if q.shape[1] == 0:
             return v, kv_state_prefix, k_sum_prefix
 
@@ -538,6 +536,33 @@ class LinearAttention(nn.Module):
             k_sum = None if k_chunk_sum is None else k_chunk_sum[:, -1]
 
         return torch.cat(outputs, dim=1), kv_state, k_sum
+
+    def _causal_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        *,
+        kv_state_prefix: torch.Tensor | None = None,
+        k_sum_prefix: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+        q, k = self._apply_query_key_feature_maps(q, k)
+
+        if self.state_update_rule == "linear":
+            return self._linear_causal_attention(
+                q,
+                k,
+                v,
+                kv_state_prefix=kv_state_prefix,
+                k_sum_prefix=k_sum_prefix,
+            )
+
+        if kv_state_prefix is not None or k_sum_prefix is not None:
+            raise ValueError(
+                "Oracle state updates cannot be continued from a fitted "
+                "memory state alone."
+            )
+        return self._analytical_causal_attention(q, k, v)
 
     def _train_attention(
         self,
