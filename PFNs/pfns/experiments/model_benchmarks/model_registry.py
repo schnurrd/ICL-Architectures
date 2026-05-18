@@ -942,8 +942,26 @@ NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
     },
     "Non_Causal_DeltaNet_with_lr_decay": {
         "display_name": "Non-Causal DeltaNet with LR Decay (Comb ST)",
-        "wandb_run_id": "fla_models/runs/3ixb0qco",
+        "wandb_run_id": "fla_models/runs/3ixb0qco", # uses log_uniform 256-8k deltanet_beta_decay_t0=1000, decay='sqrt_inverse'
     },
+    "Non_Causal_DeltaNet_with_lr_decay_online_sqrt_inverse": {
+        "display_name": "Non-Causal DeltaNet with LR Decay: Online Sqrt Inverse (Comb ST)",
+        "wandb_run_id": "fla_models/runs/3cir36t2", # online_sqrt_inverse, beta_decay_t0=256
+    },
+    "Non_Causal_DeltaNet_with_lr_decay_online_inverse": {
+        "display_name": "Non-Causal DeltaNet with LR Decay: Online Inverse (Comb ST)",
+        "wandb_run_id": "fla_models/runs/feoe37tc", # online_inverse, beta_decay_t0=256
+    },
+    "Non_Causal_DeltaNet_with_lr_decay_nlms_sqrt_inverse": {
+        "display_name": "Non-Causal DeltaNet with LR Decay: NLMS Sqrt Inverse (Comb ST)",
+        "wandb_run_id": "fla_models/runs/wnxerem6", # nlms_sqrt_inverse, beta_decay_t0=1
+    },
+    # "Non_Causal_DeltaNet_with_lr_decay_nlms_inverse": {
+    #     "display_name": "Non-Causal DeltaNet with LR Decay: NLMS Inverse (Comb ST)",
+    #     "wandb_run_id": "fla_models/runs/ykrac3ic", # nlms_inverse, beta_decay_t0=1
+    # },
+    
+    
     "Non_Causal_GLA": {
         "display_name": "Non-Causal GLA (Comb ST)",
         "wandb_run_id": "icl_arch/fla_models/j5vkgn2l",
@@ -951,6 +969,10 @@ NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
     "Non_Causal_Linear_Attention": {
         "display_name": "Non-Causal Linear Attention (Comb ST)",
         "wandb_run_id": "icl_arch/fla_models/q93kpj3a",
+    },
+    "Non_Causal_Gated_DeltaNet": {
+        "display_name": "Non-Causal Gated DeltaNet (Comb ST)",
+        "wandb_run_id": "icl_arch/fla_models/5k1j1zq3",
     },
     "Non_Causal_DeltaNet_Beta_one": { 
         "display_name": "Non-Causal DeltaNet with Beta=1 (Comb ST)",
