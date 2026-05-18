@@ -108,6 +108,115 @@ def run_metadata_matches(
     return all(run_metadata.get(key) == expected.get(key) for key in keys)
 
 
+def _timestamp(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.timestamp()
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+
+
+def _bundle_created_timestamp(
+    bundle: dict[str, Any],
+    bundle_path: Path,
+    metadata_file: str,
+) -> float:
+    created_at = bundle.get("bundle_metadata", {}).get("created_at_utc")
+    parsed_created_at = _timestamp(created_at)
+    if parsed_created_at is not None:
+        return parsed_created_at
+    return (bundle_path / metadata_file).stat().st_mtime
+
+
+def _latest_wandb_model_artifact_timestamp(run_path: str) -> float | None:
+    model_artifacts = (
+        artifact
+        for artifact in wandb.Api().run(run_path).logged_artifacts()
+        if artifact.type == "model"
+    )
+    latest_model_artifact = next(
+        (
+            artifact
+            for artifact in model_artifacts
+            if "latest" in (getattr(artifact, "aliases", None) or ())
+        ),
+        None,
+    )
+    if latest_model_artifact is None:
+        return None
+    return _timestamp(getattr(latest_model_artifact, "created_at", None))
+
+
+def _model_checkpoint_path(model_config: dict[str, Any]) -> Path:
+    if model_config.get("wandb_run_id"):
+        destination_path = model_config.get("destination_path")
+        if destination_path:
+            return Path(destination_path)
+
+        from pfns import run_logger
+        from pfns.utils import build_exp_outputs_path
+
+        run_id = str(model_config["wandb_run_id"]).rstrip("/").split("/")[-1]
+        return build_exp_outputs_path(
+            Path(run_logger.__file__),
+            "wandb_model_checkpoints",
+            run_id,
+            "checkpoint.pt",
+        )
+
+    return Path(model_config.get("base_path", ".")) / model_config.get(
+        "checkpoint_name",
+        "checkpoint.pt",
+    )
+
+
+def cache_bundle_is_older_than_model(
+    bundle: dict[str, Any],
+    *,
+    bundle_path: str | Path,
+    model_config: dict[str, Any],
+    metadata_file: str,
+) -> bool:
+    """Return True when a cached result bundle predates the model checkpoint.
+
+    For W&B-backed models, prefer the remote latest model artifact timestamp so
+    result caches are invalidated even when no checkpoint is local yet. If that
+    timestamp is unavailable, fall back to a local checkpoint mtime without letting
+    a clean-machine download invalidate the cache by itself.
+    """
+    resolved_bundle_path = Path(bundle_path)
+    bundle_timestamp = _bundle_created_timestamp(
+        bundle,
+        resolved_bundle_path,
+        metadata_file,
+    )
+
+    if model_config.get("wandb_run_id"):
+        model_timestamp = _latest_wandb_model_artifact_timestamp(
+            str(model_config["wandb_run_id"])
+        )
+        if model_timestamp is not None:
+            return bundle_timestamp < model_timestamp
+
+        model_path = _model_checkpoint_path(model_config)
+        model_existed_before_download = model_path.exists()
+        from pfns.run_logger import download_model_from_wandb
+
+        downloaded_path = Path(
+            download_model_from_wandb(
+                str(model_config["wandb_run_id"]),
+                destination_path=model_config.get("destination_path"),
+            )
+        )
+        if not model_existed_before_download:
+            return False
+        model_path = downloaded_path
+    else:
+        model_path = _model_checkpoint_path(model_config)
+
+    return model_path.exists() and bundle_timestamp < model_path.stat().st_mtime
+
+
 def merge_model_results(
     results_by_model: dict[str, dict[str, Any]],
     *,

@@ -7,7 +7,9 @@ from pfns.experiments.model_benchmarks.evaluation import evaluate_models_over_se
 from pfns.experiments.model_benchmarks.fixed_batches import resolve_fixed_batches
 from pfns.experiments.model_benchmarks.hashing import single_model_hash
 from pfns.experiments.model_benchmarks.io import (
+    SEQ_LEN_METADATA_FILE,
     SEQ_LEN_REQUIRED_FILES,
+    cache_bundle_is_older_than_model,
     download_results_bundle_from_wandb,
     load_results_bundle,
     make_bundle_path,
@@ -258,11 +260,26 @@ for model_name, model_config in models_to_compare.items():
                 cached_bundle,
                 target_model_name=model_name,
             )
-            if seq_len_bundle_is_compatible(
+            if not seq_len_bundle_is_compatible(
                 cached_bundle_for_model,
                 model_name=model_name,
                 expected_metadata=expected_run_metadata,
             ):
+                print(
+                    f"Cached artifact for {model_name} is incompatible with "
+                    "this run metadata. Rerunning model."
+                )
+            elif cache_bundle_is_older_than_model(
+                cached_bundle_for_model,
+                bundle_path=cached_bundle_path,
+                model_config=model_config,
+                metadata_file=SEQ_LEN_METADATA_FILE,
+            ):
+                print(
+                    f"Cached artifact for {model_name} is older than the model checkpoint. "
+                    "Rerunning model."
+                )
+            else:
                 results_by_model[model_name] = single_model_seq_len_result_from_bundle(
                     cached_bundle_for_model,
                     model_name=model_name,
@@ -276,11 +293,6 @@ for model_name, model_config in models_to_compare.items():
                     )
                 else:
                     print(f"Reused cached W&B result for {model_name}: {cached_bundle_path}")
-            else:
-                print(
-                    f"Cached artifact for {model_name} is incompatible with "
-                    "this run metadata. Rerunning model."
-                )
 
     if reused_cached_result:
         continue

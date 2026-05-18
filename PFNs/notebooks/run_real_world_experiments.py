@@ -11,7 +11,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from pfns.experiments.model_benchmarks.hashing import single_model_hash
 from pfns.experiments.model_benchmarks.io import (
     REAL_WORLD_BUNDLE_KEYS,
+    REAL_WORLD_METADATA_FILE,
     REAL_WORLD_REQUIRED_FILES,
+    cache_bundle_is_older_than_model,
     download_results_bundle_from_wandb,
     load_dataframe_bundle,
     make_bundle_path,
@@ -389,11 +391,26 @@ def main() -> None:
                 )
                 cached_dataframes = cached_bundle_for_model["dataframes"]
 
-                if real_world_bundle_is_compatible(
+                if not real_world_bundle_is_compatible(
                     cached_bundle_for_model,
                     model_name=model_name,
                     expected_metadata=expected_real_metadata,
                 ):
+                    print(
+                        f"Cached real-world artifact for {model_name} is incompatible with "
+                        "this run metadata. Rerunning model."
+                    )
+                elif cache_bundle_is_older_than_model(
+                    cached_bundle_for_model,
+                    bundle_path=cached_bundle_path,
+                    model_config=model_config,
+                    metadata_file=REAL_WORLD_METADATA_FILE,
+                ):
+                    print(
+                        f"Cached real-world artifact for {model_name} is older than the model checkpoint. "
+                        "Rerunning model."
+                    )
+                else:
                     model_bundle_path = make_bundle_path(
                         output_root / "real_world",
                         f"{experiment['name']}_{sanitize_wandb_artifact_component(model_name)}",
