@@ -57,6 +57,9 @@ WEIGHT_DECAY = 1e-2
 GRAD_CLIP_NORM = 1.0
 FORCE_RETRAIN = True
 COMPILE_MODEL = False
+STATE_UPDATE_RULE = 'linear'
+RIDGE_LAMBDA = 1.0
+CAUSAL_CHUNK_SIZE = None
 LOG_EVERY = 100
 LOG_RESAMPLING = True
 
@@ -269,6 +272,9 @@ def make_linear_attention_model(*, causal_train_only: bool, device: torch.device
         'feature_map': 'elu',
         'norm_type': 'layernorm',
         'use_k_sum_normalization': False,
+        'state_update_rule': STATE_UPDATE_RULE,
+        'ridge_lambda': RIDGE_LAMBDA,
+        'causal_chunk_size': CAUSAL_CHUNK_SIZE,
     }
     backbone = LinearAttentionBackboneConfig(
         nlayers=NUM_LAYERS,
@@ -441,6 +447,9 @@ def experiment_signature() -> dict[str, Any]:
         'num_classes': NUM_CLASSES,
         'quantile_boundary_noise': QUANTILE_BOUNDARY_NOISE,
         'quantile_boundaries_fit_on': 'train',
+        'state_update_rule': STATE_UPDATE_RULE,
+        'ridge_lambda': RIDGE_LAMBDA,
+        'causal_chunk_size': CAUSAL_CHUNK_SIZE,
     }
 
 
@@ -690,18 +699,27 @@ def _parse_str_tuple(value: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+def _state_update_display_suffix() -> str:
+    if STATE_UPDATE_RULE == 'linear':
+        return ''
+    if STATE_UPDATE_RULE in {'ridge', 'scaled_ridge'}:
+        return f' ({STATE_UPDATE_RULE}, lambda={RIDGE_LAMBDA:g})'
+    return f' ({STATE_UPDATE_RULE})'
+
+
 def _set_model_configs(model_selection: str) -> None:
     global MODEL_CONFIGS
+    suffix = _state_update_display_suffix()
     configs = {
         'non_causal': {
             'name': 'non_causal',
             'causal_train_only': False,
-            'display_name': 'Non-causal train context',
+            'display_name': f'Non-causal train context{suffix}',
         },
         'causal': {
             'name': 'causal_train_only',
             'causal_train_only': True,
-            'display_name': 'Causal train context',
+            'display_name': f'Causal train context{suffix}',
         },
     }
     if model_selection == 'both':
@@ -861,6 +879,13 @@ def parse_args() -> argparse.Namespace:
     parser.set_defaults(force_retrain=FORCE_RETRAIN)
     parser.add_argument('--compile-model', action='store_true')
     parser.add_argument('--resume-run', action='store_true')
+    parser.add_argument(
+        '--state-update-rule',
+        choices=('linear', 'least_squares', 'ridge', 'scaled_ridge'),
+        default=STATE_UPDATE_RULE,
+    )
+    parser.add_argument('--ridge-lambda', type=float, default=RIDGE_LAMBDA)
+    parser.add_argument('--causal-chunk-size', type=int, default=CAUSAL_CHUNK_SIZE)
     parser.add_argument('--log-every', type=int, default=LOG_EVERY)
     parser.add_argument('--no-log-resampling', dest='log_resampling', action='store_false')
     parser.set_defaults(log_resampling=LOG_RESAMPLING)
@@ -892,7 +917,8 @@ def parse_args() -> argparse.Namespace:
 
 def apply_args(args: argparse.Namespace) -> None:
     global DEVICE, USE_BF16, DTYPE
-    global SEED, FORCE_RETRAIN, COMPILE_MODEL, LOG_EVERY
+    global SEED, FORCE_RETRAIN, COMPILE_MODEL, STATE_UPDATE_RULE, RIDGE_LAMBDA
+    global CAUSAL_CHUNK_SIZE, LOG_EVERY
     global LOG_RESAMPLING
     global TRAIN_STEPS, BATCH_SIZE, MAX_TRAIN_CONTEXT_LEN, TEST_LEN
     global HIDDEN_SIZE, NUM_LAYERS, NUM_HEADS, LR, WEIGHT_DECAY, GRAD_CLIP_NORM
@@ -908,6 +934,13 @@ def apply_args(args: argparse.Namespace) -> None:
     SEED = args.seed
     FORCE_RETRAIN = args.force_retrain
     COMPILE_MODEL = args.compile_model
+    STATE_UPDATE_RULE = args.state_update_rule
+    RIDGE_LAMBDA = float(args.ridge_lambda)
+    if RIDGE_LAMBDA <= 0:
+        raise ValueError('--ridge-lambda must be > 0')
+    CAUSAL_CHUNK_SIZE = args.causal_chunk_size
+    if CAUSAL_CHUNK_SIZE is not None and CAUSAL_CHUNK_SIZE <= 0:
+        raise ValueError('--causal-chunk-size must be >= 1')
     LOG_EVERY = max(0, int(args.log_every))
     LOG_RESAMPLING = bool(args.log_resampling)
 
