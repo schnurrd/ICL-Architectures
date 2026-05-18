@@ -3,6 +3,9 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from pfns.experiments.model_benchmarks.models import (
+    _apply_linear_attention_state_update_override,
+)
 from pfns.experiments.model_benchmarks.workflows import (
     aggregate_real_world_results_from_bundles,
     build_real_world_run_metadata,
@@ -12,6 +15,7 @@ from pfns.experiments.model_benchmarks.workflows import (
     seq_len_bundle_is_compatible,
     single_model_seq_len_result_from_bundle,
 )
+from pfns.model.linear_attention import LinearAttention
 
 
 def test_build_seq_len_run_metadata():
@@ -160,4 +164,17 @@ def test_aggregate_real_world_results_split_mismatch_raises():
         aggregate_real_world_results_from_bundles(
             {"M1": {"bundle": {"dataframes": {"results": bad}}}},
             expected_splits=2,
+        )
+
+
+def test_linear_attention_state_update_override_rejects_nonpositive_ridge_lambda():
+    model = LinearAttention(d_model=8, num_heads=2, mlp_hidden_dim=16)
+
+    with pytest.raises(ValueError, match="linear_attention_ridge_lambda"):
+        _apply_linear_attention_state_update_override(
+            model,
+            {
+                "linear_attention_state_update_rule": "ridge",
+                "linear_attention_ridge_lambda": 0.0,
+            },
         )
