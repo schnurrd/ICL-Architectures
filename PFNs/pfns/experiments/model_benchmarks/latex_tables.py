@@ -502,9 +502,8 @@ def apply_real_world_latex_cell_formatting(
     significance_table: pd.DataFrame | None = None,
     baseline_model_names: set[str] | None = None,
     unranked_model_names: set[str] | None = None,
-    rank_colors: Mapping[int, str] | None = None,
 ) -> pd.DataFrame:
-    """Apply numeric formatting, rank colors, baseline bolding, and markers."""
+    """Apply numeric formatting, rank emphasis, baseline bolding, and markers."""
     formatted = numeric_table.map(format_latex_number)
 
     baseline_model_names = baseline_model_names or set()
@@ -551,12 +550,16 @@ def apply_real_world_latex_cell_formatting(
             ranked_values = numeric_table.loc[ranked_models, col]
             ranks = ranked_values.rank(ascending=ascending, method="min")
             for model, rank in ranks.items():
-                color = (rank_colors or DEFAULT_LATEX_RANK_COLORS).get(
-                    int(rank) if pd.notna(rank) else None
-                )
-                if color is not None:
+                if pd.isna(rank):
+                    continue
+                rank = int(rank)
+                if rank == 1:
                     formatted.loc[model, col] = (
-                        rf"\cellcolor{{{color}}}{formatted.loc[model, col]}"
+                        rf"\textbf{{{formatted.loc[model, col]}}}"
+                    )
+                elif rank == 2:
+                    formatted.loc[model, col] = (
+                        rf"\underline{{{formatted.loc[model, col]}}}"
                     )
 
         if baseline_models:

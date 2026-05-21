@@ -642,6 +642,14 @@ ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "linear_attention/runs/9398ug8z",
         "eval_autocast_dtype": "fp32",
     },
+    "oracles:Linear_Attention_Non_Causal_Ridge_scaled_3.0": {
+        # **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Linear Attention Non-Causal\nRidge Oracle (Scaled 3.0)",
+        "linear_attention_state_update_rule": "scaled_ridge",
+        "linear_attention_ridge_lambda": 3.0,
+        "wandb_run_id": "linear_attention/runs/g2f2qnqs",
+        "eval_autocast_dtype": "fp32",
+    },
     "oracles:Linear_Attention_Non_Causal_Ridge_1": {
         # **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
         "display_name": "Linear Attention Non-Causal\nRidge Oracle (1.0)",
@@ -653,17 +661,25 @@ ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
     "oracles:Linear_Attention_Non_Causal_Ridge_scaled_1.0": {
         # **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
         "display_name": "Linear Attention Non-Causal\nRidge Oracle (Scaled 1.0)",
-        "linear_attention_state_update_rule": "scaled_ridge",
-        "linear_attention_ridge_lambda": 1.0,
-        "wandb_run_id": "linear_attention/runs/9398ug8z",
+        #"linear_attention_state_update_rule": "scaled_ridge",
+        #"linear_attention_ridge_lambda": 1.0,
+        "wandb_run_id": "linear_attention/runs/in1ciotp",
+        "eval_autocast_dtype": "fp32",
+    },
+    "oracles:Linear_Attention_Non_Causal_Ridge_scaled_0.3": {
+        # **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Linear Attention Non-Causal\nRidge Oracle (Scaled 0.3)",
+        # "linear_attention_state_update_rule": "scaled_ridge",
+        # "linear_attention_ridge_lambda": 0.3,
+        "wandb_run_id": "linear_attention/runs/0bl1s2hy",
         "eval_autocast_dtype": "fp32",
     },
     "oracles:Linear_Attention_Non_Causal_Ridge_scaled_0.1": {
         # **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
         "display_name": "Linear Attention Non-Causal\nRidge Oracle (Scaled 0.1)",
-        "linear_attention_state_update_rule": "scaled_ridge",
-        "linear_attention_ridge_lambda": 0.1,
-        "wandb_run_id": "linear_attention/runs/9398ug8z",
+        #"linear_attention_state_update_rule": "scaled_ridge",
+        #"linear_attention_ridge_lambda": 0.1,
+        "wandb_run_id": "linear_attention/runs/4i36ib45",
         "eval_autocast_dtype": "fp32",
     },
     "oracles:Linear_Attention_Non_Causal_Ridge_scaled_0.03": {
@@ -674,12 +690,12 @@ ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "linear_attention/runs/6xqmelye",
         "eval_autocast_dtype": "fp32",
     },
-    "oracles:Linear_Attention_Non_Causal_Ridge_scaled_3.0": {
+    "oracles:Linear_Attention_Non_Causal_Ridge_scaled_0.00001": {
         # **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
-        "display_name": "Linear Attention Non-Causal\nRidge Oracle (Scaled 3.0)",
-        "linear_attention_state_update_rule": "scaled_ridge",
-        "linear_attention_ridge_lambda": 3.0,
-        "wandb_run_id": "linear_attention/runs/g2f2qnqs",
+        "display_name": "Linear Attention Non-Causal\nRidge Oracle (Scaled 0.00001)",
+        #"linear_attention_state_update_rule": "scaled_ridge",
+        #"linear_attention_ridge_lambda": 0.00001,
+        "wandb_run_id": "linear_attention/runs/lz8syl7f",
         "eval_autocast_dtype": "fp32",
     },
     "oracles:Oracle_Hidden_State_DeltaNet_Comb_ST": {
@@ -789,6 +805,14 @@ MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
 }
 
 BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
+    # "Bidirectional_DeltaNet_Comb_ST_linear_output_two_cache": {
+    #     "display_name": "Bidirectional Linear Output Two Cache (DeltaNet)",
+    #     "wandb_run_id": "icl_arch/fla_models/5htl7smo",
+    # },
+    # "Bidirectional_DeltaNet_Comb_ST_mean_output_mean_cache": {
+    #     "display_name": "Bidirectional DeltaNet",
+    #     "wandb_run_id": "icl_arch/fla_models/vn8w3gjo",
+    # },
     # "Bidirectional_DeltaNet_Comb_ST_linear_output_two_cache": {
     #     "display_name": "Bidirectional Linear Output Two Cache (DeltaNet)",
     #     "wandb_run_id": "icl_arch/fla_models/5htl7smo",
@@ -932,6 +956,14 @@ NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "DeltaNet no self-term (Comb ST)",
         "wandb_run_id": "fla_models/runs/erll6c28", # 4vxeqnat
     },
+    "Causal_DeltaNet": {
+        "display_name": "DeltaNet (Comb ST)",
+        "wandb_run_id": "fla_models/runs/dfzrvzcz",
+    },
+    "Causal_DeltaNet_no_self_term": {
+        "display_name": "DeltaNet no self-term (Comb ST)",
+        "wandb_run_id": "fla_models/runs/erll6c28", # 4vxeqnat
+    },
     "Non_Causal_DeltaNet": { 
         "display_name": "Non-Causal DeltaNet (Comb ST)",
         "wandb_run_id": "icl_arch/fla_models/dj7xmlsb", # fp32 8cpcrc2e
@@ -952,22 +984,12 @@ NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Non-Causal DeltaNet with LR Decay: Online Inverse (Comb ST)",
         "wandb_run_id": "fla_models/runs/feoe37tc", # online_inverse, beta_decay_t0=256
     },
-    "Non_Causal_DeltaNet_with_lr_decay_nlms_sqrt_inverse": {
-        "display_name": "Non-Causal DeltaNet with LR Decay: NLMS Sqrt Inverse (Comb ST)",
-        "wandb_run_id": "fla_models/runs/wnxerem6", # nlms_sqrt_inverse, beta_decay_t0=1
-    },
-    # "Non_Causal_DeltaNet_with_lr_decay_nlms_inverse": {
-    #     "display_name": "Non-Causal DeltaNet with LR Decay: NLMS Inverse (Comb ST)",
-    #     "wandb_run_id": "fla_models/runs/ykrac3ic", # nlms_inverse, beta_decay_t0=1
-    # },
-    
-    
     "Non_Causal_GLA": {
         "display_name": "Non-Causal GLA (Comb ST)",
         "wandb_run_id": "icl_arch/fla_models/j5vkgn2l",
     },
-    "Non_Causal_Linear_Attention": {
-        "display_name": "Non-Causal Linear Attention (Comb ST)",
+    "Non_Causal_Linear_Attention_FLA": {
+        "display_name": "Non-Causal Linear Attention (Comb ST, FLA)",
         "wandb_run_id": "icl_arch/fla_models/q93kpj3a",
     },
     "Non_Causal_Gated_DeltaNet": {

@@ -118,41 +118,8 @@ def test_deltanet_beta_decay_scales_late_positions():
 
     beta = torch.ones(1, 5, 2)
 
-    inverse = _apply_deltanet_beta_decay(beta, mode="inverse", t0=2)
-    expected_inverse = torch.tensor([1.0, 1.0, 2 / 3, 0.5, 0.4]).view(1, 5, 1)
-    torch.testing.assert_close(inverse, expected_inverse.expand_as(beta))
-
-    offset_inverse = _apply_deltanet_beta_decay(
-        beta,
-        mode="inverse",
-        t0=2,
-        start_position=2,
-    )
-    expected_offset = torch.tensor([2 / 3, 0.5, 0.4, 2 / 6, 2 / 7]).view(1, 5, 1)
-    torch.testing.assert_close(offset_inverse, expected_offset.expand_as(beta))
-
-    sqrt_inverse = _apply_deltanet_beta_decay(beta, mode="sqrt_inverse", t0=2)
-    torch.testing.assert_close(
-        sqrt_inverse,
-        expected_inverse.sqrt().expand_as(beta),
-    )
-
-    sqrt_length_inverse = _apply_deltanet_beta_decay(
-        beta,
-        mode="sqrt_length_inverse",
-        t0=2,
-    )
-    expected_length_scale = torch.full_like(beta, (2 / 5) ** 0.5)
-    torch.testing.assert_close(sqrt_length_inverse, expected_length_scale)
-
-    offset_sqrt_length_inverse = _apply_deltanet_beta_decay(
-        beta,
-        mode="sqrt_length_inverse",
-        t0=8,
-        start_position=7,
-    )
-    expected_offset_length_scale = torch.full_like(beta, (8 / 12) ** 0.5)
-    torch.testing.assert_close(offset_sqrt_length_inverse, expected_offset_length_scale)
+    unchanged = _apply_deltanet_beta_decay(beta, mode="none", t0=2)
+    assert unchanged is beta
 
     online_inverse = _apply_deltanet_beta_decay(beta, mode="online_inverse", t0=2)
     expected_online = torch.tensor([1.0, 2 / 3, 0.5, 0.4, 2 / 6]).view(1, 5, 1)
@@ -173,42 +140,17 @@ def test_deltanet_beta_decay_scales_late_positions():
     )
 
     online_sqrt_inverse = _apply_deltanet_beta_decay(
-        beta, mode="online_sqrt_inverse", t0=2
+        beta,
+        mode="online_sqrt_inverse",
+        t0=2,
     )
     torch.testing.assert_close(
         online_sqrt_inverse,
         expected_online.sqrt().expand_as(beta),
     )
 
-    k = torch.ones(1, 5, 2, 3)
-    nlms = _apply_deltanet_beta_decay(beta, mode="nlms", t0=1, k=k, eps=0.0)
-    torch.testing.assert_close(nlms, torch.full_like(beta, 1 / 3))
-
-    nlms_l2 = _apply_deltanet_beta_decay(
-        beta,
-        mode="nlms",
-        t0=1,
-        k=k * 2,
-        use_qk_l2norm_in_kernel=True,
-        eps=0.0,
-    )
-    torch.testing.assert_close(nlms_l2, beta)
-
-    nlms_inverse = _apply_deltanet_beta_decay(
-        beta, mode="nlms_inverse", t0=1, k=k, eps=0.0
-    )
-    expected_nlms_inverse = torch.tensor(
-        [1.0, 0.5, 1 / 3, 0.25, 0.2]
-    ).view(1, 5, 1) / 3
-    torch.testing.assert_close(nlms_inverse, expected_nlms_inverse.expand_as(beta))
-
-    nlms_sqrt_inverse = _apply_deltanet_beta_decay(
-        beta, mode="nlms_sqrt_inverse", t0=1, k=k, eps=0.0
-    )
-    torch.testing.assert_close(
-        nlms_sqrt_inverse,
-        expected_nlms_inverse.mul(3).sqrt().div(3).expand_as(beta),
-    )
+    with pytest.raises(ValueError, match="deltanet_beta_decay must be one of"):
+        _apply_deltanet_beta_decay(beta, mode="not_a_decay", t0=2)
 
 
 def test_deltanet_beta_decay_validates_backbone_config():
@@ -218,23 +160,23 @@ def test_deltanet_beta_decay_validates_backbone_config():
     config = FLABackboneConfig(
         model_type="deltanet",
         config_kwargs=config_kwargs,
-        deltanet_beta_decay="inverse",
+        deltanet_beta_decay="online_inverse",
         deltanet_beta_decay_t0=2,
     )
-    assert config.deltanet_beta_decay == "inverse"
+    assert config.deltanet_beta_decay == "online_inverse"
 
     with pytest.raises(ValueError, match="model_type='deltanet'"):
         FLABackboneConfig(
             model_type="gla",
             config_kwargs=fla_model_config_kwargs("gla", size="small"),
-            deltanet_beta_decay="inverse",
+            deltanet_beta_decay="online_inverse",
         )
 
     with pytest.raises(ValueError, match="state_passing"):
         FLABackboneConfig(
             model_type="deltanet",
             config_kwargs=config_kwargs,
-            deltanet_beta_decay="inverse",
+            deltanet_beta_decay="online_inverse",
             state_passing=True,
         )
 
@@ -264,7 +206,7 @@ def test_deltanet_beta_decay_patch_matches_manual_decayed_beta():
         **inputs,
         "beta": _apply_deltanet_beta_decay(
             inputs["beta"],
-            mode="inverse",
+            mode="online_inverse",
             t0=2,
         ),
     }
@@ -274,7 +216,7 @@ def test_deltanet_beta_decay_patch_matches_manual_decayed_beta():
 
     with _maybe_patch_deltanet_with_stateless_recurrent(
         False,
-        beta_decay="inverse",
+        beta_decay="online_inverse",
         beta_decay_t0=2,
     ):
         actual_out, actual_state = deltanet_layer.fused_recurrent_delta_rule(**inputs)

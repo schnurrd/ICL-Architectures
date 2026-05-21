@@ -387,14 +387,8 @@ class FLABackboneConfig(BackboneConfig):
     final_state_readout: bool = False
     deltanet_beta_decay: tp.Literal[
         "none",
-        "inverse",
-        "sqrt_inverse",
-        "sqrt_length_inverse",
         "online_inverse",
         "online_sqrt_inverse",
-        "nlms",
-        "nlms_inverse",
-        "nlms_sqrt_inverse",
     ] = "none"
     deltanet_beta_decay_t0: int = 1000
     mimetic_init: bool = False
@@ -904,7 +898,6 @@ class FLABackbone(Backbone):
         model = self.fla
         contexts: list[tp.ContextManager[tp.Any]] = []
         contexts.append(_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv or use_custom_recurrent))
-
         patch_registry: tuple[
             tuple[
                 type[nn.Module],

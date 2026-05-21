@@ -14,14 +14,8 @@ from fla.modules.l2norm import l2norm
 DELTANET_BETA_DECAY_MODES = frozenset(
     {
         "none",
-        "inverse",
-        "sqrt_inverse",
-        "sqrt_length_inverse",
         "online_inverse",
         "online_sqrt_inverse",
-        "nlms",
-        "nlms_inverse",
-        "nlms_sqrt_inverse",
     }
 )
 
@@ -50,75 +44,36 @@ def _apply_deltanet_beta_decay(
     t0: int,
     start_position: int = 0,
     position_dim: int = 1,
-    k: torch.Tensor | None = None,
-    use_qk_l2norm_in_kernel: bool = False,
-    eps: float = 1e-6,
 ) -> torch.Tensor:
     mode = _normalize_deltanet_beta_decay(mode)
     if mode == "none":
         return beta
     if t0 <= 0:
         raise ValueError(f"deltanet_beta_decay_t0 must be > 0, got {t0}.")
-
-    position_dim = position_dim % beta.ndim
-    seq_len = beta.shape[position_dim]
     if start_position < 0:
         raise ValueError(
             f"deltanet beta decay start_position must be >= 0, got {start_position}."
         )
-    if mode == "sqrt_length_inverse":
-        total_length = start_position + seq_len
-        decay = (float(t0) / max(total_length, t0)) ** 0.5
-        return beta * beta.new_tensor(decay)
-    if mode in {"online_inverse", "online_sqrt_inverse"}:
-        positions = torch.arange(
-            start_position,
-            start_position + seq_len,
-            device=beta.device,
-            dtype=torch.float32,
+    if beta.ndim == 0:
+        raise ValueError(
+            "deltanet beta decay expects beta to have at least one dimension."
         )
-        decay = float(t0) / (float(t0) + positions)
-        if mode == "online_sqrt_inverse":
-            decay = decay.sqrt()
-        shape = [1] * beta.ndim
-        shape[position_dim] = seq_len
-        return beta * decay.to(beta.dtype).view(shape)
-    if mode in {"nlms", "nlms_inverse", "nlms_sqrt_inverse"}:
-        if k is None:
-            raise ValueError(f"deltanet beta decay mode {mode!r} requires k.")
-        if k.shape[:-1] != beta.shape:
-            raise ValueError(
-                "DeltaNet NLMS beta decay expects k.shape[:-1] to match beta.shape, "
-                f"got k={tuple(k.shape)} and beta={tuple(beta.shape)}."
-            )
-        if use_qk_l2norm_in_kernel:
-            norm_sq = torch.ones_like(beta, dtype=torch.float32)
-        else:
-            norm_sq = k.float().square().sum(dim=-1)
-        decay = 1.0 / norm_sq.add(float(eps))
-        if mode != "nlms":
-            positions = torch.arange(
-                start_position,
-                start_position + seq_len,
-                device=beta.device,
-                dtype=torch.float32,
-            )
-            time_decay = 1.0 / (positions + float(t0))
-            if mode == "nlms_sqrt_inverse":
-                time_decay = time_decay.sqrt()
-            shape = [1] * beta.ndim
-            shape[position_dim] = seq_len
-            decay = decay * time_decay.view(shape)
-        return beta * decay.to(beta.dtype)
+    if not -beta.ndim <= position_dim < beta.ndim:
+        raise ValueError(
+            f"position_dim must be in [{-beta.ndim}, {beta.ndim - 1}], "
+            f"got {position_dim}."
+        )
 
+    position_dim = position_dim % beta.ndim
+    seq_len = beta.shape[position_dim]
     positions = torch.arange(
-        start_position + 1,
-        start_position + seq_len + 1,
+        start_position,
+        start_position + seq_len,
         device=beta.device,
         dtype=torch.float32,
     )
-    decay = (float(t0) / positions.clamp_min(float(t0))).clamp(max=1.0)
-    if mode == "sqrt_inverse":
+    decay = float(t0) / (float(t0) + positions)
+    if mode == "online_sqrt_inverse":
         decay = decay.sqrt()
     shape = [1] * beta.ndim
     shape[position_dim] = seq_len
@@ -143,10 +98,6 @@ def _deltanet_beta_decay_patch(
             mode=mode,
             t0=t0,
             start_position=start_position,
-            k=kwargs.get("k"),
-            use_qk_l2norm_in_kernel=bool(
-                kwargs.get("use_qk_l2norm_in_kernel", False)
-            ),
         )
         return original_kernel(**kwargs)
 
@@ -722,7 +673,6 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
             mode=beta_decay,
             t0=beta_decay_t0,
             start_position=beta_decay_start,
-            k=k,
         )
 
         q = q * scale
