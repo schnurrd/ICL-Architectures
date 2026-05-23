@@ -211,6 +211,138 @@ def test_linear_attention_ridge_matches_noncausal_solution(state_update_rule: st
     assert k_sum is None
 
 
+def test_linear_attention_qk_l2_norm_applies_to_ridge_oracle():
+    torch.manual_seed(0)
+    layer = _build_layer(
+        feature_map="identity",
+        use_query_scale=False,
+        use_k_sum_normalization=False,
+        qk_norm=True,
+        state_update_rule="ridge",
+        ridge_lambda=0.7,
+    )
+    layer.eval()
+
+    q = torch.randn(2, 5, 2, 4)
+    k = torch.randn(2, 5, 2, 4)
+    v = torch.randn(2, 5, 2, 3)
+
+    with torch.no_grad():
+        attn, state, k_sum = layer._noncausal_attention(q, k, v)
+
+    q_norm = torch.nn.functional.normalize(q, p=2, dim=-1, eps=layer.eps)
+    k_norm = torch.nn.functional.normalize(k, p=2, dim=-1, eps=layer.eps)
+    expected_state = _ridge_state(k_norm, v, layer.ridge_lambda)
+    expected_attn = torch.einsum("bshf,bhfd->bshd", q_norm, expected_state)
+
+    torch.testing.assert_close(attn, expected_attn, rtol=2e-5, atol=2e-6)
+    torch.testing.assert_close(state, expected_state, rtol=2e-5, atol=2e-6)
+    assert layer.qk_norm == "l2"
+    assert k_sum is None
+
+
+def test_linear_attention_legacy_sum_norm_flags_map_to_qk_sum():
+    layer = _build_layer(
+        normalize_q_sum=True,
+        normalize_k_sum=True,
+    )
+
+    assert layer.qk_norm == "sum"
+    assert not hasattr(layer, "normalize_q_sum")
+    assert not hasattr(layer, "normalize_k_sum")
+
+
+def test_linear_attention_qk_sum_norm_applies_to_ridge_oracle():
+    torch.manual_seed(0)
+    layer = _build_layer(
+        feature_map="identity",
+        use_query_scale=False,
+        use_k_sum_normalization=False,
+        qk_norm="sum",
+        state_update_rule="ridge",
+        ridge_lambda=0.7,
+    )
+    layer.eval()
+
+    q = torch.rand(2, 5, 2, 4) + 0.1
+    k = torch.rand(2, 5, 2, 4) + 0.1
+    v = torch.randn(2, 5, 2, 3)
+
+    with torch.no_grad():
+        attn, state, k_sum = layer._noncausal_attention(q, k, v)
+
+    q_norm = q / (q.sum(dim=-1, keepdim=True) + layer.eps)
+    k_norm = k / (k.sum(dim=-1, keepdim=True) + layer.eps)
+    expected_state = _ridge_state(k_norm, v, layer.ridge_lambda)
+    expected_attn = torch.einsum("bshf,bhfd->bshd", q_norm, expected_state)
+
+    torch.testing.assert_close(attn, expected_attn, rtol=2e-5, atol=2e-6)
+    torch.testing.assert_close(state, expected_state, rtol=2e-5, atol=2e-6)
+    assert layer.qk_norm == "sum"
+    assert k_sum is None
+
+
+@pytest.mark.parametrize("qk_norm", ["l2", "sum"])
+def test_linear_attention_qk_norm_applies_to_least_squares_oracle(qk_norm: str):
+    torch.manual_seed(0)
+    layer = _build_layer(
+        feature_map="identity",
+        use_query_scale=False,
+        use_k_sum_normalization=False,
+        qk_norm=qk_norm,
+        state_update_rule="least_squares",
+    )
+    layer.eval()
+
+    if qk_norm == "sum":
+        q = torch.rand(2, 5, 2, 4) + 0.1
+        k = torch.rand(2, 5, 2, 4) + 0.1
+        q_norm = q / (q.sum(dim=-1, keepdim=True) + layer.eps)
+        k_norm = k / (k.sum(dim=-1, keepdim=True) + layer.eps)
+    else:
+        q = torch.randn(2, 5, 2, 4)
+        k = torch.randn(2, 5, 2, 4)
+        q_norm = torch.nn.functional.normalize(q, p=2, dim=-1, eps=layer.eps)
+        k_norm = torch.nn.functional.normalize(k, p=2, dim=-1, eps=layer.eps)
+    v = torch.randn(2, 5, 2, 3)
+
+    with torch.no_grad():
+        attn, state, k_sum = layer._noncausal_attention(q, k, v)
+
+    expected_state = _least_squares_state(k_norm, v)
+    expected_attn = torch.einsum("bshf,bhfd->bshd", q_norm, expected_state)
+
+    torch.testing.assert_close(attn, expected_attn, rtol=2e-5, atol=2e-6)
+    torch.testing.assert_close(state, expected_state, rtol=2e-5, atol=2e-6)
+    assert layer.qk_norm == qk_norm
+    assert k_sum is None
+
+
+@pytest.mark.parametrize("qk_norm", ["l2", "sum"])
+def test_linear_attention_qk_norm_incontext_predict_matches_forward(qk_norm: str):
+    torch.manual_seed(0)
+    layer = _build_layer(
+        causal_train_only=True,
+        feature_map="identity",
+        use_query_scale=False,
+        use_k_sum_normalization=False,
+        qk_norm=qk_norm,
+        state_update_rule="ridge",
+        ridge_lambda=0.7,
+    )
+    layer.eval()
+
+    x = torch.randn(2, 9, 1, 8)
+    train_len = 5
+
+    with torch.no_grad():
+        out_full = layer(x, single_eval_pos=train_len)
+        train_out, state = layer.incontext_fit(x[:, :train_len])
+        test_out = layer.incontext_predict(x[:, train_len:], state)
+
+    _assert_close(torch.cat([train_out, test_out], dim=1), out_full)
+
+
 def test_linear_attention_ridge_state_uses_fp32_linalg_under_autocast():
     torch.manual_seed(0)
     layer = _build_layer(

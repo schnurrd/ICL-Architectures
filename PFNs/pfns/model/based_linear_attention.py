@@ -28,6 +28,7 @@ class BasedLinearAttention(LinearAttention):
         causal_chunk_size: int | None = None,
         normalize_q_sum: bool = False,
         normalize_k_sum: bool = False,
+        qk_norm: bool | str | None = None,
         use_k_sum_normalization: bool = True,
         use_query_scale: bool = False,
         use_attention_norm: bool = True,
@@ -76,6 +77,7 @@ class BasedLinearAttention(LinearAttention):
             causal_chunk_size=causal_chunk_size,
             normalize_q_sum=normalize_q_sum,
             normalize_k_sum=normalize_k_sum,
+            qk_norm=qk_norm,
             use_k_sum_normalization=use_k_sum_normalization,
             use_attention_norm=use_attention_norm,
             use_output_norm=use_output_norm,
@@ -130,10 +132,5 @@ class BasedLinearAttention(LinearAttention):
         self,
         x: torch.Tensor,
         feature_map: nn.Module,
-        *,
-        normalize_sum: bool,
     ) -> torch.Tensor:
-        x = feature_map(x)
-        if normalize_sum:
-            x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
-        return x
+        return self._apply_qk_norm_to_tensor(feature_map(x))
