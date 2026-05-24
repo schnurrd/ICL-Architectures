@@ -455,8 +455,6 @@ class FLABackboneConfig(BackboneConfig):
                 raise ValueError("deltanet_beta_decay does not support bidirectional FLA.")
             if self.state_passing:
                 raise ValueError("deltanet_beta_decay does not support state_passing.")
-            if self.state_weaving:
-                raise ValueError("deltanet_beta_decay does not support state_weaving.")
             if self.deltanet_beta_decay_t0 <= 0:
                 raise ValueError("deltanet_beta_decay_t0 must be > 0.")
         if self.state_weaving:
