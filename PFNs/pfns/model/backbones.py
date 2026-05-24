@@ -441,8 +441,6 @@ class FLABackboneConfig(BackboneConfig):
                 )
             if self.bidirectional:
                 raise ValueError("final_state_readout does not support bidirectional FLA.")
-            if self.state_weaving:
-                raise ValueError("final_state_readout does not support state_weaving.")
         if self.deltanet_beta_decay not in DELTANET_BETA_DECAY_MODES:
             raise ValueError(
                 "deltanet_beta_decay must be one of "
