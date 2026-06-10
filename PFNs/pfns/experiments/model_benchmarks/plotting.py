@@ -17,12 +17,12 @@ from .constants import DEFAULT_COLORS, DEFAULT_LINESTYLES, DEFAULT_MARKERS
 from .model_registry import get_all_models
 
 PRETRAIN_MAX_X = 1_000.0
-PRETRAIN_REGION_COLOR = "#e3f2fd"
-GENERALIZATION_REGION_COLOR = "#fff3e0"
-SPLIT_REGION_ALPHA = 0.35
+PLOT_FACE_COLOR = "#fbfbfb"
+PRETRAIN_REGION_COLOR = "#edf3f7"
+GENERALIZATION_REGION_COLOR = "#f7f3ea"
+SPLIT_REGION_ALPHA = 0.55
 SPLIT_BOUNDARY_COLOR = "#546e7a"
 SPLIT_BOUNDARY_LINESTYLE = "--"
-
 
 def _registry_display_name_map() -> dict[str, str]:
     return {
@@ -321,6 +321,11 @@ def add_pretraining_split_legend(
     region_alpha: float = SPLIT_REGION_ALPHA,
     boundary_color: str = SPLIT_BOUNDARY_COLOR,
     boundary_linestyle: str = SPLIT_BOUNDARY_LINESTYLE,
+    pretraining_label: str = "Pre-training",
+    loc: str = "best",
+    bbox_to_anchor: tuple[float, ...] | None = None,
+    ncol: int = 1,
+    fontsize: float = 8,
 ) -> Any:
     boundary_label = _format_boundary_label(boundary)
     region_handles = [
@@ -328,13 +333,13 @@ def add_pretraining_split_legend(
             facecolor=pretrain_region_color,
             alpha=region_alpha,
             edgecolor="none",
-            label=f"Pre-training range (<={boundary_label})",
+            label=f"{pretraining_label} range (<={boundary_label})",
         ),
         mpatches.Patch(
             facecolor=generalization_region_color,
             alpha=region_alpha,
             edgecolor="none",
-            label=f"Generalization range (>{boundary_label})",
+            label=f"Generalisation range (>{boundary_label})",
         ),
         mlines.Line2D(
             [],
@@ -342,13 +347,15 @@ def add_pretraining_split_legend(
             color=boundary_color,
             linestyle=boundary_linestyle,
             linewidth=1.5,
-            label=f"Pre-training limit ({boundary_label})",
+            label=f"{pretraining_label} limit ({boundary_label})",
         ),
     ]
     range_legend = ax.legend(
         handles=region_handles,
-        loc="best",
-        fontsize=8,
+        loc=loc,
+        bbox_to_anchor=bbox_to_anchor,
+        ncol=ncol,
+        fontsize=fontsize,
         frameon=True,
         framealpha=0.9,
         edgecolor="#d0d0d0",
@@ -392,7 +399,7 @@ def apply_shared_legend_layout(
                 legend_labels,
                 fontsize=fontsize,
                 loc="lower center",
-                bbox_to_anchor=(0.5, 0.03),
+                bbox_to_anchor=(0.5, 0.026),
                 ncol=legend_cols,
                 borderaxespad=0.0,
                 alignment="center",
@@ -423,8 +430,8 @@ def plot_grouped_runs_with_distribution(
     model_count: int,
     summary_stat: Literal["mean", "median"] = "median",
     render_as_upper_bound: bool = False,
-    line_width: float = 2.6,
-    marker_size: float = 7.0,
+    line_width: float = 2.2,
+    marker_size: float = 5.2,
     distribution_zorder: int = 3,
     summary_zorder: int = 4,
 ) -> bool:
@@ -623,6 +630,7 @@ def plot_curves_from_df(
         figsize=figsize,
         dpi=dpi,
     )
+    fig.patch.set_facecolor("white")
     fig.subplots_adjust(left=0.06, bottom=0.12, right=0.98, top=0.92, wspace=0.45)
 
     # Fixed pre-training / generalization split styling.
@@ -635,6 +643,7 @@ def plot_curves_from_df(
 
     for idx, (metric_key, metric_name) in enumerate(specs):
         ax = axes[idx]
+        ax.set_facecolor(PLOT_FACE_COLOR)
         subset_metric = df[df["metric"] == metric_key]
         present_models = subset_metric["model"].astype(str).unique().tolist()
         model_names = [name for name in style_map if name in present_models]
@@ -692,9 +701,10 @@ def plot_curves_from_df(
                 label=model_label,
                 linestyle=":" if render_as_upper_bound else linestyle,
                 color=color,
-                linewidth=2.5,
+                linewidth=2.25,
                 marker=None if render_as_upper_bound else marker,
-                markersize=8,
+                markersize=5.4,
+                alpha=0.96,
             )
             if show_std and not render_as_upper_bound:
                 std = agg["std"].fillna(0.0)
@@ -702,7 +712,7 @@ def plot_curves_from_df(
                     agg[x_col],
                     np.maximum(agg["mean"] - std, 0.0),
                     agg["mean"] + std,
-                    alpha=0.2,
+                    alpha=0.12,
                     color=color,
                 )
             if error_bars is not None and not render_as_upper_bound:
@@ -717,7 +727,7 @@ def plot_curves_from_df(
                             agg[x_col],
                             lower_values,
                             mean_values + err,
-                            alpha=0.12,
+                            alpha=0.09,
                             color=color,
                         )
                     else:
@@ -744,7 +754,11 @@ def plot_curves_from_df(
         ax.set_xlabel(x_label)
         ax.set_ylabel(metric_name)
         ax.set_title(f"{metric_name}{title_suffix}")
-        ax.grid(True, which="both", ls="-", alpha=0.2)
+        ax.grid(True, which="major", ls="-", alpha=0.18)
+        ax.grid(True, which="minor", ls="-", alpha=0.08)
+        for spine in ax.spines.values():
+            spine.set_color("#d7d7d7")
+            spine.set_linewidth(0.9)
         if log_x:
             ax.set_xscale("log")
             if positive_x_values.size > 0:

@@ -50,14 +50,22 @@ def format_ranked_latex_value(
     *,
     marker: str = "",
     rank_colors: Mapping[int, str] | None = None,
+    bold_ranks: Sequence[int] | None = None,
+    underline_ranks: Sequence[int] | None = None,
     precision: int = 4,
 ) -> str:
     formatted = format_latex_number(value, precision=precision)
+    rank_int = int(rank) if pd.notna(rank) else None
+    if rank_int is not None and rank_int in set(bold_ranks or ()):
+        formatted = rf"\textbf{{{formatted}}}"
+    if rank_int is not None and rank_int in set(underline_ranks or ()):
+        formatted = rf"\underline{{{formatted}}}"
     if marker:
         formatted = f"{formatted}{marker}"
     color = None
-    if pd.notna(rank):
-        color = (rank_colors or DEFAULT_LATEX_RANK_COLORS).get(int(rank))
+    if rank_int is not None:
+        color_map = DEFAULT_LATEX_RANK_COLORS if rank_colors is None else rank_colors
+        color = color_map.get(rank_int)
     return rf"\cellcolor{{{color}}}{formatted}" if color else formatted
 
 
@@ -336,6 +344,10 @@ def render_setting_average_performance_latex(
     caption: str,
     label: str,
     rank_colors: Mapping[int, str] | None = None,
+    bold_ranks: Sequence[int] | None = None,
+    underline_ranks: Sequence[int] | None = None,
+    sequence_length_labels: Mapping[str, str] | None = None,
+    sequence_length_column_label: str = "Seq. len.",
     tabcolsep: str = "4pt",
     arraystretch: str = "1.0",
 ) -> str:
@@ -343,25 +355,44 @@ def render_setting_average_performance_latex(
     metric_labels = list(numeric_table.columns)
     benchmark_labels = list(dict.fromkeys(col[0] for col in metric_labels))
     n_metric_cols = len(metric_labels)
+    has_sequence_length_column = sequence_length_labels is not None
+    leading_columns = 2 if has_sequence_length_column else 1
     lines = [
         r"\begin{table}",
         r"\centering",
         rf"\setlength{{\tabcolsep}}{{{tabcolsep}}}",
         rf"\renewcommand{{\arraystretch}}{{{arraystretch}}}",
-        rf"\begin{{tabular}}{{l{'c' * n_metric_cols}}}",
+        rf"\begin{{tabular}}{{l{'c' * (n_metric_cols + int(has_sequence_length_column))}}}",
         r"\toprule",
-        " & "
+        " & ".join([""] * leading_columns)
+        + " & "
         + " & ".join(
             rf"\multicolumn{{{sum(col[0] == benchmark for col in metric_labels)}}}{{c}}{{{benchmark}}}"
             for benchmark in benchmark_labels
         )
         + r" \\",
-        "Training setup & " + " & ".join(col[1] for col in metric_labels) + r" \\",
+        "Training setup"
+        + (
+            f" & {sequence_length_column_label}"
+            if has_sequence_length_column
+            else ""
+        )
+        + " & "
+        + " & ".join(col[1] for col in metric_labels)
+        + r" \\",
         r"\midrule",
     ]
 
     for setting_label, row in numeric_table.iterrows():
         values = []
+        if has_sequence_length_column:
+            setting_key = str(setting_label)
+            normalized_setting_key = " ".join(setting_key.split())
+            sequence_length_label = sequence_length_labels.get(
+                setting_key,
+                sequence_length_labels.get(normalized_setting_key, ""),
+            )
+            values.append(latex_escape(sequence_length_label))
         for metric_label in metric_labels:
             values.append(
                 format_ranked_latex_value(
@@ -369,6 +400,8 @@ def render_setting_average_performance_latex(
                     rank_table.loc[setting_label, metric_label],
                     marker=str(significance_table.loc[setting_label, metric_label]),
                     rank_colors=rank_colors,
+                    bold_ranks=bold_ranks,
+                    underline_ranks=underline_ranks,
                 )
             )
         lines.append(" & ".join([latex_escape(setting_label), *values]) + r" \\")
@@ -502,12 +535,44 @@ def apply_real_world_latex_cell_formatting(
     significance_table: pd.DataFrame | None = None,
     baseline_model_names: set[str] | None = None,
     unranked_model_names: set[str] | None = None,
+    rank_colors: Mapping[int, str] | None = None,
 ) -> pd.DataFrame:
-    """Apply numeric formatting, rank emphasis, baseline bolding, and markers."""
+    """Apply numeric formatting, best-ranked underlining, baseline bolding, and markers."""
     formatted = numeric_table.map(format_latex_number)
 
     baseline_model_names = baseline_model_names or set()
     unranked_model_names = unranked_model_names or set()
+
+    ranked_models = [
+        model
+        for model in formatted.index
+        if model not in baseline_model_names and model not in unranked_model_names
+    ]
+    baseline_models = [
+        model for model in formatted.index if model in baseline_model_names
+    ]
+
+    for col in formatted.columns:
+        metric_label = col[-1] if isinstance(col, tuple) else str(col)
+        ascending = not metric_label_higher_is_better(metric_label)
+
+        if ranked_models:
+            ranked_values = numeric_table.loc[ranked_models, col]
+            ranks = ranked_values.rank(ascending=ascending, method="min")
+            for model, rank in ranks.items():
+                if pd.isna(rank):
+                    continue
+                rank_int = int(rank)
+                if rank_colors is not None:
+                    color = rank_colors.get(rank_int)
+                    if color is not None:
+                        formatted.loc[model, col] = (
+                            rf"\cellcolor{{{color}}}{formatted.loc[model, col]}"
+                        )
+                elif rank_int == 1:
+                    formatted.loc[model, col] = (
+                        rf"\underline{{{formatted.loc[model, col]}}}"
+                    )
 
     if significance_table is not None:
         if isinstance(significance_table.columns, pd.MultiIndex) and (
@@ -533,34 +598,9 @@ def apply_real_world_latex_cell_formatting(
                         f"{formatted.loc[row_label, col]}{marker}"
                     )
 
-    ranked_models = [
-        model
-        for model in formatted.index
-        if model not in baseline_model_names and model not in unranked_model_names
-    ]
-    baseline_models = [
-        model for model in formatted.index if model in baseline_model_names
-    ]
-
     for col in formatted.columns:
         metric_label = col[-1] if isinstance(col, tuple) else str(col)
         ascending = not metric_label_higher_is_better(metric_label)
-
-        if ranked_models:
-            ranked_values = numeric_table.loc[ranked_models, col]
-            ranks = ranked_values.rank(ascending=ascending, method="min")
-            for model, rank in ranks.items():
-                if pd.isna(rank):
-                    continue
-                rank = int(rank)
-                if rank == 1:
-                    formatted.loc[model, col] = (
-                        rf"\textbf{{{formatted.loc[model, col]}}}"
-                    )
-                elif rank == 2:
-                    formatted.loc[model, col] = (
-                        rf"\underline{{{formatted.loc[model, col]}}}"
-                    )
 
         if baseline_models:
             baseline_values = numeric_table.loc[baseline_models, col]
