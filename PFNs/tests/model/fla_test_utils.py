@@ -168,6 +168,8 @@ def build_fla_backbone(
     bidirectional_state_fusion: str = "mean_output_mean_cache",
     include_self_term: bool = True,
     final_state_readout: bool = False,
+    deltanet_beta_decay: str = "none",
+    deltanet_beta_decay_t0: int = 1000,
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -189,6 +191,8 @@ def build_fla_backbone(
         bidirectional_state_fusion=bidirectional_state_fusion,
         include_self_term=bool(include_self_term),
         final_state_readout=bool(final_state_readout),
+        deltanet_beta_decay=deltanet_beta_decay,
+        deltanet_beta_decay_t0=deltanet_beta_decay_t0,
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)

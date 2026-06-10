@@ -233,6 +233,10 @@ LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
       "wandb_run_id": "linear_attention/runs/83hs69fa",
       "display_name": "Linear Attention\nNon-Causal",
     },
+    "Linear_Attention_Non_Causal_qk_l2_norm": {
+      "wandb_run_id": "linear_attention/runs/49ru3j58",
+      "display_name": "Linear Attention\nNon-Causal w. qk L2 Norm",
+    },
     "Linear_Attention_Non_Causal_updated": {
       "wandb_run_id": "linear_attention/runs/tn6h2qyb", 
       "display_name": "Linear Attention\n(Non-Causal updated)",
@@ -614,6 +618,24 @@ ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "subsample_dataset_size": 3_000
     },
+    "oracles:Oracle_Hidden_State_DeltaNet_Comb_ST": {
+        **DELTANET_MODELS["DeltaNet_Comb_ST"],
+        "display_name": "Oracle Hidden State", # from deltanet
+        "oracle_hidden_state_baseline": True,
+        "oracle_num_epochs": 400,
+        "oracle_lr": 3e-3,
+        "oracle_weight_decay": 1e-5,
+        "oracle_patience": 20,
+        "oracle_query_batch_size": 4000, # increasing or decreasing batch size hurt at seq len 128k
+        #"oracle_query_batch_fraction": 0.04,
+        "oracle_selection_fraction": 0.1,
+        "oracle_evaluate_only_max_seqlen": True,
+        "oracle_verbose": False,
+        "eval_autocast_dtype": "bf16",
+    }, 
+}
+
+LAYER_ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
     "oracles:Linear_Attention_Comb_ST_Least_Squares": {
         **LINEAR_ATTENTION_MODELS["Linear_Attention_Comb_ST"],
         "display_name": "Linear Attention\nLeast-Squares Oracle",
@@ -632,6 +654,14 @@ ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Linear Attention\nRidge Oracle",
         "linear_attention_state_update_rule": "ridge",
         "linear_attention_ridge_lambda": 1.0,
+        "eval_autocast_dtype": "fp32",
+    },
+    "oracles:Linear_Attention_Non_Causal_Ridge_100_eval_only": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Linear Attention Non-Causal\nRidge Oracle (100.0)",
+        "linear_attention_state_update_rule": "ridge",
+        "linear_attention_ridge_lambda": 100.0,
+        # "wandb_run_id": "linear_attention/runs/9398ug8z",
         "eval_autocast_dtype": "fp32",
     },
     "oracles:Linear_Attention_Non_Causal_Ridge_100": {
@@ -698,20 +728,68 @@ ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "linear_attention/runs/lz8syl7f",
         "eval_autocast_dtype": "fp32",
     },
-    "oracles:Oracle_Hidden_State_DeltaNet_Comb_ST": {
-        **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State", # from deltanet
-        "oracle_hidden_state_baseline": True,
-        "oracle_num_epochs": 400,
-        "oracle_lr": 3e-3,
-        "oracle_weight_decay": 1e-5,
-        "oracle_patience": 20,
-        "oracle_query_batch_size": 4000, # increasing or decreasing batch size hurt at seq len 128k
-        #"oracle_query_batch_fraction": 0.04,
-        "oracle_selection_fraction": 0.1,
-        "oracle_evaluate_only_max_seqlen": True,
-        "oracle_verbose": False,
-        "eval_autocast_dtype": "bf16",
+    "oracles:Linear_Attention_Non_Causal_Ridge_scaled_0.00001_qk_norm": {
+        # **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Linear Attention Non-Causal\nRidge Oracle (Scaled 0.00001 qk norm)",
+        "linear_attention_qk_norm": "l2",
+        #"linear_attention_state_update_rule": "scaled_ridge",
+        #"linear_attention_ridge_lambda": 0.00001,
+        "wandb_run_id": "linear_attention/runs/g5d03r62",
+        "eval_autocast_dtype": "fp32",
+    },
+    "oracles:Linear_Attention_Non_Causal_Ridge_100_eval_only": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Linear Attention Non-Causal\nRidge Oracle (100.0)",
+        "linear_attention_state_update_rule": "ridge",
+        "linear_attention_ridge_lambda": 100.0,
+        # "wandb_run_id": "linear_attention/runs/9398ug8z",
+        "eval_autocast_dtype": "fp32",
+    },
+    "oracles:Linear_Attention_Non_Causal_Ridge_100_eval_only": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Linear Attention Non-Causal\nRidge Oracle (100.0)",
+        "linear_attention_state_update_rule": "ridge",
+        "linear_attention_ridge_lambda": 100.0,
+        # "wandb_run_id": "linear_attention/runs/9398ug8z",
+        "eval_autocast_dtype": "fp32",
+    },
+    "oracles:Linear_Attention_Non_Causal_Ridge_scaled_0.1_eval_only": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Linear Attention Non-Causal\nRidge Oracle (Scaled 0.1)",
+        "linear_attention_state_update_rule": "scaled_ridge",
+        "linear_attention_ridge_lambda": 0.1,
+        "eval_autocast_dtype": "fp32",
+    },
+    "oracles:Linear_Attention_Non_Causal_Least_Square_eval_only": {
+        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
+        "display_name": "Linear Attention Non-Causal\nLeast-Squares Oracle",
+        "linear_attention_state_update_rule": "least_squares",
+        # "wandb_run_id": "linear_attention/runs/2uyiwp2a", # not finished only trained up to ep ~80
+        "eval_autocast_dtype": "fp32",
+    },
+    "oracles:Linear_Attention_Non_Causal_QK_Norm_Ridge_scaled_0.00001_eval_only": {
+        "display_name": "Linear Attention Non-Causal QK Norm \nRidge Oracle (Scaled 0.00001)",
+        "linear_attention_qk_norm": "l2",
+        "linear_attention_state_update_rule": "scaled_ridge",
+        "linear_attention_ridge_lambda": 0.00001,
+        "wandb_run_id": "icl_arch/linear_attention/2p8awllz",
+        "eval_autocast_dtype": "fp32",
+    },
+    "oracles:Linear_Attention_Non_Causal_QK_Norm_Ridge_scaled_0.1_eval_only": {
+        "display_name": "Linear Attention Non-Causal QK Norm \nRidge Oracle (Scaled 0.1)",
+        "linear_attention_qk_norm": "l2",
+        "linear_attention_state_update_rule": "scaled_ridge",
+        "linear_attention_ridge_lambda": 0.1,
+        "wandb_run_id": "icl_arch/linear_attention/2p8awllz",
+        "eval_autocast_dtype": "fp32",
+    },
+    "oracles:Linear_Attention_Non_Causal_QK_Norm_Ridge_scaled_100_eval_only": {
+        "display_name": "Linear Attention Non-Causal QK Norm \nRidge Oracle 100",
+        "linear_attention_qk_norm": "l2",
+        "linear_attention_state_update_rule": "ridge",
+        "linear_attention_ridge_lambda": 100,
+        "wandb_run_id": "icl_arch/linear_attention/2p8awllz",
+        "eval_autocast_dtype": "fp32",
     },
 }
 
@@ -821,8 +899,8 @@ BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
     #     "display_name": "Bidirectional DeltaNet",
     #     "wandb_run_id": "icl_arch/fla_models/vn8w3gjo",
     # },
-    "Bidirectional_DeltaNet_Comb_ST_mean_output_mean_cache_new": {
-        "display_name": "Bidirectional Mean Output Mean Cache (DeltaNet new)",
+    "Bidirectional_DeltaNet_Comb_ST_mean_output_mean_cache": {
+        "display_name": "Bidirectional DeltaNet",
         "wandb_run_id": "icl_arch/fla_models/5rv92df5",
     },
     # "Bidirectional_DeltaNet_Comb_ST_mean_output_two_cache": {
@@ -952,6 +1030,12 @@ NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "DeltaNet (Comb ST)",
         "wandb_run_id": "fla_models/runs/dfzrvzcz",
     },
+    "DeltaNet_Comb_ST_online_inverse_eval_only": {
+        "display_name": "DeltaNet + Online Inverse LR Decay (eval only)",
+        "wandb_run_id": "fla_models/runs/dfzrvzcz",
+        "deltanet_beta_decay": "online_inverse",
+        "deltanet_beta_decay_t0": 256,
+    },
     "Causal_DeltaNet_no_self_term": {
         "display_name": "DeltaNet no self-term (Comb ST)",
         "wandb_run_id": "fla_models/runs/erll6c28", # 4vxeqnat
@@ -968,29 +1052,55 @@ NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "Non-Causal DeltaNet (Comb ST)",
         "wandb_run_id": "icl_arch/fla_models/dj7xmlsb", # fp32 8cpcrc2e
     },
+    "Non_Causal_DeltaNet_loguniform_64K": { 
+        "display_name": "Non-Causal DeltaNet loguniform 64K(Comb ST)",
+        "wandb_run_id": "icl_arch/fla_models/p70y8140", # fp32 8cpcrc2e
+    },
+    "Non_Causal_DeltaNet_online_inverse_eval_only": { 
+        "display_name": "Non-Causal DeltaNet + Online Inverse LR Decay (Comb ST)",
+        "wandb_run_id": "icl_arch/fla_models/dj7xmlsb", # fp32 8cpcrc2e
+        "deltanet_beta_decay": "online_inverse",
+        "deltanet_beta_decay_t0": 256,
+    },
     "Non_Causal_DeltaNet_w_fro_norm": { 
         "display_name": "Non-Causal DeltaNet (Comb ST with Frobenius norm)",
         "wandb_run_id": "fla_models/runs/iakgx7qe",
-    },
-    "Non_Causal_DeltaNet_with_lr_decay": {
-        "display_name": "Non-Causal DeltaNet with LR Decay (Comb ST)",
-        "wandb_run_id": "fla_models/runs/3ixb0qco", # uses log_uniform 256-8k deltanet_beta_decay_t0=1000, decay='sqrt_inverse'
     },
     "Non_Causal_DeltaNet_with_lr_decay_online_sqrt_inverse": {
         "display_name": "Non-Causal DeltaNet with LR Decay: Online Sqrt Inverse (Comb ST)",
         "wandb_run_id": "fla_models/runs/3cir36t2", # online_sqrt_inverse, beta_decay_t0=256
     },
-    "Non_Causal_DeltaNet_with_lr_decay_online_inverse": {
-        "display_name": "Non-Causal DeltaNet with LR Decay: Online Inverse (Comb ST)",
+    "Non_Causal_DeltaNet_with_lr_decay_online_inverse_t0_256": {
+        "display_name": "Non-Causal DeltaNet with LR Decay: Online Inverse T0=256 (Comb ST)",
         "wandb_run_id": "fla_models/runs/feoe37tc", # online_inverse, beta_decay_t0=256
     },
+    "Non_Causal_DeltaNet_with_lr_decay_online_inverse_t0_512": {
+        "display_name": "Non-Causal DeltaNet with LR Decay: Online Inverse T0=512 (Comb ST)",
+        "wandb_run_id": "fla_models/runs/s6r34mn4", # online_inverse, beta_decay_t0=512
+    },
+    "Non_Causal_DeltaNet_with_lr_decay_online_inverse_t0_256_retrain": {
+        "display_name": "Non-Causal DeltaNet with LR Decay: Online Inverse T0=256 retrain (Comb ST)",
+        "wandb_run_id": "fla_models/runs/kg33pp3k", # online_inverse, beta_decay_t0=256
+    },
+    "DeltaNet_with_lr_decay_online_inverse_t0_256": {
+        "display_name": "DeltaNet with LR Decay: Online Inverse T0=256 (Comb ST)",
+        "wandb_run_id": "fla_models/runs/nw73xsr1", # online_inverse, beta_decay_t0=256
+    },
+    "Non_Causal_DeltaNet_with_lr_decay_online_inverse_t0_1": {
+        "display_name": "Non-Causal DeltaNet with LR Decay: Online Inverse T0=1 (Comb ST)",
+        "wandb_run_id": "fla_models/runs/obv4034w", # online_inverse, beta_decay_t0=1
+    },
     "Non_Causal_GLA": {
-        "display_name": "Non-Causal GLA (Comb ST)",
+        "display_name": "Non-Causal GLA",
         "wandb_run_id": "icl_arch/fla_models/j5vkgn2l",
     },
     "Non_Causal_Linear_Attention_FLA": {
         "display_name": "Non-Causal Linear Attention (Comb ST, FLA)",
         "wandb_run_id": "icl_arch/fla_models/q93kpj3a",
+    },
+    "Non_Causal_Linear_Attention_QK_Norm": {
+        "display_name": "Non-Causal Linear Attention (Comb ST, QR Norm)",
+        "wandb_run_id": "icl_arch/linear_attention/2p8awllz",
     },
     "Non_Causal_Gated_DeltaNet": {
         "display_name": "Non-Causal Gated DeltaNet (Comb ST)",
@@ -1021,6 +1131,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "deltanet": DELTANET_MODELS,
     "oracle_hidden_state": ORACLE_HIDDEN_STATE_MODELS,
     "oracles": ORACLE_PERFORMANCE_MODELS,
+    "layer_oracles": LAYER_ORACLE_PERFORMANCE_MODELS,
     "deltanet_size_changes": DELTANET_MODELS_SIZE_CHANGES,
     "gated_deltanet": GATED_DELTANET_MODELS,
     "gated_deltanet_seq_len_changes": GATED_DELTANET_MODELS_SEQ_LEN_CHANGES,
