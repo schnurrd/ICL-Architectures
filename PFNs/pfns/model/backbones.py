@@ -804,7 +804,7 @@ class FLABackbone(Backbone):
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
-        deltanet_beta_decay_start: int = 0,
+        deltanet_beta_decay_start: int | torch.Tensor = 0,
     ) -> tuple[torch.Tensor, tp.Any | None]:
         if (
             cache_params is not None
@@ -886,7 +886,7 @@ class FLABackbone(Backbone):
         self, 
         use_custom_recurrent: bool,
         use_custom_shortconv : bool = False,
-        deltanet_beta_decay_start: int = 0,
+        deltanet_beta_decay_start: int | torch.Tensor = 0,
     ) -> tp.Iterable[tp.ContextManager[tp.Any]]:
         """
         Get context managers for patching FLA model behavior. 
@@ -984,13 +984,25 @@ class FLABackbone(Backbone):
             else:
                 expanded_cache = cache_params
             chunk_flat = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
+            beta_decay_start: int | torch.Tensor = cache_seq_length + chunk_start
+            if (
+                self.deltanet_beta_decay != "none"
+                and isinstance(self.fla, DeltaNetModel)
+                and use_custom_recurrent
+                and supports_custom_recurrent
+            ):
+                beta_decay_start = torch.arange(
+                    cache_seq_length + chunk_start,
+                    cache_seq_length + chunk_start + chunk_len,
+                    device=chunk_x.device,
+                )
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
-                deltanet_beta_decay_start=cache_seq_length + chunk_start,
+                deltanet_beta_decay_start=beta_decay_start,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output

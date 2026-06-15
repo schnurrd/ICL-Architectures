@@ -41,7 +41,7 @@ def _apply_deltanet_beta_decay(
     *,
     mode: str | None,
     t0: int,
-    start_position: int = 0,
+    start_position: int | torch.Tensor = 0,
     position_dim: int = 1,
 ) -> torch.Tensor:
     mode = _normalize_deltanet_beta_decay(mode)
@@ -51,10 +51,6 @@ def _apply_deltanet_beta_decay(
         raise AssertionError(f"Unhandled deltanet_beta_decay mode: {mode!r}.")
     if t0 <= 0:
         raise ValueError(f"deltanet_beta_decay_t0 must be > 0, got {t0}.")
-    if start_position < 0:
-        raise ValueError(
-            f"deltanet beta decay start_position must be >= 0, got {start_position}."
-        )
     if beta.ndim == 0:
         raise ValueError(
             "deltanet beta decay expects beta to have at least one dimension."
@@ -66,16 +62,32 @@ def _apply_deltanet_beta_decay(
         )
 
     seq_len = beta.shape[position_dim]
-    positions = torch.arange(
-        start_position,
-        start_position + seq_len,
-        device=beta.device,
-        dtype=torch.float32,
-    )
-    decay = float(t0) / (float(t0) + positions)
     shape = [1] * beta.ndim
     shape[position_dim] = seq_len
-    return beta * decay.to(beta.dtype).view(shape)
+    positions = torch.arange(seq_len, device=beta.device, dtype=torch.float32).view(shape)
+
+    if isinstance(start_position, torch.Tensor):
+        start_position = start_position.to(device=beta.device, dtype=torch.float32)
+        if bool((start_position < 0).any().item()):
+            raise ValueError("deltanet beta decay start_position must be >= 0.")
+        if start_position.ndim > 1 or (start_position.ndim == 1 and start_position.numel() != seq_len):
+            raise ValueError(
+                "deltanet beta decay start_position tensor must be scalar or "
+                f"match position_dim length {seq_len}."
+            )
+        if start_position.ndim == 1:
+            start_position = start_position.view(shape)
+        positions = positions + start_position
+    else:
+        if start_position < 0:
+            raise ValueError(
+                "deltanet beta decay start_position must be >= 0, "
+                f"got {start_position}."
+            )
+        positions = positions + float(start_position)
+
+    decay = float(t0) / (float(t0) + positions)
+    return beta * decay.to(beta.dtype)
 
 
 def _deltanet_beta_decay_patch(
@@ -83,7 +95,7 @@ def _deltanet_beta_decay_patch(
     *,
     mode: str | None,
     t0: int,
-    start_position: int = 0,
+    start_position: int | torch.Tensor = 0,
 ) -> tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]]:
     mode = _normalize_deltanet_beta_decay(mode)
     if mode == "none":
@@ -603,7 +615,7 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
     final_state_readout: bool = False,
     beta_decay: str | None = "none",
     beta_decay_t0: int = 1000,
-    beta_decay_start: int = 0,
+    beta_decay_start: int | torch.Tensor = 0,
 ):
     beta_decay = _normalize_deltanet_beta_decay(beta_decay)
     if not enabled and not final_state_readout and beta_decay == "none":

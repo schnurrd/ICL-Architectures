@@ -139,6 +139,28 @@ def test_deltanet_beta_decay_scales_late_positions():
         expected_offset_online.expand_as(beta),
     )
 
+    tensor_offset_online_inverse = _apply_deltanet_beta_decay(
+        beta,
+        mode="online_inverse",
+        t0=2,
+        start_position=torch.arange(5),
+    )
+    expected_tensor_offset_online = torch.tensor(
+        [1.0, 0.5, 2 / 6, 0.25, 0.2]
+    ).view(1, 5, 1)
+    torch.testing.assert_close(
+        tensor_offset_online_inverse,
+        expected_tensor_offset_online.expand_as(beta),
+    )
+
+    with pytest.raises(ValueError, match="start_position must be >= 0"):
+        _apply_deltanet_beta_decay(
+            beta,
+            mode="online_inverse",
+            t0=2,
+            start_position=torch.tensor([0, -1]),
+        )
+
     with pytest.raises(ValueError, match="deltanet_beta_decay must be one of"):
         _apply_deltanet_beta_decay(beta, mode="not_a_decay", t0=2)
 
