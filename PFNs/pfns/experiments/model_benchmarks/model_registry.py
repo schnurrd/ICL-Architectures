@@ -737,22 +737,6 @@ LAYER_ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "linear_attention/runs/g5d03r62",
         "eval_autocast_dtype": "fp32",
     },
-    "oracles:Linear_Attention_Non_Causal_Ridge_100_eval_only": {
-        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
-        "display_name": "Linear Attention Non-Causal\nRidge Oracle (100.0)",
-        "linear_attention_state_update_rule": "ridge",
-        "linear_attention_ridge_lambda": 100.0,
-        # "wandb_run_id": "linear_attention/runs/9398ug8z",
-        "eval_autocast_dtype": "fp32",
-    },
-    "oracles:Linear_Attention_Non_Causal_Ridge_100_eval_only": {
-        **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
-        "display_name": "Linear Attention Non-Causal\nRidge Oracle (100.0)",
-        "linear_attention_state_update_rule": "ridge",
-        "linear_attention_ridge_lambda": 100.0,
-        # "wandb_run_id": "linear_attention/runs/9398ug8z",
-        "eval_autocast_dtype": "fp32",
-    },
     "oracles:Linear_Attention_Non_Causal_Ridge_scaled_0.1_eval_only": {
         **LINEAR_ATTENTION_MODELS["Linear_Attention_Non_Causal"],
         "display_name": "Linear Attention Non-Causal\nRidge Oracle (Scaled 0.1)",

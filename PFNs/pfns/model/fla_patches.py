@@ -89,17 +89,30 @@ def _deltanet_beta_decay_patch(
     if mode == "none":
         return original_kernel
 
-    def _kernel(**kwargs: tp.Any) -> tuple[torch.Tensor, torch.Tensor | None]:
+    def _kernel(
+        *args: tp.Any,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        args = list(args)
         kwargs = dict(kwargs)
-        if kwargs.get("beta") is None:
-            raise ValueError("deltanet beta decay requires a beta keyword argument.")
-        kwargs["beta"] = _apply_deltanet_beta_decay(
-            kwargs["beta"],
-            mode=mode,
-            t0=t0,
-            start_position=start_position,
-        )
-        return original_kernel(**kwargs)
+
+        def _decay_beta(beta: torch.Tensor | None) -> torch.Tensor:
+            if beta is None:
+                raise ValueError("deltanet beta decay requires a beta argument.")
+            return _apply_deltanet_beta_decay(
+                beta,
+                mode=mode,
+                t0=t0,
+                start_position=start_position,
+            )
+
+        if len(args) > 3:
+            args[3] = _decay_beta(args[3])
+        elif "beta" in kwargs:
+            kwargs["beta"] = _decay_beta(kwargs["beta"])
+        else:
+            raise ValueError("deltanet beta decay requires a beta argument.")
+        return original_kernel(*args, **kwargs)
 
     return _kernel
 

@@ -174,6 +174,32 @@ def test_deltanet_beta_decay_validates_backbone_config():
         )
 
 
+def test_deltanet_beta_decay_patch_accepts_positional_beta():
+    from pfns.model.fla_patches import (
+        _apply_deltanet_beta_decay,
+        _deltanet_beta_decay_patch,
+    )
+
+    q = torch.empty(1)
+    k = torch.empty(1)
+    v = torch.empty(1)
+    beta = torch.ones(1, 4, 1)
+
+    def original_kernel(*args, **kwargs):
+        return args[3], kwargs.get("initial_state")
+
+    patched_kernel = _deltanet_beta_decay_patch(
+        original_kernel,
+        mode="online_inverse",
+        t0=2,
+    )
+    actual_beta, actual_state = patched_kernel(q, k, v, beta, initial_state="state")
+
+    expected_beta = _apply_deltanet_beta_decay(beta, mode="online_inverse", t0=2)
+    torch.testing.assert_close(actual_beta, expected_beta)
+    assert actual_state == "state"
+
+
 def test_deltanet_beta_decay_patch_matches_manual_decayed_beta():
     if not torch.cuda.is_available():
         pytest.skip("FLA DeltaNet kernel requires CUDA/Triton.")
