@@ -16,33 +16,48 @@ def _apply_linear_attention_state_update_override(
     model_config: dict[str, Any],
 ) -> None:
     state_update_rule = model_config.get("linear_attention_state_update_rule")
-    if state_update_rule is None:
+    has_qk_norm_override = "linear_attention_qk_norm" in model_config
+    if state_update_rule is None and not has_qk_norm_override:
         return
 
-    normalized_rule = LinearAttention._normalize_state_update_rule(
-        str(state_update_rule)
+    normalized_rule = (
+        None
+        if state_update_rule is None
+        else LinearAttention._normalize_state_update_rule(str(state_update_rule))
+    )
+    normalized_qk_norm = (
+        None
+        if not has_qk_norm_override
+        else LinearAttention._normalize_qk_norm(
+            model_config.get("linear_attention_qk_norm")
+        )
     )
     layers = [m for m in model.modules() if isinstance(m, LinearAttention)]
     if not layers:
         raise ValueError(
-            "linear_attention_state_update_rule override requires a model with "
+            "linear_attention_state_update_rule/linear_attention_qk_norm "
+            "override requires a model with "
             "pfns.model.linear_attention.LinearAttention layers."
         )
 
     for module in layers:
-        module.state_update_rule = normalized_rule
-        ridge_lambda = float(
-            model_config.get("linear_attention_ridge_lambda", module.ridge_lambda)
-        )
-        if ridge_lambda <= 0:
-            raise ValueError(
-                "linear_attention_ridge_lambda override must be greater than 0."
+        if normalized_rule is not None:
+            module.state_update_rule = normalized_rule
+            ridge_lambda = float(
+                model_config.get("linear_attention_ridge_lambda", module.ridge_lambda)
             )
-        module.ridge_lambda = ridge_lambda
-        if normalized_rule != "linear":
-            module.use_k_sum_normalization = False
-            module.state_renormalization = None
-            module.state_renormalization_target_norm = None
+            if ridge_lambda <= 0:
+                raise ValueError(
+                    "linear_attention_ridge_lambda override must be greater than 0."
+                )
+            module.ridge_lambda = ridge_lambda
+            if normalized_rule != "linear":
+                module.use_k_sum_normalization = False
+                module.state_renormalization = None
+                module.state_renormalization_target_norm = None
+        if has_qk_norm_override:
+            module.qk_norm = normalized_qk_norm
+
 
 
 def load_models_for_benchmark(

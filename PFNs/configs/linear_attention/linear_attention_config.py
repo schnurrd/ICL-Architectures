@@ -130,6 +130,7 @@ def get_config(
     expand_v: float = 1.0,
     normalize_q_sum: bool = False,
     normalize_k_sum: bool = False,
+    qk_norm: bool | str | None = None,
     use_k_sum_normalization: bool = False,
     use_attention_norm: bool = True,
     use_output_norm: bool = True,
@@ -157,6 +158,14 @@ def get_config(
         feature_positional_embedding
     )
     state_renormalization = normalize_optional_none_string(state_renormalization)
+    legacy_sum_norm_requested = bool(normalize_q_sum or normalize_k_sum)
+    resolved_qk_norm = qk_norm
+    normalized_qk_norm = None if qk_norm in {None, False} else str(qk_norm).strip().lower()
+    if legacy_sum_norm_requested and normalized_qk_norm not in {None, "", "none", "false"}:
+        raise ValueError(
+            "normalize_q_sum/normalize_k_sum are legacy one-sided "
+            "normalization flags and cannot be combined with qk_norm."
+        )
     resolved_sequence_mode, layer_kwargs = _resolve_linear_attention_mode(sequence_mode)
     layer_kwargs = {
         **layer_kwargs,
@@ -164,8 +173,9 @@ def get_config(
         "expand_k": expand_k,
         "expand_v": expand_v,
         "causal_chunk_size": causal_chunk_size,
-        "normalize_q_sum": normalize_q_sum,
-        "normalize_k_sum": normalize_k_sum,
+        "normalize_q_sum": bool(normalize_q_sum),
+        "normalize_k_sum": bool(normalize_k_sum),
+        "qk_norm": resolved_qk_norm,
         "use_k_sum_normalization": use_k_sum_normalization,
         "use_attention_norm": use_attention_norm,
         "norm_type": norm_type,
@@ -324,6 +334,7 @@ def get_config(
             "normalize_q_sum": False,
             "normalize_k_sum": False,
             "use_k_sum_normalization": False,
+            "qk_norm": None,
             "state_renormalization": None,
             "learnable_state_renorm_scale": True,
             "state_renormalization_target_norm": None,

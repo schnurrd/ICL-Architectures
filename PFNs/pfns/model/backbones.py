@@ -28,6 +28,7 @@ from fla.models.utils import Cache as FLACache
 from pfns import base_config
 from pfns.model.fla_mimetic_init import MimeticInitMode, apply_mimetic_fla_init
 from pfns.model.fla_patches import (
+    DELTANET_BETA_DECAY_MODES,
     _maybe_patch_gla_with_stateless_recurrent,
     _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
@@ -384,6 +385,11 @@ class FLABackboneConfig(BackboneConfig):
     state_weaving: bool = False
     include_self_term: bool = True
     final_state_readout: bool = False
+    deltanet_beta_decay: tp.Literal[
+        "none",
+        "online_inverse",
+    ] = "none"
+    deltanet_beta_decay_t0: int = 1000
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_init_mode: MimeticInitMode = "gate_only"
@@ -436,6 +442,22 @@ class FLABackboneConfig(BackboneConfig):
                 raise ValueError("final_state_readout does not support bidirectional FLA.")
             if self.state_weaving:
                 raise ValueError("final_state_readout does not support state_weaving.")
+        if self.deltanet_beta_decay not in DELTANET_BETA_DECAY_MODES:
+            raise ValueError(
+                "deltanet_beta_decay must be one of "
+                f"{sorted(DELTANET_BETA_DECAY_MODES)}, got {self.deltanet_beta_decay!r}."
+            )
+        if self.deltanet_beta_decay != "none":
+            if self.model_type != "deltanet":
+                raise ValueError(
+                    "deltanet_beta_decay is supported only for model_type='deltanet'."
+                )
+            if self.bidirectional:
+                raise ValueError("deltanet_beta_decay does not support bidirectional FLA.")
+            if self.state_passing:
+                raise ValueError("deltanet_beta_decay does not support state_passing.")
+            if self.deltanet_beta_decay_t0 <= 0:
+                raise ValueError("deltanet_beta_decay_t0 must be > 0.")
         if self.state_weaving:
             if self.sequence_mode != "Comb_ST":
                 raise ValueError("state_weaving currently supports only sequence_mode='Comb_ST'.")
@@ -492,6 +514,8 @@ class FLABackboneConfig(BackboneConfig):
         else:
             backbone_kwargs["state_weaving"] = self.state_weaving
             backbone_kwargs["final_state_readout"] = self.final_state_readout
+            backbone_kwargs["deltanet_beta_decay"] = self.deltanet_beta_decay
+            backbone_kwargs["deltanet_beta_decay_t0"] = self.deltanet_beta_decay_t0
 
         return backbone_cls(**backbone_kwargs)
 
@@ -519,6 +543,8 @@ class FLABackbone(Backbone):
         state_weaving: bool = False,
         include_self_term: bool = True,
         final_state_readout: bool = False,
+        deltanet_beta_decay: str = "none",
+        deltanet_beta_decay_t0: int = 1000,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
@@ -529,6 +555,8 @@ class FLABackbone(Backbone):
         self.cache_chunk_size = cache_chunk_size
         self.include_self_term = bool(include_self_term)
         self.final_state_readout = bool(final_state_readout)
+        self.deltanet_beta_decay = str(deltanet_beta_decay)
+        self.deltanet_beta_decay_t0 = int(deltanet_beta_decay_t0)
         self.state_weaving = bool(state_weaving)
         self.state_passing = (
             FLAStatePassing(dropout_prob=state_passing_dropout)
@@ -776,6 +804,7 @@ class FLABackbone(Backbone):
         return_cache: bool = True,
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
+        deltanet_beta_decay_start: int | torch.Tensor = 0,
     ) -> tuple[torch.Tensor, tp.Any | None]:
         if (
             cache_params is not None
@@ -813,6 +842,7 @@ class FLABackbone(Backbone):
                 for ctx in self._patch_contexts(
                     use_custom_recurrent=use_custom_recurrent,
                     use_custom_shortconv=use_custom_shortconv,
+                    deltanet_beta_decay_start=deltanet_beta_decay_start,
                 ):
                     stack.enter_context(ctx)
                 out = self.fla(**kwargs)
@@ -856,6 +886,7 @@ class FLABackbone(Backbone):
         self, 
         use_custom_recurrent: bool,
         use_custom_shortconv : bool = False,
+        deltanet_beta_decay_start: int | torch.Tensor = 0,
     ) -> tp.Iterable[tp.ContextManager[tp.Any]]:
         """
         Get context managers for patching FLA model behavior. 
@@ -864,7 +895,6 @@ class FLABackbone(Backbone):
         model = self.fla
         contexts: list[tp.ContextManager[tp.Any]] = []
         contexts.append(_maybe_patch_shortconv_forward_pytorch(use_custom_shortconv or use_custom_recurrent))
-
         patch_registry: tuple[
             tuple[
                 type[nn.Module],
@@ -894,6 +924,10 @@ class FLABackbone(Backbone):
                 extra_kwargs: dict[str, tp.Any] = {}
                 if supports_final_state_readout:
                     extra_kwargs["final_state_readout"] = final_state_readout_active
+                if model_type is DeltaNetModel:
+                    extra_kwargs["beta_decay"] = self.deltanet_beta_decay
+                    extra_kwargs["beta_decay_t0"] = self.deltanet_beta_decay_t0
+                    extra_kwargs["beta_decay_start"] = deltanet_beta_decay_start
                 contexts.append(
                     ctx_factory(
                         use_custom_recurrent,
@@ -905,6 +939,12 @@ class FLABackbone(Backbone):
 
     def _supports_custom_recurrent(self) -> bool:
         return isinstance(self.fla, self._CUSTOM_RECURRENT_MODELS)
+
+    @staticmethod
+    def _cache_seq_length(cache_params: tp.Any) -> int:
+        if hasattr(cache_params, "get_seq_length"):
+            return int(cache_params.get_seq_length(0))
+        return 0
 
     def _run_test_with_cache(
         self,
@@ -923,20 +963,46 @@ class FLABackbone(Backbone):
 
         batch_size, seq_len, embed_dim = test_x.shape
         supports_custom_recurrent = self._supports_custom_recurrent()
+        if (
+            self.deltanet_beta_decay != "none"
+            and isinstance(self.fla, DeltaNetModel)
+            and (not use_custom_recurrent or not supports_custom_recurrent)
+        ):
+            return self._run_test_with_cache_naive(
+                test_x,
+                cache_params,
+                use_custom_recurrent=use_custom_recurrent,
+                use_custom_shortconv=use_custom_shortconv,
+            )
 
-        def _run_parallel_chunk(chunk_x: torch.Tensor) -> torch.Tensor:
+        cache_seq_length = self._cache_seq_length(cache_params)
+
+        def _run_parallel_chunk(chunk_x: torch.Tensor, *, chunk_start: int) -> torch.Tensor:
             chunk_len = chunk_x.size(1)
             if not use_custom_recurrent or not supports_custom_recurrent:
                 expanded_cache = self._repeat_cache(cache_params, chunk_len)
             else:
                 expanded_cache = cache_params
             chunk_flat = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
+            beta_decay_start: int | torch.Tensor = cache_seq_length + chunk_start
+            if (
+                self.deltanet_beta_decay != "none"
+                and isinstance(self.fla, DeltaNetModel)
+                and use_custom_recurrent
+                and supports_custom_recurrent
+            ):
+                beta_decay_start = torch.arange(
+                    cache_seq_length + chunk_start,
+                    cache_seq_length + chunk_start + chunk_len,
+                    device=chunk_x.device,
+                )
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
+                deltanet_beta_decay_start=beta_decay_start,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
@@ -951,13 +1017,13 @@ class FLABackbone(Backbone):
             effective_cache_chunk_size = 128
 
         if effective_cache_chunk_size is None or seq_len <= effective_cache_chunk_size:
-            return _run_parallel_chunk(test_x)
+            return _run_parallel_chunk(test_x, chunk_start=0)
 
         outputs = []
         for chunk_start in range(0, seq_len, effective_cache_chunk_size):
             chunk_end = min(chunk_start + effective_cache_chunk_size, seq_len)
             chunk_x = test_x[:, chunk_start:chunk_end]
-            outputs.append(_run_parallel_chunk(chunk_x))
+            outputs.append(_run_parallel_chunk(chunk_x, chunk_start=chunk_start))
         return torch.cat(outputs, dim=1)
     
     def _run_test_with_cache_naive(
@@ -975,6 +1041,7 @@ class FLABackbone(Backbone):
 
         output_tokens = []
         seq_len = test_x.size(1)
+        cache_seq_length = self._cache_seq_length(cache_params)
     
         for t in range(seq_len):
             current_input = test_x[:, t : t + 1, :]  # shape (batch, 1, dim)
@@ -984,6 +1051,7 @@ class FLABackbone(Backbone):
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
+                deltanet_beta_decay_start=cache_seq_length + t,
             )
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)

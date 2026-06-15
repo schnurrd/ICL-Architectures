@@ -131,9 +131,11 @@ class BasedLinearAttention(LinearAttention):
         x: torch.Tensor,
         feature_map: nn.Module,
         *,
-        normalize_sum: bool,
+        normalize_sum: bool | None = None,
     ) -> torch.Tensor:
         x = feature_map(x)
+        if normalize_sum is None:
+            return self._apply_qk_norm_to_tensor(x)
         if normalize_sum:
             x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
         return x

@@ -113,6 +113,159 @@ def _expected_final_state_readout(
     return torch.einsum("bthd,bhdm->bthm", q_read, final_state.float()).to(q.dtype)
 
 
+def test_deltanet_beta_decay_scales_late_positions():
+    from pfns.model.fla_patches import _apply_deltanet_beta_decay
+
+    beta = torch.ones(1, 5, 2)
+
+    unchanged = _apply_deltanet_beta_decay(beta, mode="none", t0=2)
+    assert unchanged is beta
+
+    online_inverse = _apply_deltanet_beta_decay(beta, mode="online_inverse", t0=2)
+    expected_online = torch.tensor([1.0, 2 / 3, 0.5, 0.4, 2 / 6]).view(1, 5, 1)
+    torch.testing.assert_close(online_inverse, expected_online.expand_as(beta))
+
+    offset_online_inverse = _apply_deltanet_beta_decay(
+        beta,
+        mode="online_inverse",
+        t0=2,
+        start_position=3,
+    )
+    expected_offset_online = torch.tensor(
+        [2 / 5, 2 / 6, 2 / 7, 0.25, 2 / 9]
+    ).view(1, 5, 1)
+    torch.testing.assert_close(
+        offset_online_inverse,
+        expected_offset_online.expand_as(beta),
+    )
+
+    tensor_offset_online_inverse = _apply_deltanet_beta_decay(
+        beta,
+        mode="online_inverse",
+        t0=2,
+        start_position=torch.arange(5),
+    )
+    expected_tensor_offset_online = torch.tensor(
+        [1.0, 0.5, 2 / 6, 0.25, 0.2]
+    ).view(1, 5, 1)
+    torch.testing.assert_close(
+        tensor_offset_online_inverse,
+        expected_tensor_offset_online.expand_as(beta),
+    )
+
+    with pytest.raises(ValueError, match="start_position must be >= 0"):
+        _apply_deltanet_beta_decay(
+            beta,
+            mode="online_inverse",
+            t0=2,
+            start_position=torch.tensor([0, -1]),
+        )
+
+    with pytest.raises(ValueError, match="deltanet_beta_decay must be one of"):
+        _apply_deltanet_beta_decay(beta, mode="not_a_decay", t0=2)
+
+    with pytest.raises(ValueError, match="deltanet_beta_decay must be one of"):
+        _apply_deltanet_beta_decay(beta, mode="online_sqrt_inverse", t0=2)
+
+
+def test_deltanet_beta_decay_validates_backbone_config():
+    from pfns.model.backbones import FLABackboneConfig
+
+    config_kwargs = fla_model_config_kwargs("deltanet", size="small")
+    config = FLABackboneConfig(
+        model_type="deltanet",
+        config_kwargs=config_kwargs,
+        deltanet_beta_decay="online_inverse",
+        deltanet_beta_decay_t0=2,
+    )
+    assert config.deltanet_beta_decay == "online_inverse"
+
+    with pytest.raises(ValueError, match="model_type='deltanet'"):
+        FLABackboneConfig(
+            model_type="gla",
+            config_kwargs=fla_model_config_kwargs("gla", size="small"),
+            deltanet_beta_decay="online_inverse",
+        )
+
+    with pytest.raises(ValueError, match="state_passing"):
+        FLABackboneConfig(
+            model_type="deltanet",
+            config_kwargs=config_kwargs,
+            deltanet_beta_decay="online_inverse",
+            state_passing=True,
+        )
+
+
+def test_deltanet_beta_decay_patch_accepts_positional_beta():
+    from pfns.model.fla_patches import (
+        _apply_deltanet_beta_decay,
+        _deltanet_beta_decay_patch,
+    )
+
+    q = torch.empty(1)
+    k = torch.empty(1)
+    v = torch.empty(1)
+    beta = torch.ones(1, 4, 1)
+
+    def original_kernel(*args, **kwargs):
+        return args[3], kwargs.get("initial_state")
+
+    patched_kernel = _deltanet_beta_decay_patch(
+        original_kernel,
+        mode="online_inverse",
+        t0=2,
+    )
+    actual_beta, actual_state = patched_kernel(q, k, v, beta, initial_state="state")
+
+    expected_beta = _apply_deltanet_beta_decay(beta, mode="online_inverse", t0=2)
+    torch.testing.assert_close(actual_beta, expected_beta)
+    assert actual_state == "state"
+
+
+def test_deltanet_beta_decay_patch_matches_manual_decayed_beta():
+    if not torch.cuda.is_available():
+        pytest.skip("FLA DeltaNet kernel requires CUDA/Triton.")
+
+    import fla.layers.delta_net as deltanet_layer
+    from pfns.model.fla_patches import (
+        _apply_deltanet_beta_decay,
+        _maybe_patch_deltanet_with_stateless_recurrent,
+    )
+
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+    inputs = {
+        "q": torch.randn(2, 5, 3, 4, device=device, dtype=torch.float32),
+        "k": torch.randn(2, 5, 3, 4, device=device, dtype=torch.float32),
+        "v": torch.randn(2, 5, 3, 6, device=device, dtype=torch.float32),
+        "beta": torch.rand(2, 5, 3, device=device, dtype=torch.float32),
+        "initial_state": torch.randn(2, 3, 4, 6, device=device, dtype=torch.float32),
+        "output_final_state": True,
+        "use_qk_l2norm_in_kernel": True,
+    }
+    manual_inputs = {
+        **inputs,
+        "beta": _apply_deltanet_beta_decay(
+            inputs["beta"],
+            mode="online_inverse",
+            t0=2,
+        ),
+    }
+    expected_out, expected_state = deltanet_layer.fused_recurrent_delta_rule(
+        **manual_inputs,
+    )
+
+    with _maybe_patch_deltanet_with_stateless_recurrent(
+        False,
+        beta_decay="online_inverse",
+        beta_decay_t0=2,
+    ):
+        actual_out, actual_state = deltanet_layer.fused_recurrent_delta_rule(**inputs)
+
+    torch.testing.assert_close(actual_out, expected_out, rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(actual_state, expected_state, rtol=1e-4, atol=1e-4)
+
+
 @pytest.mark.parametrize(
     "case",
     ["linear_attn", "gla", "kda", "deltanet", "gated_deltanet"],

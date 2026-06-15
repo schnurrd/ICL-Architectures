@@ -63,6 +63,24 @@ class LinearAttention(nn.Module):
         return normalized
 
     @staticmethod
+    def _normalize_qk_norm(qk_norm: bool | str | None) -> str | None:
+        if qk_norm is None or qk_norm is False:
+            return None
+        if qk_norm is True:
+            return "l2"
+        normalized = str(qk_norm).strip().lower().replace("-", "_")
+        if normalized in {"", "none", "false"}:
+            return None
+        if normalized in {"l2", "l2norm", "l2_norm"}:
+            return "l2"
+        if normalized in {"sum", "sum_norm", "sum_normalization"}:
+            return "sum"
+        raise ValueError(
+            "qk_norm must be one of {None, False, True, none, l2, sum}, "
+            f"got {qk_norm!r}."
+        )
+
+    @staticmethod
     def _build_feature_maps(
         feature_map: str,
         head_k_dim: int,
@@ -98,6 +116,7 @@ class LinearAttention(nn.Module):
         # Attention feature map and readout.
         normalize_q_sum: bool = False,
         normalize_k_sum: bool = False,
+        qk_norm: bool | str | None = None,
         use_k_sum_normalization: bool = False,
         use_query_scale: bool = True,
         # Attention/output blocks.
@@ -137,6 +156,13 @@ class LinearAttention(nn.Module):
         normalized_state_update_rule = self._normalize_state_update_rule(
             state_update_rule
         )
+        legacy_sum_norm_requested = bool(normalize_q_sum or normalize_k_sum)
+        normalized_qk_norm = self._normalize_qk_norm(qk_norm)
+        if legacy_sum_norm_requested and normalized_qk_norm is not None:
+            raise ValueError(
+                "normalize_q_sum/normalize_k_sum are legacy one-sided "
+                "normalization flags and cannot be combined with qk_norm."
+            )
         if ridge_lambda <= 0:
             raise ValueError("ridge_lambda must be > 0.")
         if normalized_state_update_rule != "linear" and use_k_sum_normalization:
@@ -172,8 +198,9 @@ class LinearAttention(nn.Module):
         self.causal_train_only = causal_train_only
         self.causal_chunk_size = causal_chunk_size
 
-        self.normalize_q_sum = normalize_q_sum
-        self.normalize_k_sum = normalize_k_sum
+        self.qk_norm = normalized_qk_norm
+        self.normalize_q_sum = bool(normalize_q_sum)
+        self.normalize_k_sum = bool(normalize_k_sum)
         self.use_k_sum_normalization = use_k_sum_normalization
 
         self.state_update_rule = normalized_state_update_rule
@@ -237,17 +264,38 @@ class LinearAttention(nn.Module):
         x: torch.Tensor,
         feature_map: nn.Module,
         *,
-        normalize_sum: bool,
+        normalize_sum: bool = False,
     ) -> torch.Tensor:
-        x = feature_map(x)
-        if normalize_sum:
-            x = x / (x.sum(dim=-1, keepdim=True) + self.eps)
-        return x
+        return self._apply_qk_norm_to_tensor(
+            feature_map(x),
+            normalize_sum=normalize_sum,
+        )
 
     def _scale_queries(self, q: torch.Tensor) -> torch.Tensor:
         if not self.use_query_scale:
             return q
         return q * self.query_scale
+
+    def _apply_qk_norm_to_tensor(
+        self,
+        x: torch.Tensor,
+        *,
+        normalize_sum: bool = False,
+    ) -> torch.Tensor:
+        if self.qk_norm == "l2":
+            return F.normalize(x, p=2, dim=-1, eps=self.eps)
+        if self.qk_norm == "sum" or normalize_sum:
+            return x / (x.sum(dim=-1, keepdim=True) + self.eps)
+        if self.qk_norm is None:
+            return x
+        raise RuntimeError(f"Unsupported qk_norm: {self.qk_norm!r}.")
+
+    def _apply_qk_norm(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self._apply_qk_norm_to_tensor(q), self._apply_qk_norm_to_tensor(k)
 
     def _project_qkv(
         self,
@@ -295,12 +343,12 @@ class LinearAttention(nn.Module):
             self.feature_map_q,
             normalize_sum=self.normalize_q_sum,
         )
-        q = self._scale_queries(q)
         k = self._apply_feature_map(
             k,
             self.feature_map_k,
             normalize_sum=self.normalize_k_sum,
         )
+        q = self._scale_queries(q)
         return q, k
 
     def _read_from_kv_state(
