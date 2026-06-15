@@ -91,6 +91,25 @@ def test_linear_attention_eval_test_token_behavior(
         _assert_close(out_test[:, 1:2], out_pert_test[:, 1:2])
 
 
+def test_linear_attention_legacy_sum_norm_flags_are_independent():
+    torch.manual_seed(0)
+    layer = _build_layer(
+        normalize_q_sum=True,
+        normalize_k_sum=False,
+        use_query_scale=False,
+    )
+    x = torch.randn(2, 5, 1, 8)
+
+    q_raw, k_raw, _ = layer._project_qkv(x)
+    q, k = layer._apply_query_key_feature_maps(q_raw, k_raw)
+
+    mapped_q = layer.feature_map_q(q_raw)
+    expected_q = mapped_q / (mapped_q.sum(dim=-1, keepdim=True) + layer.eps)
+    expected_k = layer.feature_map_k(k_raw)
+    torch.testing.assert_close(q, expected_q)
+    torch.testing.assert_close(k, expected_k)
+
+
 def test_linear_attention_causal_train_mode_test_tokens_dependent():
     layer = _build_layer(causal=True)
     layer.train()

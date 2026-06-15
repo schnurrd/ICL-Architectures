@@ -632,7 +632,7 @@ ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
         "oracle_evaluate_only_max_seqlen": True,
         "oracle_verbose": False,
         "eval_autocast_dtype": "bf16",
-    }, 
+    },
 }
 
 LAYER_ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
@@ -1024,29 +1024,21 @@ NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "DeltaNet no self-term (Comb ST)",
         "wandb_run_id": "fla_models/runs/erll6c28", # 4vxeqnat
     },
-    "Causal_DeltaNet": {
-        "display_name": "DeltaNet (Comb ST)",
-        "wandb_run_id": "fla_models/runs/dfzrvzcz",
-    },
-    "Causal_DeltaNet_no_self_term": {
-        "display_name": "DeltaNet no self-term (Comb ST)",
-        "wandb_run_id": "fla_models/runs/erll6c28", # 4vxeqnat
-    },
-    "Non_Causal_DeltaNet": { 
+    "Non_Causal_DeltaNet": {
         "display_name": "Non-Causal DeltaNet (Comb ST)",
         "wandb_run_id": "icl_arch/fla_models/dj7xmlsb", # fp32 8cpcrc2e
     },
-    "Non_Causal_DeltaNet_loguniform_64K": { 
+    "Non_Causal_DeltaNet_loguniform_64K": {
         "display_name": "Non-Causal DeltaNet loguniform 64K(Comb ST)",
         "wandb_run_id": "icl_arch/fla_models/p70y8140", # fp32 8cpcrc2e
     },
-    "Non_Causal_DeltaNet_online_inverse_eval_only": { 
+    "Non_Causal_DeltaNet_online_inverse_eval_only": {
         "display_name": "Non-Causal DeltaNet + Online Inverse LR Decay (Comb ST)",
         "wandb_run_id": "icl_arch/fla_models/dj7xmlsb", # fp32 8cpcrc2e
         "deltanet_beta_decay": "online_inverse",
         "deltanet_beta_decay_t0": 256,
     },
-    "Non_Causal_DeltaNet_w_fro_norm": { 
+    "Non_Causal_DeltaNet_w_fro_norm": {
         "display_name": "Non-Causal DeltaNet (Comb ST with Frobenius norm)",
         "wandb_run_id": "fla_models/runs/iakgx7qe",
     },

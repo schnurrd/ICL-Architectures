@@ -157,13 +157,11 @@ class LinearAttention(nn.Module):
             state_update_rule
         )
         legacy_sum_norm_requested = bool(normalize_q_sum or normalize_k_sum)
-        normalized_qk_norm = self._normalize_qk_norm(
-            "sum" if legacy_sum_norm_requested and qk_norm in {None, False} else qk_norm
-        )
-        if legacy_sum_norm_requested and normalized_qk_norm != "sum":
+        normalized_qk_norm = self._normalize_qk_norm(qk_norm)
+        if legacy_sum_norm_requested and normalized_qk_norm is not None:
             raise ValueError(
-                "normalize_q_sum/normalize_k_sum are compatibility aliases for "
-                "qk_norm='sum' and cannot be combined with another qk_norm."
+                "normalize_q_sum/normalize_k_sum are legacy one-sided "
+                "normalization flags and cannot be combined with qk_norm."
             )
         if ridge_lambda <= 0:
             raise ValueError("ridge_lambda must be > 0.")
@@ -201,6 +199,8 @@ class LinearAttention(nn.Module):
         self.causal_chunk_size = causal_chunk_size
 
         self.qk_norm = normalized_qk_norm
+        self.normalize_q_sum = bool(normalize_q_sum)
+        self.normalize_k_sum = bool(normalize_k_sum)
         self.use_k_sum_normalization = use_k_sum_normalization
 
         self.state_update_rule = normalized_state_update_rule
@@ -263,21 +263,31 @@ class LinearAttention(nn.Module):
         self,
         x: torch.Tensor,
         feature_map: nn.Module,
+        *,
+        normalize_sum: bool = False,
     ) -> torch.Tensor:
-        return self._apply_qk_norm_to_tensor(feature_map(x))
+        return self._apply_qk_norm_to_tensor(
+            feature_map(x),
+            normalize_sum=normalize_sum,
+        )
 
     def _scale_queries(self, q: torch.Tensor) -> torch.Tensor:
         if not self.use_query_scale:
             return q
         return q * self.query_scale
 
-    def _apply_qk_norm_to_tensor(self, x: torch.Tensor) -> torch.Tensor:
-        if self.qk_norm is None:
-            return x
+    def _apply_qk_norm_to_tensor(
+        self,
+        x: torch.Tensor,
+        *,
+        normalize_sum: bool = False,
+    ) -> torch.Tensor:
         if self.qk_norm == "l2":
             return F.normalize(x, p=2, dim=-1, eps=self.eps)
-        if self.qk_norm == "sum":
+        if self.qk_norm == "sum" or normalize_sum:
             return x / (x.sum(dim=-1, keepdim=True) + self.eps)
+        if self.qk_norm is None:
+            return x
         raise RuntimeError(f"Unsupported qk_norm: {self.qk_norm!r}.")
 
     def _apply_qk_norm(
@@ -328,8 +338,16 @@ class LinearAttention(nn.Module):
         q: torch.Tensor,
         k: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        q = self._apply_feature_map(q, self.feature_map_q)
-        k = self._apply_feature_map(k, self.feature_map_k)
+        q = self._apply_feature_map(
+            q,
+            self.feature_map_q,
+            normalize_sum=self.normalize_q_sum,
+        )
+        k = self._apply_feature_map(
+            k,
+            self.feature_map_k,
+            normalize_sum=self.normalize_k_sum,
+        )
         q = self._scale_queries(q)
         return q, k
 
@@ -624,7 +642,11 @@ class LinearAttention(nn.Module):
             v[:, :single_eval_pos],
             causal=self.causal_train_only or self.causal,
         )
-        q_test = self._apply_feature_map(q[:, single_eval_pos:], self.feature_map_q)
+        q_test = self._apply_feature_map(
+            q[:, single_eval_pos:],
+            self.feature_map_q,
+            normalize_sum=self.normalize_q_sum,
+        )
         q_test = self._scale_queries(q_test)
         attn_test = self._read_from_kv_state(
             q_test,
@@ -699,7 +721,11 @@ class LinearAttention(nn.Module):
                 k_sum_prefix=state.get("k_sum"),
             )
         else:
-            q = self._apply_feature_map(q, self.feature_map_q)
+            q = self._apply_feature_map(
+                q,
+                self.feature_map_q,
+                normalize_sum=self.normalize_q_sum,
+            )
             q = self._scale_queries(q)
             attn = self._read_from_kv_state(
                 q,
