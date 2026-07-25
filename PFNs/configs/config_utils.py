@@ -51,3 +51,9 @@ def resolve_prior_device(
     # return "cpu"
     return "cpu" # current tests with the updated prior suggest cpu is even better for long sequences (tested up to 32K)
 
+TRAINING_PROFILES = {
+    "debug": {"lr": 6.0e-5, "steps_per_epoch": 10, "epochs": 200},
+    "low": {"lr": 6.0e-5, "steps_per_epoch": 1000, "epochs": 200},
+    "high": {"lr": 3.0e-5, "steps_per_epoch": 4000, "epochs": 200},
+    "ar": {"lr": 3.0e-5, "steps_per_epoch": 500, "epochs": 200},
+}

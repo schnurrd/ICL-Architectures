@@ -8,6 +8,7 @@ from __future__ import annotations
 import torch
 
 from configs.config_utils import (
+    TRAINING_PROFILES,
     normalize_optional_none_string,
     resolve_batch_size_stages,
     resolve_eval_pos_split_pct,
@@ -47,13 +48,6 @@ GLOBAL_AGGREGATE_K_GRADIENTS = 2
 MAX_NUM_CLASSES = int(TABPFN_PRIOR_DEFAULTS["max_num_classes"])
 MAX_NUM_FEATURES = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
 SUPPORTED_SEQUENCE_MODES = CANONICAL_SEQUENCE_MODES
-
-TRAINING_PROFILES = {
-    "debug": {"lr": 6.0e-5, "steps_per_epoch": 10, "epochs": 200},
-    "low": {"lr": 6.0e-5, "steps_per_epoch": 1000, "epochs": 200},
-    "high": {"lr": 3.0e-5, "steps_per_epoch": 4000, "epochs": 200},
-    "ar": {"lr": 3.0e-5, "steps_per_epoch": 500, "epochs": 200},
-}
 
 MODEL_SETTINGS = {
     # KDA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/kda/configuration_kda.py#L10

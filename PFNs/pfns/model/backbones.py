@@ -75,6 +75,7 @@ from pfns.model.fla_cache_utils import (
 )
 
 from pfns.model.based_linear_attention import BasedLinearAttention
+from pfns.model.two_axis_layer import TwoAxisLayer
 from pfns.model.tabular_model import LayerStack
 # Registry mapping model types to their config and model classes
 FLA_MODEL_REGISTRY = {
@@ -1469,3 +1470,106 @@ class RebasedBackboneConfig(BackboneConfig):
             recompute_each_layer=self.recompute_layer,
             recompute_every_n_layers=self.recompute_every_n_layers,
         )
+
+
+@dataclass(frozen=True)
+class TwoAxisBackboneConfig(BackboneConfig):
+    """Configuration for a TabPFN-v2-style two-axis backbone."""
+
+    nlayers: int = 6
+    nhead: int = 2
+    dim_feedforward: int = 200
+    activation: tp.Literal["gelu", "relu"] = "gelu"
+    row_attention: tp.Literal["deltanet", "linear"] = "deltanet"
+    row_attention_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
+    recompute_layer: bool = False
+
+    def create_backbone(
+        self,
+        ninp: int,
+        attention_between_features: bool,
+        **kwargs: tp.Any,
+    ) -> Backbone:
+        assert attention_between_features, (
+            "TwoAxisBackbone requires attention_between_features=True: "
+            "column (feature) attention is the point of this backbone."
+        )
+
+        def layer_creator() -> TwoAxisLayer:
+            return TwoAxisLayer(
+                d_model=ninp,
+                nhead=self.nhead,
+                dim_feedforward=self.dim_feedforward,
+                activation=self.activation,
+                zero_init=True,
+                row_attention=self.row_attention,
+                row_attention_kwargs=dict(self.row_attention_kwargs or {}),
+            )
+
+        layer_stack = LayerStack(
+            layer_creator=layer_creator,
+            num_layers=self.nlayers,
+            recompute_each_layer=self.recompute_layer,
+        )
+        return TwoAxisBackbone(layer_stack)
+
+
+class TwoAxisBackbone(Backbone):
+    """Wrapper for a stack of `TwoAxisLayer`s to conform to the Backbone
+    interface."""
+
+    def __init__(self, layer_stack: nn.Module):
+        super().__init__()
+        self.layer_stack = layer_stack
+
+    @property
+    def layers(self):
+        return self.layer_stack.layers
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        single_eval_pos: int | None = None,
+        half_layers: bool = False,
+        cache_trainset_representation: bool = False,
+        **kwargs: tp.Any,
+    ) -> torch.Tensor:
+        assert half_layers is False, (
+            "half_layers not supported in TwoAxisBackbone"
+        )
+        assert cache_trainset_representation is False, (
+            "cache_trainset_representation not supported in "
+            "TwoAxisBackbone.forward(); use incontext_fit/"
+            "incontext_predict instead."
+        )
+        return self.layer_stack(x, single_eval_pos=single_eval_pos, **kwargs)
+
+    def incontext_fit(
+        self,
+        x: torch.Tensor,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, tp.Any]:
+        out = x
+        layer_states: list[dict[str, torch.Tensor]] = []
+        for layer in self.layers:
+            out, state = layer.incontext_fit(out)
+            layer_states.append(state)
+        return out, {"layer_states": layer_states}
+
+    def incontext_predict(
+        self,
+        x: torch.Tensor,
+        cached_state: tp.Any,
+        **kwargs: tp.Any,
+    ) -> torch.Tensor:
+        out = x
+        layer_states = cached_state["layer_states"]
+        if len(layer_states) != len(self.layers):
+            raise ValueError(
+                f"Cached state has {len(layer_states)} layer states but the "
+                f"backbone has {len(self.layers)} layers."
+            )
+        for layer, state in zip(self.layers, layer_states):
+            out = layer.incontext_predict(out, state)
+        return out

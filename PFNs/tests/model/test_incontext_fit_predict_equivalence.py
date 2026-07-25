@@ -2,6 +2,7 @@ import pytest
 import torch
 
 from pfns.model.backbones import (
+    TwoAxisBackboneConfig,
     LinearAttentionBackboneConfig,
     RebasedBackboneConfig,
     TransformerBackboneConfig,
@@ -163,13 +164,38 @@ def _assert_incontext_fit_predict_matches_forward(
             32,
             id="rebased_causal_train_only",
         ),
+        pytest.param(
+            "deltanet_per_feature",
+            TwoAxisBackboneConfig(
+                nlayers=2,
+                nhead=2,
+                dim_feedforward=64,
+                row_attention="deltanet",
+            ),
+            True,
+            32,
+            id="deltanet_per_feature",
+        ),
+        pytest.param(
+            "two_axis_linear",
+            TwoAxisBackboneConfig(
+                nlayers=2,
+                nhead=2,
+                dim_feedforward=64,
+                row_attention="linear",
+            ),
+            True,
+            32,
+            id="two_axis_linear",
+        ),
     ],
 )
 def test_incontext_fit_predict_matches_forward_non_fla(
     case_name: str,
     backbone_cfg: TransformerBackboneConfig
     | LinearAttentionBackboneConfig
-    | RebasedBackboneConfig,
+    | RebasedBackboneConfig
+    | TwoAxisBackboneConfig,
     attention_between_features: bool,
     ninp: int,
 ) -> None:
