@@ -119,13 +119,6 @@ def get_config(
 
     train_mixed_precision = GLOBAL_TRAIN_MIXED_PRECISION
     train_mixed_precision_dtype = GLOBAL_TRAIN_MIXED_PRECISION_DTYPE
-    if train_mixed_precision_dtype == "fp32":
-        train_mixed_precision = True
-        train_mixed_precision_dtype = "bf16" if torch.cuda.is_bf16_supported() else "fp16"
-        print(
-            f"Enabling mixed precision with {train_mixed_precision_dtype} training "
-            "for the two-axis DeltaNet backbone"
-        )
 
     resolved_prior_device = resolve_prior_device(max_seq_len=resolved_max_seq_len)
     prior = build_prior_for_task(
