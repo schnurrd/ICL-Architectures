@@ -151,8 +151,7 @@ For restricted environments, set `mode="offline"` in the config file (or `WANDB_
 
 The Python configuration file must define either a `config` variable or a
 `get_config(config_index: int = 0)` function, which when called returns a
-`MainConfig` object. An example configuration file can be found at
-`PFNs/configs/example_config.py`; the main TabPFN-style transformer config is
+`MainConfig` object. The main TabPFN-style transformer config is
 `PFNs/configs/transformer/transformer_config.py`.
 
 The main FLA config is `PFNs/configs/fla/fla_config.py`. It supports

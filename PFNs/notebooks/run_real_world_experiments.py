@@ -493,7 +493,8 @@ def main() -> None:
                 run_mode=wandb_cfg["mode"],
                 job_type="real_world_bundle_upload",
             )
-            print(f"Uploaded real-world artifact for {model_name}: {artifact_ref}")
+            if artifact_ref is not None:
+                print(f"Uploaded real-world artifact for {model_name}: {artifact_ref}")
 
         completed += 1
 

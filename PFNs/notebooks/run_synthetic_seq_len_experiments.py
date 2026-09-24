@@ -353,4 +353,5 @@ for model_name, model_config in models_to_compare.items():
                 "run_metadata": model_results.get("metadata", {}),
             },
         )
-        print(f"Uploaded per-model artifact for {model_name}: {artifact_ref}")
+        if artifact_ref is not None:
+            print(f"Uploaded per-model artifact for {model_name}: {artifact_ref}")

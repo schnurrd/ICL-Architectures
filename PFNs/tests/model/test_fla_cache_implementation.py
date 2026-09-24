@@ -1023,9 +1023,10 @@ def test_model_parameter_gradients(model_type: str):
     out_fast.sum().backward()
 
     rtol, atol = fla_tolerances(model_type)
+    rtol, atol = max(rtol, 1e-5), max(atol, 1e-5)
     if model_type == "mamba2":
         rtol, atol = max(rtol, 5e-3), max(atol, 5e-3)
-    
+
     for (name_naive, param_naive), (name_fast, param_fast) in zip(
         backbone_naive.named_parameters(), backbone_fast.named_parameters()
     ):

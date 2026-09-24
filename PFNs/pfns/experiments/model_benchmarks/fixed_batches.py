@@ -122,6 +122,7 @@ def resolve_fixed_batches(
             },
             job_type="seq_len_batch_bundle_upload",
         )
-        print(f"Uploaded fixed batch artifact: {artifact_ref}")
+        if artifact_ref is not None:
+            print(f"Uploaded fixed batch artifact: {artifact_ref}")
 
     return batches
