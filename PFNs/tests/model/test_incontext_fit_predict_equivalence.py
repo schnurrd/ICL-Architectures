@@ -4,7 +4,6 @@ import torch
 from pfns.model.backbones import (
     TwoAxisBackboneConfig,
     LinearAttentionBackboneConfig,
-    RebasedBackboneConfig,
     TransformerBackboneConfig,
 )
 from pfns.model.tabular_model import TabularModel
@@ -142,29 +141,6 @@ def _assert_incontext_fit_predict_matches_forward(
             id="linear_attention_causal_train_only",
         ),
         pytest.param(
-            "rebased",
-            RebasedBackboneConfig(
-                nlayers=2,
-                mlp_hidden_dim=64,
-                num_heads=2,
-            ),
-            False,
-            32,
-            id="rebased",
-        ),
-        pytest.param(
-            "rebased_causal_train_only",
-            RebasedBackboneConfig(
-                nlayers=2,
-                mlp_hidden_dim=64,
-                num_heads=2,
-                layer_kwargs={"causal_train_only": True},
-            ),
-            False,
-            32,
-            id="rebased_causal_train_only",
-        ),
-        pytest.param(
             "deltanet_per_feature",
             TwoAxisBackboneConfig(
                 nlayers=2,
@@ -194,16 +170,12 @@ def test_incontext_fit_predict_matches_forward_non_fla(
     case_name: str,
     backbone_cfg: TransformerBackboneConfig
     | LinearAttentionBackboneConfig
-    | RebasedBackboneConfig
     | TwoAxisBackboneConfig,
     attention_between_features: bool,
     ninp: int,
 ) -> None:
     torch.manual_seed(0)
-    is_rebased = isinstance(backbone_cfg, RebasedBackboneConfig)
-    if is_rebased and not torch.cuda.is_available():
-        pytest.skip("Rebased equivalence test requires CUDA / Failed on Github Actions CPU runner.")
-    device = torch.device("cuda" if is_rebased else "cpu")
+    device = torch.device("cpu")
     num_features = 4
     train_len = 7
 

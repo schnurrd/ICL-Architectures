@@ -528,6 +528,27 @@ def find_latest_real_world_bundle_for_model(
     return None, None
 
 
+_WANDB_UNAVAILABLE_NOTICE_SHOWN = False
+
+
+def wandb_is_configured() -> bool:
+    """Whether W&B credentials are available for the results cache."""
+    try:
+        return bool(wandb.Api().api_key)
+    except Exception:
+        return False
+
+
+def _notify_wandb_unavailable() -> None:
+    global _WANDB_UNAVAILABLE_NOTICE_SHOWN
+    if not _WANDB_UNAVAILABLE_NOTICE_SHOWN:
+        print(
+            "W&B is not configured: skipping the W&B results cache and computing "
+            "results locally. Set WANDB['enabled'] = False to silence this."
+        )
+        _WANDB_UNAVAILABLE_NOTICE_SHOWN = True
+
+
 def download_results_bundle_from_wandb(
     *,
     artifact_name: str,
@@ -542,6 +563,10 @@ def download_results_bundle_from_wandb(
     Returns ``None`` when the artifact is unavailable or cannot be read, so callers
     can treat this as a cache miss and recompute results.
     """
+
+    if not wandb_is_configured():
+        _notify_wandb_unavailable()
+        return None
 
     reference = f"{entity}/{project}/{artifact_name}:{artifact_alias}"
     root = Path(download_root)
@@ -582,11 +607,17 @@ def upload_results_bundle_to_wandb(
     job_type: str = "seq_len_bundle_upload",
     artifact_type: str = "dataset",
     log_metadata_to_run: bool = True,
-) -> str:
-    """Upload a bundle directory to W&B and return the artifact reference."""
+) -> str | None:
+    """Upload a bundle directory to W&B and return the artifact reference.
+
+    Returns ``None`` without uploading when W&B is not configured.
+    """
     bundle = Path(bundle_dir)
     if not bundle.exists():
         raise FileNotFoundError(f"Bundle directory does not exist: {bundle}")
+    if not wandb_is_configured():
+        _notify_wandb_unavailable()
+        return None
     resolved_metadata = _to_jsonable(metadata or {})
 
     with wandb.init(

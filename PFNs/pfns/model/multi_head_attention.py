@@ -38,6 +38,14 @@ def _gqa_is_supported() -> bool: # function copied from  https://github.com/Prio
 
 USE_TORCH_2_GQA = _gqa_is_supported()
 
+# The fused (flash / memory-efficient) CUDA kernels behind
+# `scaled_dot_product_attention` map the batch dimension onto a CUDA grid
+# dimension, which is capped at 65535 blocks; larger batches fail with
+# `cudaErrorInvalidConfiguration`. Backbones that attend between features
+# flatten (batch, items) into the batch dimension, so long contexts cross the
+# limit and the call has to be chunked.
+MAX_SDPA_BATCH_SIZE = 65535
+
 class MultiHeadAttention(torch.nn.Module):
     """
     An implementation of multi-head attention, heavily relying on the pytorch
@@ -710,6 +718,54 @@ class MultiHeadAttention(torch.nn.Module):
         return kv.reshape(*kv.shape[:-3], nhead * share_kv_across_n_heads, d)
 
     @staticmethod
+    def _scaled_dot_product_attention(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        **kwargs: object,
+    ) -> torch.Tensor:
+        """`scaled_dot_product_attention` on inputs of shape [batch, head, seq, d].
+
+        Batches larger than 'MAX_SDPA_BATCH_SIZE' are computed in chunks, as the
+        fused CUDA kernels cannot launch for them. Batch elements are independent,
+        so chunking does not change the result.
+        """
+        batch_size = q.shape[0]
+        if batch_size <= MAX_SDPA_BATCH_SIZE:
+            return torch.nn.functional.scaled_dot_product_attention(q, k, v, **kwargs)
+
+        num_chunks = -(-batch_size // MAX_SDPA_BATCH_SIZE)
+        chunk_size = -(-batch_size // num_chunks)
+        attn_mask = kwargs.get("attn_mask")
+        # A mask that is broadcast over the batch is handed to every chunk as is.
+        chunk_mask = (
+            isinstance(attn_mask, torch.Tensor) and attn_mask.shape[0] == batch_size
+        )
+
+        output = None
+        for start in range(0, batch_size, chunk_size):
+            end = min(start + chunk_size, batch_size)
+            chunk_kwargs = dict(kwargs)
+            if chunk_mask:
+                chunk_kwargs["attn_mask"] = attn_mask[start:end]
+            chunk_output = torch.nn.functional.scaled_dot_product_attention(
+                q[start:end],
+                # keys and values are broadcast if they do not carry a full batch
+                k[start:end] if k.shape[0] == batch_size else k,
+                v[start:end] if v.shape[0] == batch_size else v,
+                **chunk_kwargs,
+            )
+            if output is None:
+                output = torch.empty(
+                    (batch_size, *chunk_output.shape[1:]),
+                    device=chunk_output.device,
+                    dtype=chunk_output.dtype,
+                )
+            output[start:end] = chunk_output
+        assert output is not None
+        return output
+
+    @staticmethod
     def compute_attention_heads(  # noqa: C901, PLR0912
         q: torch.Tensor | None,
         k: torch.Tensor | None,
@@ -774,7 +830,7 @@ class MultiHeadAttention(torch.nn.Module):
                     v,
                     share_kv_across_n_heads,
                 )
-            attention_head_outputs = torch.nn.functional.scaled_dot_product_attention(
+            attention_head_outputs = MultiHeadAttention._scaled_dot_product_attention(
                 # transposing just before and keeping the state in the transposed state
                 # makes things faster as this function internally transposes the state
                 # back and forth

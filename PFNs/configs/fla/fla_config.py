@@ -50,28 +50,6 @@ MAX_NUM_FEATURES = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
 SUPPORTED_SEQUENCE_MODES = CANONICAL_SEQUENCE_MODES
 
 MODEL_SETTINGS = {
-    # KDA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/kda/configuration_kda.py#L10
-    # Model size: 12.60 M
-    # Training speed on different gpus (uncompiled, single target): 
-    #    - RTX 5070 (bf16):   16it/s, 3.4GiB (single target); 19it/s, 2.2GiB (multi target); 10it/s, 3.7GiB (multi target, interleaved)
-    #    - RTX 2080Ti:        4it/s, 6.2GB (non-compiled), 
-    #    - A5000:             6it/s (non-compiled), 
-    "kda": {
-        "emsize": 320,
-        "config_kwargs": { # per default runs in chunked mode, has a max_position_embeddings set to 2048, supports attn dict
-            "hidden_size": 320, # default 2048
-            "use_short_conv": False, # typically true but we don't have temporal data
-            "num_heads": 4, # default 16
-            "head_dim": 80, # currently 128
-            "intermediate_size": 320 * 2, # default None -> 4*hidden_size
-            "hidden_act": "swish",
-            "num_hidden_layers": 11, # default 24
-            "norm_eps": 1e-6, # default 1e-6
-            "use_cache": True,
-            "vocab_size": 1, # dummy value, not used default 32000
-            # "cache_chunk_size": 16,  
-        },
-    },
     # GLA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gla/configuration_gla.py#L12
     # Model size: 12.59 M
     # Training speed on different gpus (uncompiled, single target): 
@@ -175,25 +153,6 @@ MODEL_SETTINGS = {
             "vocab_size": 1, # dummy value, not used default 32000
         },
     },
-    # MesaNet Config: https://github.com/fla-org/flash-linear-attention/blob/main/fla/models/mesa_net/configuration_mesa_net.py
-    # Model size: 12.54 M full
-    "mesanet": {
-        "emsize": 320,
-        "config_kwargs": {
-            "attn_mode": "chunk",
-            "hidden_size": 320,
-            "num_hidden_layers": 12,
-            "num_heads": 4,
-            "head_dim": 80,
-            "intermediate_size": 320 * 2,
-            "hidden_act": "swish",
-            "norm_eps": 1e-6,
-            "use_output_gate": False,
-            "use_short_conv": False,
-            "use_cache": True,
-            "vocab_size": 1, # dummy value, not used default 32000
-        },
-    },
 }
 
 def _normalize_model_type(model_type: str) -> str:
@@ -206,15 +165,13 @@ def _normalize_model_type(model_type: str) -> str:
         return "gated_deltanet"
     if model_type in {"linear_attention", "linearattn"}:
         return "linear_attn"
-    if model_type in {"mesa", "mesa_net"}:
-        return "mesanet"
     return model_type
 
 
 def get_config(
     config_index: int = 0,
     # Architecture
-    model_type: str = "kda",
+    model_type: str = "deltanet",
     hidden_size: int | None = None,
     sequence_mode: str = "Comb_ST",
     bidirectional: bool = False,

@@ -1,6 +1,6 @@
 # Adapting Linear-Time Architectures for Tabular In-Context Learning
 
-Unified framework for comparing sequence-model architectures for in-context learning on tabular classification tasks. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, (Gated) Linear Attention, (Gated) DeltaNet, Kimi Delta Attention, and Mamba2 backbones.
+Unified framework for comparing sequence-model architectures for in-context learning on tabular classification tasks. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, (Gated) Linear Attention, (Gated) DeltaNet, and Mamba-2 backbones.
 
 ## Table of Contents
 
@@ -47,7 +47,7 @@ pip install -r requirements/requirements.txt \
     -e ./PFNs \
     -e ./prior-repos/tabpfn-v1-prior
 
-pip install --no-build-isolation causal-conv1d mamba-ssm
+pip install --no-build-isolation causal-conv1d==1.6.2.post1 mamba-ssm==2.3.2.post1
 ```
 
 Tested for Nvidia RTX 5070 and Nvidia RTX 2080Ti with CUDA 12.8 and 12.9. For older GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
@@ -84,6 +84,10 @@ python PFNs/pfns/run_training_cli.py PFNs/configs/fla/fla_config.py \
     --no-wandb \
     --config-index 0
 ```
+
+The first training steps of an FLA model can take a few minutes while Triton compiles and autotunes its kernels; later runs reuse the cache.
+
+All models from the paper are trained with the config files in `PFNs/configs/`. Variants such as final-state readout, the write-rate decay, the training setup and the mitigation strategies are selected with `--config-arg`, using the arguments of each config's `get_config`.
 
 ### Command Line Arguments
 
@@ -152,7 +156,7 @@ The Python configuration file must define either a `config` variable or a
 `PFNs/configs/transformer/transformer_config.py`.
 
 The main FLA config is `PFNs/configs/fla/fla_config.py`. It supports
-`model_type` values such as `kda`, `gla`, `mamba2`, `deltanet`,
+`model_type` values `gla`, `mamba2`, `deltanet`,
 `gated_deltanet`, and `linear_attn`, plus sequence-mode,
 bidirectional, state-passing, cache, categorical-feature, and mimetic-init
 options via `--config-arg`.
@@ -229,7 +233,9 @@ The main sequence-length, real-world, and hidden-state analysis notebooks are:
 - [Sequence-length hidden-state debugging](PFNs/notebooks/seq_len_hidden_state_debug.ipynb)
 - [DeltaNet effective write rates](PFNs/notebooks/deltanet_effective_beta_plots.ipynb)
 
-All notebooks except the minimal reproduction require trained model checkpoints. These checkpoints are not included in this anonymized submission; use the provided training commands to reproduce the models from scratch. Before running these notebooks, register the checkpoints in [model_registry.py](PFNs/pfns/experiments/model_benchmarks/model_registry.py). The minimal sequence-length degradation notebook is intended as a lightweight standalone reproduction.
+The benchmarks themselves are run with [run_synthetic_seq_len_experiments.py](PFNs/notebooks/run_synthetic_seq_len_experiments.py) and [run_real_world_experiments.py](PFNs/notebooks/run_real_world_experiments.py); [report_oracle_real_data.py](PFNs/notebooks/report_oracle_real_data.py) summarises the hidden-state oracle on the largest TabArena datasets.
+
+All notebooks except the minimal reproduction require trained model checkpoints. These checkpoints are not included in this release; train the models with the [training CLI](#cli-training-interface). To use a local checkpoint, replace the `wandb_run_id` of its entry in [model_registry.py](PFNs/pfns/experiments/model_benchmarks/model_registry.py) with `"base_path": "<directory containing checkpoint.pt>"`. Without a W&B login the notebooks skip the W&B results cache and compute all results locally. The minimal sequence-length degradation notebook is intended as a lightweight standalone reproduction.
 
 ## Minimal sequence-length degradation reproduction
 
@@ -325,7 +331,7 @@ The random embeddings use a fixed seed, ensuring consistent feature IDs across f
 The model core is selected via `ModelConfig.backbone`, which uses the `Backbone` / `BackboneConfig` interfaces in `PFNs/pfns/model/backbones.py`. Current backbone implementations include:
 
 - **TransformerBackbone**: PFN-style per-feature Transformer stack.
-- **FLABackbone** and **BidirectionalFLABackbone**: Wrappers for Flash Linear Attention models such as GLA, DeltaNet, Gated DeltaNet, KDA, Mamba2, Linear Attention, and MesaNet.
+- **FLABackbone** and **BidirectionalFLABackbone**: Wrappers for Flash Linear Attention models GLA, DeltaNet, Gated DeltaNet, Mamba-2, and Linear Attention.
 - **LinearAttentionBackbone** and related experimental backbones for local linear-attention variants.
 
 ### Table Transformer Architecture
@@ -376,7 +382,7 @@ The inference pipeline consists of three main components:
 
 3. **Backbone interface**: Swappable neural architecture interface implemented in `PFNs/pfns/model/backbones.py`
    - `TransformerBackbone`: Wrapper for the PFN-style Transformer stack
-   - `FLABackbone`: Wrapper for Flash Linear Attention backbones used by GLA, DeltaNet, KDA, Mamba2, Linear Attention, MesaNet, and related variants
+   - `FLABackbone`: Wrapper for Flash Linear Attention backbones used by GLA, DeltaNet, Gated DeltaNet, Mamba-2, Linear Attention, and related variants
 
 ### Prediction Flow
 

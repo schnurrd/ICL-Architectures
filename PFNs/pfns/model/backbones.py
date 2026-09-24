@@ -18,11 +18,9 @@ from torch.utils.checkpoint import checkpoint
 
 from fla.models import GLAConfig, GLAModel
 from fla.models import Mamba2Config, Mamba2Model
-from fla.models import KDAConfig, KDAModel
 from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 from fla.models import LinearAttentionConfig, LinearAttentionModel
-from fla.models import MesaNetConfig, MesaNetModel
 from fla.models.utils import Cache as FLACache
 
 from pfns import base_config
@@ -30,10 +28,8 @@ from pfns.model.fla_mimetic_init import MimeticInitMode, apply_mimetic_fla_init
 from pfns.model.fla_patches import (
     DELTANET_BETA_DECAY_MODES,
     _maybe_patch_gla_with_stateless_recurrent,
-    _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
     _maybe_patch_gated_deltanet_with_stateless_recurrent,
-    _maybe_patch_mesanet_with_stateless_recurrent,
     _maybe_patch_mamba2_with_stateless_recurrent,
     _maybe_patch_linear_attn_with_stateless_recurrent,
     _maybe_patch_shortconv_forward_pytorch,
@@ -74,18 +70,15 @@ from pfns.model.fla_cache_utils import (
     shallow_copy as _shallow_copy_fla,
 )
 
-from pfns.model.based_linear_attention import BasedLinearAttention
 from pfns.model.two_axis_layer import TwoAxisLayer
 from pfns.model.tabular_model import LayerStack
 # Registry mapping model types to their config and model classes
 FLA_MODEL_REGISTRY = {
     "gla": (GLAConfig, GLAModel),
     "mamba2": (Mamba2Config, Mamba2Model),
-    "kda": (KDAConfig, KDAModel),
     "deltanet": (DeltaNetConfig, DeltaNetModel),
     "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
     "linear_attn": (LinearAttentionConfig, LinearAttentionModel),
-    "mesanet": (MesaNetConfig, MesaNetModel),
 }
 
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
@@ -93,7 +86,6 @@ FLA_SPLIT_SEQUENCE_MODES = {"Comb_ST", "Int_ST"}
 FINAL_STATE_READOUT_FLA_MODELS = {
     "linear_attn",
     "gla",
-    "kda",
     "deltanet",
     "gated_deltanet",
 }
@@ -373,7 +365,7 @@ class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
     model_type: tp.Literal[
-        "gla", "mamba2", "kda", "deltanet", "gated_deltanet", "linear_attn", "mesanet"
+        "gla", "mamba2", "deltanet", "gated_deltanet", "linear_attn"
     ] = "linear_attn"
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
@@ -526,12 +518,10 @@ class FLABackbone(Backbone):
 
     _CUSTOM_RECURRENT_MODELS: tuple[type[nn.Module], ...] = (
         GLAModel,
-        KDAModel,
         DeltaNetModel,
         GatedDeltaNetModel,
         Mamba2Model,
         LinearAttentionModel,
-        MesaNetModel,
     )
 
     def __init__(
@@ -807,17 +797,6 @@ class FLABackbone(Backbone):
         use_custom_shortconv: bool = False,
         deltanet_beta_decay_start: int | torch.Tensor = 0,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        if (
-            cache_params is not None
-            and isinstance(self.fla, MesaNetModel)
-            and not use_custom_recurrent
-        ):
-            return self._run_mesanet_with_initial_cache(
-                x,
-                cache_params=cache_params,
-                return_cache=return_cache,
-            )
-
         if cache_params is not None and return_cache and use_custom_recurrent:
             raise ValueError(
                 "Custom stateless recurrent FLA patches do not support returning "
@@ -854,35 +833,6 @@ class FLABackbone(Backbone):
 
         return self._unpack_fla_output(out, return_cache=return_cache)
 
-    def _run_mesanet_with_initial_cache(
-        self,
-        x: torch.Tensor,
-        *,
-        cache_params: tp.Any,
-        return_cache: bool,
-    ) -> tuple[torch.Tensor, tp.Any | None]:
-        if x.numel() == 0:
-            return x, (self._copy_cache(cache_params) if return_cache else None)
-
-        current_cache = self._copy_cache(cache_params)
-        outputs = []
-        for t in range(x.size(1)):
-            step_x = x[:, t : t + 1, :].transpose(0, 1).contiguous()
-            out = self.fla(
-                inputs_embeds=step_x,
-                past_key_values=current_cache,
-                use_cache=True,
-                return_dict=True,
-            )
-            last_hidden_state, current_cache = self._unpack_fla_output(
-                out,
-                return_cache=True,
-                model_name="MesaNet",
-            )
-            outputs.append(last_hidden_state.transpose(0, 1))
-
-        return torch.cat(outputs, dim=1), (current_cache if return_cache else None)
-
     def _patch_contexts(
         self, 
         use_custom_recurrent: bool,
@@ -904,10 +854,8 @@ class FLABackbone(Backbone):
             ...,
         ] = (
             (GLAModel, _maybe_patch_gla_with_stateless_recurrent),
-            (KDAModel, _maybe_patch_kda_with_stateless_recurrent),
             (DeltaNetModel, _maybe_patch_deltanet_with_stateless_recurrent),
             (GatedDeltaNetModel, _maybe_patch_gated_deltanet_with_stateless_recurrent),
-            (MesaNetModel, _maybe_patch_mesanet_with_stateless_recurrent),
             (Mamba2Model, _maybe_patch_mamba2_with_stateless_recurrent),
             (LinearAttentionModel, _maybe_patch_linear_attn_with_stateless_recurrent),
         )
@@ -1009,13 +957,6 @@ class FLABackbone(Backbone):
             return output
 
         effective_cache_chunk_size = self.cache_chunk_size
-        if (
-            effective_cache_chunk_size is None
-            and use_custom_recurrent
-            and isinstance(self.fla, MesaNetModel)
-            and seq_len > 128
-        ):
-            effective_cache_chunk_size = 128
 
         if effective_cache_chunk_size is None or seq_len <= effective_cache_chunk_size:
             return _run_parallel_chunk(test_x, chunk_start=0)
@@ -1418,58 +1359,6 @@ class LinearAttentionBackbone(Backbone):
         for layer, state in zip(self.layers, layer_states):
             out = layer.incontext_predict(out, state)
         return self.final_norm(out)
-
-
-@dataclass(frozen=True)
-class RebasedBackboneConfig(BackboneConfig):
-    nlayers: int = 6
-    mlp_hidden_dim: int = 200
-    num_heads: int = 2
-    recompute_layer: bool = False
-    recompute_every_n_layers: int | None = 1
-    use_final_norm: bool = False
-    initializer_range: float = 0.02
-    layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
-
-
-    def create_backbone(
-        self,
-        ninp: int,
-        attention_between_features: bool,
-        **kwargs: tp.Any,
-    ) -> Backbone:
-        assert attention_between_features is False, (
-            "RebasedBackbone currently does not support attention between features"
-        )
-
-        layers = nn.ModuleList(
-            [
-                BasedLinearAttention(
-                    d_model=ninp,
-                    num_heads=self.num_heads,
-                    mlp_hidden_dim=self.mlp_hidden_dim,
-                    **(self.layer_kwargs or {}),
-                )
-                for _ in range(self.nlayers)
-            ]
-        )
-        layers.apply(
-            lambda module: init_linear_attention_weights_like_fla(
-                module,
-                initializer_range=self.initializer_range,
-            )
-        )
-        final_norm = build_norm(
-            ninp,
-            enabled=self.use_final_norm,
-            norm_type=str((self.layer_kwargs or {}).get("norm_type", "rmsnorm")),
-        )
-        return LinearAttentionBackbone(
-            layers,
-            final_norm=final_norm,
-            recompute_each_layer=self.recompute_layer,
-            recompute_every_n_layers=self.recompute_every_n_layers,
-        )
 
 
 @dataclass(frozen=True)

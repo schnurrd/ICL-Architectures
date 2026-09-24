@@ -1,0 +1,20 @@
+[project]
+name = "tabpfn-v1-prior"
+version = "0.0.1"
+authors = [
+  { name = "Alexander Pfefferle", email = "pfeffera@cs.uni-freiburg.de" },
+  { name = "Kartik Nagaraj Nayak", email = "kartiknnayak2000@gmail.com" }
+]
+description = "TabPFN v1 Prior implementation"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "torch>=1.10",
+    "numpy>=1.20",
+    "scipy>=1.8",
+    "gpytorch>=1.13",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tabpfn_prior*"]
