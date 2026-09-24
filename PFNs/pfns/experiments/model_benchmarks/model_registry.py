@@ -204,19 +204,19 @@ GATED_DELTANET_MODELS: dict[str, dict[str, Any]] = {
 
 MAMBA2_MODELS: dict[str, dict[str, Any]] = {
     "Mamba2_Comb_MT": {
-        "display_name": "Mamba2 Combined Multi Target",
+        "display_name": "Mamba-2 Combined Multi Target",
         "wandb_run_id": "fla_models/runs/ku412muw",
     },
     "Mamba2_Comb_ST": {
-        "display_name": "Mamba2 Combined Single Target",
+        "display_name": "Mamba-2 Combined Single Target",
         "wandb_run_id": "fla_models/runs/arzdn9rh",
     },
     "Mamba2_Int_ST": {
-        "display_name": "Mamba2 Interleaved Single Target",
+        "display_name": "Mamba-2 Interleaved Single Target",
         "wandb_run_id": "fla_models/runs/cdyctzjo",
     },
     "Mamba2_Int_MT": {
-        "display_name": "Mamba2 Interleaved Multi Target",
+        "display_name": "Mamba-2 Interleaved Multi Target",
         "wandb_run_id": "fla_models/runs/hvmrqqbi",
     },
 }
@@ -404,7 +404,7 @@ EQUAL_PARAMS_MODELS_RETRAINED: dict[str, dict[str, Any]] = {
       "display_name": "Linear Attention\n(Comb_ST)",
     },
     "equal_params_new:DeltaNet_Comb_ST": {
-        "display_name": "DeltaNet",
+        "display_name": "Delta",
         "wandb_run_id": "fla_models/runs/e9fvlq9x",
     },
     "equal_params_new:GLA_Comb_ST": {
@@ -412,7 +412,7 @@ EQUAL_PARAMS_MODELS_RETRAINED: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/ue3648xk",
     },
     "equal_params_new:Gated_DeltaNet_Comb_ST": {
-        "display_name": "Gated DeltaNet",
+        "display_name": "Delta Gated",
         "wandb_run_id": "fla_models/runs/bevop0pw",
     },
     # "equal_params_new:KDA_Comb_ST": {
@@ -420,7 +420,7 @@ EQUAL_PARAMS_MODELS_RETRAINED: dict[str, dict[str, Any]] = {
     #     "wandb_run_id": "fla_models/runs/2a55gn40",
     # },
     "equal_params_new:Mamba2_Comb_ST": {
-        "display_name": "Mamba2",
+        "display_name": "Mamba-2",
         "wandb_run_id": "fla_models/runs/mrqlajz1",
     },
     "equal_params_new:GLA_Comb_ST_matched_v2": {
@@ -488,7 +488,7 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
       "display_name": "Linear Attention\n(Comb_ST)",
     },
     "equal_params:DeltaNet_Comb_ST": {
-        "display_name": "DeltaNet",
+        "display_name": "Delta",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
     },
     "equal_params:GLA_Comb_ST": {
@@ -496,7 +496,7 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/4vsqz1ee",
     },
     "equal_params:Gated_DeltaNet_Comb_ST": {
-        "display_name": "Gated DeltaNet",
+        "display_name": "Delta Gated",
         "wandb_run_id": "fla_models/runs/g7rh5nv9",  
     },
     # "equal_params:DeltaNet_Int_MT": {
@@ -512,7 +512,7 @@ EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/5jfgan9d", 
     },
     "equal_params:Mamba2_Comb_ST": {
-        "display_name": "Mamba2",
+        "display_name": "Mamba-2",
         "wandb_run_id": "fla_models/runs/o9e00w17",
     },
 }
@@ -1057,6 +1057,14 @@ NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
     "DeltaNet_with_lr_decay_online_inverse_t0_256": {
         "display_name": "DeltaNet with LR Decay: Online Inverse T0=256 (Comb ST)",
         "wandb_run_id": "fla_models/runs/nw73xsr1", # online_inverse, beta_decay_t0=256
+    },
+    "DeltaNet_Int_MT_12L_no_decay": {
+        "display_name": "DeltaNet Int MT 12L (no decay, fpe=subspace)",
+        "wandb_run_id": "icl_arch/fla_models/v18qqmbk",  # control for the Int_MT decay comparison
+    },
+    "DeltaNet_Int_MT_with_lr_decay_online_inverse_t0_256": {
+        "display_name": "DeltaNet Int MT with LR Decay: Online Inverse T0=256",
+        "wandb_run_id": "icl_arch/fla_models/ysaayhlr",  # Int_MT, online_inverse, t0=256, tokens_per_step=2
     },
     "Non_Causal_DeltaNet_with_lr_decay_online_inverse_t0_1": {
         "display_name": "Non-Causal DeltaNet with LR Decay: Online Inverse T0=1 (Comb ST)",

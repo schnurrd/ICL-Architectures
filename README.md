@@ -1,11 +1,10 @@
-# ICL-Architectures
+# Adapting Linear-Time Architectures for Tabular In-Context Learning
 
 Unified framework for comparing sequence-model architectures for in-context learning on tabular classification tasks. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, (Gated) Linear Attention, (Gated) DeltaNet, Kimi Delta Attention, and Mamba2 backbones.
 
 ## Table of Contents
 
 - [Installation](#installation)
-  - [Pulling latest changes](#pulling-latest-changes)
 - [Repository User Guide](#repository-user-guide)
   - [CLI training interface](#cli-training-interface)
     - [Usage](#usage)
@@ -36,12 +35,7 @@ Unified framework for comparing sequence-model architectures for in-context lear
 
 ## Installation
 
-Clone the repository with submodules:
-
-```bash
-git clone --recurse-submodules git@github.com:schnurrd/ICL-Architectures.git
-cd ICL-Architectures
-```
+Download the repository from the anonymous link and navigate into its root directory. The TabPFN-v1 prior is included in `prior-repos/tabpfn-v1-prior`.
 
 Install the required packages and editable installs for PFNs and the TabPFN-v1 prior:
 
@@ -57,40 +51,6 @@ pip install --no-build-isolation causal-conv1d mamba-ssm
 ```
 
 Tested for Nvidia RTX 5070 and Nvidia RTX 2080Ti with CUDA 12.8 and 12.9. For older GPUs with compute capability < 7.0 you might need to install `requirements/requirements_old_gpus.txt` instead (e.g. Tesla P100, Titan Xp, Titan X). Additionally, `torch.compile` will not work.
-
-On the clusters with CUDA 11.8, the following versions work:
-
-```bash
-conda create -n icl_arch python=3.11
-conda activate icl_arch
-
-conda install -y -c nvidia/label/cuda-11.8.0 cuda-toolkit
-
-export CUDA_HOME=$CONDA_PREFIX
-export PATH=$CUDA_HOME/bin:$PATH
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-
-python -m pip install --no-cache-dir \
-  --index-url https://download.pytorch.org/whl/cu118 \
-  torch==2.7.1
-
-python -m pip install --no-cache-dir --no-build-isolation causal-conv1d mamba-ssm
-
-pip install -r requirements/requirements_obsession.txt \
-    -e ./PFNs \
-    -e ./prior-repos/tabpfn-v1-prior
-```
-
-### Pulling latest changes
-
-To pull the latest changes including submodules, run:
-
-```bash
-git pull
-git submodule update --init --recursive
-```
-
-Additionally to clean the submodules or main repository run: `git submodule foreach git clean -fdx` and `git clean -fdx` for main repository. To see the status of the submodules run: `git submodule status`.
 
 # Repository User Guide
 
@@ -267,8 +227,9 @@ The main sequence-length, real-world, and hidden-state analysis notebooks are:
 - [Real-world experiments](PFNs/notebooks/real_world_experiments.ipynb)
 - [Minimal linear-attention sequence-length generalization](PFNs/notebooks/minimal_linear_attention_seq_len_generalization.ipynb)
 - [Sequence-length hidden-state debugging](PFNs/notebooks/seq_len_hidden_state_debug.ipynb)
+- [DeltaNet effective write rates](PFNs/notebooks/deltanet_effective_beta_plots.ipynb)
 
-The Sequence-length comparison and generalization, Real-world experiments, and Sequence-length hidden-state debugging notebooks require trained model checkpoints. Before running these notebooks, register the checkpoints in [model_registry.py](PFNs/pfns/experiments/model_benchmarks/model_registry.py). The minimal sequence-length degradation notebook is intended as a lightweight standalone reproduction.
+All notebooks except the minimal reproduction require trained model checkpoints. These checkpoints are not included in this anonymized submission; use the provided training commands to reproduce the models from scratch. Before running these notebooks, register the checkpoints in [model_registry.py](PFNs/pfns/experiments/model_benchmarks/model_registry.py). The minimal sequence-length degradation notebook is intended as a lightweight standalone reproduction.
 
 ## Minimal sequence-length degradation reproduction
 

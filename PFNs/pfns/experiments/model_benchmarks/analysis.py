@@ -114,6 +114,71 @@ def _format_bucket_value(value: float) -> str:
     return f"{value:.0f}"
 
 
+def compute_global_normalization_constants(
+    metric_df: pd.DataFrame,
+    *,
+    metric_keys: Iterable[str],
+    higher_is_better_metrics: Iterable[str],
+    group_cols: Iterable[str] = (),
+    x_col: str = "seqlen",
+    metric_col: str = "metric",
+    value_col: str = "value",
+    lower_bound_reference_max_x: float | None = None,
+) -> dict[str, Any]:
+    """Compute fixed min/max constants for global normalized metrics."""
+    metric_keys = list(dict.fromkeys(str(metric) for metric in metric_keys))
+    higher_is_better_metrics = {str(metric) for metric in higher_is_better_metrics}
+    grouping_cols = list(dict.fromkeys(str(col) for col in group_cols))
+    grouping_keys = [metric_col, *grouping_cols]
+    required_cols = {metric_col, value_col, x_col, *grouping_cols}
+    missing_cols = sorted(required_cols - set(metric_df.columns))
+    if missing_cols:
+        raise RuntimeError(
+            f"Metric dataframe is missing required columns for normalization constants: {missing_cols}"
+        )
+
+    df = metric_df.loc[
+        metric_df[metric_col].astype(str).isin(metric_keys),
+        [metric_col, value_col, x_col, *grouping_cols],
+    ].copy()
+    if df.empty:
+        return {}
+
+    df[metric_col] = df[metric_col].astype(str)
+    df["_x"] = pd.to_numeric(df[x_col], errors="coerce")
+    df["_oriented"] = pd.to_numeric(df[value_col], errors="coerce")
+    df.loc[~df[metric_col].isin(higher_is_better_metrics), "_oriented"] *= -1
+    df = df[np.isfinite(df["_oriented"]) & np.isfinite(df["_x"])]
+    if df.empty:
+        return {}
+
+    grouped = df.groupby(grouping_keys, observed=True)
+    if lower_bound_reference_max_x is None:
+        lower_df = df[np.isclose(df["_x"], grouped["_x"].transform("min"))]
+    else:
+        lower_df = df[df["_x"] <= float(lower_bound_reference_max_x)]
+
+    bounds = pd.concat(
+        [
+            lower_df.groupby(grouping_keys, observed=True)["_oriented"].min().rename("min"),
+            grouped["_oriented"].max().rename("max"),
+        ],
+        axis=1,
+    ).dropna(subset=["min", "max"])
+
+    constants: dict[str, Any] = {}
+    for index, row in bounds.iterrows():
+        index_tuple = index if isinstance(index, tuple) else (index,)
+        metric = str(index_tuple[0])
+        bound = {"min": float(row["min"]), "max": float(row["max"])}
+        if not grouping_cols:
+            constants[metric] = bound
+            continue
+        group_key = index_tuple[1] if len(grouping_cols) == 1 else index_tuple[1:]
+        constants.setdefault(metric, {})[group_key] = bound
+    return constants
+
+
 def add_normalized_comparison_metrics(
     metric_df: pd.DataFrame,
     *,
@@ -126,6 +191,8 @@ def add_normalized_comparison_metrics(
     neutral_value: float = 0.5,
     normalized_prefix: str = "normalized_",
     normalization_scope: str = "comparison",
+    normalization_constants: dict[str, Any] | None = None,
+    require_normalization_constants: bool = False,
 ) -> pd.DataFrame:
     """Append min-max-normalized comparison metrics to a long-form metric dataframe.
 
@@ -198,8 +265,36 @@ def add_normalized_comparison_metrics(
         normalized_values = np.full_like(oriented_values, np.nan, dtype=float)
         finite_oriented_values = oriented_values[finite_mask]
         if finite_oriented_values.size:
-            slice_min = float(finite_oriented_values.min())
-            slice_max = float(finite_oriented_values.max())
+            metric_constants = None
+            if normalization_constants is not None:
+                metric_constants = normalization_constants.get(metric_name)
+                if (
+                    isinstance(metric_constants, dict)
+                    and "min" not in metric_constants
+                ):
+                    group_values = tuple(
+                        normalized_slice[col].iloc[0]
+                        for col in normalization_group_cols
+                    )
+                    group_key = (
+                        group_values[0] if len(group_values) == 1 else group_values
+                    )
+                    metric_constants = metric_constants.get(group_key)
+            if metric_constants is None:
+                if require_normalization_constants:
+                    group_values = {
+                        col: normalized_slice[col].iloc[0]
+                        for col in normalization_group_cols
+                    }
+                    raise RuntimeError(
+                        "Missing required normalization constants for metric "
+                        f"{metric_name!r} and group {group_values}."
+                    )
+                slice_min = float(finite_oriented_values.min())
+                slice_max = float(finite_oriented_values.max())
+            else:
+                slice_min = float(metric_constants["min"])
+                slice_max = float(metric_constants["max"])
             normalized_values[finite_mask] = (
                 float(neutral_value)
                 if np.isclose(slice_min, slice_max)
