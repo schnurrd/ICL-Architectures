@@ -43,7 +43,15 @@ def _apply_deltanet_beta_decay(
     t0: int,
     start_position: int | torch.Tensor = 0,
     position_dim: int = 1,
+    tokens_per_step: int = 1,
 ) -> torch.Tensor:
+    """Scale beta by the write-rate decay schedule c / (c + step).
+
+    `start_position` counts decay steps (examples) already consumed, and
+    `tokens_per_step` is how many consecutive tokens share one step. For an
+    interleaved x/y stream, tokens_per_step=2 holds the schedule fixed across each
+    feature token and the target token that follows it.
+    """
     mode = _normalize_deltanet_beta_decay(mode)
     if mode == "none":
         return beta
@@ -51,6 +59,10 @@ def _apply_deltanet_beta_decay(
         raise AssertionError(f"Unhandled deltanet_beta_decay mode: {mode!r}.")
     if t0 <= 0:
         raise ValueError(f"deltanet_beta_decay_t0 must be > 0, got {t0}.")
+    if tokens_per_step < 1:
+        raise ValueError(
+            f"deltanet_beta_decay_tokens_per_step must be >= 1, got {tokens_per_step}."
+        )
     if beta.ndim == 0:
         raise ValueError(
             "deltanet beta decay expects beta to have at least one dimension."
@@ -64,7 +76,10 @@ def _apply_deltanet_beta_decay(
     seq_len = beta.shape[position_dim]
     shape = [1] * beta.ndim
     shape[position_dim] = seq_len
-    positions = torch.arange(seq_len, device=beta.device, dtype=torch.float32).view(shape)
+    steps = torch.arange(seq_len, device=beta.device, dtype=torch.long)
+    if tokens_per_step > 1:
+        steps = torch.div(steps, tokens_per_step, rounding_mode="floor")
+    positions = steps.to(torch.float32).view(shape)
 
     if isinstance(start_position, torch.Tensor):
         start_position = start_position.to(device=beta.device, dtype=torch.float32)
@@ -96,6 +111,7 @@ def _deltanet_beta_decay_patch(
     mode: str | None,
     t0: int,
     start_position: int | torch.Tensor = 0,
+    tokens_per_step: int = 1,
 ) -> tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]]:
     mode = _normalize_deltanet_beta_decay(mode)
     if mode == "none":
@@ -116,6 +132,7 @@ def _deltanet_beta_decay_patch(
                 mode=mode,
                 t0=t0,
                 start_position=start_position,
+                tokens_per_step=tokens_per_step,
             )
 
         if len(args) > 3:
@@ -471,6 +488,7 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
     beta_decay: str | None = "none",
     beta_decay_t0: int = 1000,
     beta_decay_start: int | torch.Tensor = 0,
+    beta_decay_tokens_per_step: int = 1,
 ):
     beta_decay = _normalize_deltanet_beta_decay(beta_decay)
     if not enabled and not final_state_readout and beta_decay == "none":
@@ -485,12 +503,14 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
         mode=beta_decay,
         t0=beta_decay_t0,
         start_position=beta_decay_start,
+        tokens_per_step=beta_decay_tokens_per_step,
     )
     decay_chunk_delta_rule = _deltanet_beta_decay_patch(
         original_chunk_delta_rule,
         mode=beta_decay,
         t0=beta_decay_t0,
         start_position=beta_decay_start,
+        tokens_per_step=beta_decay_tokens_per_step,
     )
 
     @torch.compiler.disable
@@ -553,6 +573,7 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
             mode=beta_decay,
             t0=beta_decay_t0,
             start_position=beta_decay_start,
+            tokens_per_step=beta_decay_tokens_per_step,
         )
 
         q = q * scale

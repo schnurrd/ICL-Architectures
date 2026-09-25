@@ -184,6 +184,7 @@ def get_config(
     final_state_readout: bool = False,
     deltanet_beta_decay: str = "none",
     deltanet_beta_decay_t0: int = 1000,
+    deltanet_beta_decay_tokens_per_step: int = 1,
     task_variant: str = "tabular_prior",
     # Training
     training_setup: str = "high",
@@ -332,6 +333,7 @@ def get_config(
         deltanet_beta_decay,
     ) or "none"
     resolved_deltanet_beta_decay_t0 = int(deltanet_beta_decay_t0)
+    resolved_deltanet_beta_decay_tokens_per_step = int(deltanet_beta_decay_tokens_per_step)
 
     backbone_kwargs = {
         "model_type": model_type,
@@ -347,6 +349,7 @@ def get_config(
         "final_state_readout": resolved_final_state_readout,
         "deltanet_beta_decay": resolved_deltanet_beta_decay,
         "deltanet_beta_decay_t0": resolved_deltanet_beta_decay_t0,
+        "deltanet_beta_decay_tokens_per_step": resolved_deltanet_beta_decay_tokens_per_step,
         "mimetic_init": mimetic_init,
         "mimetic_init_mode": mimetic_init_mode,
         "mimetic_init_layer_indices": mimetic_init_layer_indices,
@@ -409,6 +412,11 @@ def get_config(
         "finalstate" if resolved_final_state_readout else None,
         (
             f"betadecay_{resolved_deltanet_beta_decay}_t0{resolved_deltanet_beta_decay_t0}"
+            + (
+                f"_tps{resolved_deltanet_beta_decay_tokens_per_step}"
+                if resolved_deltanet_beta_decay_tokens_per_step != 1
+                else ""
+            )
             if resolved_deltanet_beta_decay != "none"
             else None
         ),

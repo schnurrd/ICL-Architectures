@@ -168,6 +168,76 @@ def test_deltanet_beta_decay_scales_late_positions():
         _apply_deltanet_beta_decay(beta, mode="online_sqrt_inverse", t0=2)
 
 
+def test_deltanet_beta_decay_tokens_per_step_shares_steps():
+    from pfns.model.fla_patches import _apply_deltanet_beta_decay
+
+    beta = torch.ones(1, 6, 2)
+
+    paired = _apply_deltanet_beta_decay(beta, mode="online_inverse", t0=2, tokens_per_step=2)
+    expected = torch.tensor([1.0, 1.0, 2 / 3, 2 / 3, 0.5, 0.5]).view(1, 6, 1)
+    torch.testing.assert_close(paired, expected.expand_as(beta))
+
+    offset = _apply_deltanet_beta_decay(
+        beta, mode="online_inverse", t0=2, start_position=3, tokens_per_step=2
+    )
+    expected_offset = torch.tensor([2 / 5, 2 / 5, 2 / 6, 2 / 6, 2 / 7, 2 / 7]).view(1, 6, 1)
+    torch.testing.assert_close(offset, expected_offset.expand_as(beta))
+
+    with pytest.raises(ValueError, match="tokens_per_step must be >= 1"):
+        _apply_deltanet_beta_decay(beta, mode="online_inverse", t0=2, tokens_per_step=0)
+
+
+def test_deltanet_beta_decay_tokens_per_step_validates_backbone_config():
+    from pfns.model.backbones import FLABackboneConfig
+
+    config_kwargs = fla_model_config_kwargs("deltanet", size="small")
+    with pytest.raises(ValueError, match="requires deltanet_beta_decay"):
+        FLABackboneConfig(
+            model_type="deltanet",
+            config_kwargs=config_kwargs,
+            deltanet_beta_decay_tokens_per_step=2,
+        )
+    with pytest.raises(ValueError, match="tokens_per_step must be >= 1"):
+        FLABackboneConfig(
+            model_type="deltanet",
+            config_kwargs=config_kwargs,
+            deltanet_beta_decay="online_inverse",
+            deltanet_beta_decay_tokens_per_step=0,
+        )
+
+
+@pytest.mark.parametrize("tokens_per_step", [1, 2])
+def test_deltanet_beta_decay_cached_test_paths_agree(tokens_per_step: int):
+    """The parallel and sequential cached test paths use the same decay schedule."""
+    if not torch.cuda.is_available():
+        pytest.skip("FLA DeltaNet kernel requires CUDA/Triton.")
+
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+    backbone = build_fla_backbone(
+        "deltanet",
+        deltanet_beta_decay="online_inverse",
+        deltanet_beta_decay_t0=1,
+        deltanet_beta_decay_tokens_per_step=tokens_per_step,
+    ).to(device)
+    embed_dim = fla_hidden_size("deltanet")
+    train_x = torch.randn(2, 2, embed_dim, device=device)
+    test_x = torch.randn(2, 5, embed_dim, device=device)
+
+    with torch.no_grad():
+        _, cache = backbone._run_fla(train_x)
+        assert backbone._beta_decay_steps_in_cache(
+            backbone._cache_seq_length(cache)
+        ) == 2 // tokens_per_step
+        parallel = backbone._run_test_with_cache(test_x, cache)
+        _, cache = backbone._run_fla(train_x)
+        sequential = backbone._run_test_with_cache_naive(
+            test_x, cache, use_custom_recurrent=True, use_custom_shortconv=True
+        )
+
+    torch.testing.assert_close(parallel, sequential, rtol=1e-6, atol=1e-6)
+
+
 def test_deltanet_beta_decay_validates_backbone_config():
     from pfns.model.backbones import FLABackboneConfig
 

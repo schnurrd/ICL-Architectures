@@ -383,6 +383,8 @@ class FLABackboneConfig(BackboneConfig):
         "online_inverse",
     ] = "none"
     deltanet_beta_decay_t0: int = 1000
+    # Tokens that share one decay step; 2 for interleaved x/y pairs (Int_* modes).
+    deltanet_beta_decay_tokens_per_step: int = 1
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_init_mode: MimeticInitMode = "gate_only"
@@ -451,6 +453,12 @@ class FLABackboneConfig(BackboneConfig):
                 raise ValueError("deltanet_beta_decay does not support state_passing.")
             if self.deltanet_beta_decay_t0 <= 0:
                 raise ValueError("deltanet_beta_decay_t0 must be > 0.")
+        if self.deltanet_beta_decay_tokens_per_step < 1:
+            raise ValueError("deltanet_beta_decay_tokens_per_step must be >= 1.")
+        if self.deltanet_beta_decay_tokens_per_step > 1 and self.deltanet_beta_decay == "none":
+            raise ValueError(
+                "deltanet_beta_decay_tokens_per_step > 1 requires deltanet_beta_decay != 'none'."
+            )
         if self.state_weaving:
             if self.sequence_mode != "Comb_ST":
                 raise ValueError("state_weaving currently supports only sequence_mode='Comb_ST'.")
@@ -509,6 +517,9 @@ class FLABackboneConfig(BackboneConfig):
             backbone_kwargs["final_state_readout"] = self.final_state_readout
             backbone_kwargs["deltanet_beta_decay"] = self.deltanet_beta_decay
             backbone_kwargs["deltanet_beta_decay_t0"] = self.deltanet_beta_decay_t0
+            backbone_kwargs["deltanet_beta_decay_tokens_per_step"] = (
+                self.deltanet_beta_decay_tokens_per_step
+            )
 
         return backbone_cls(**backbone_kwargs)
 
@@ -536,6 +547,7 @@ class FLABackbone(Backbone):
         final_state_readout: bool = False,
         deltanet_beta_decay: str = "none",
         deltanet_beta_decay_t0: int = 1000,
+        deltanet_beta_decay_tokens_per_step: int = 1,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
@@ -548,6 +560,7 @@ class FLABackbone(Backbone):
         self.final_state_readout = bool(final_state_readout)
         self.deltanet_beta_decay = str(deltanet_beta_decay)
         self.deltanet_beta_decay_t0 = int(deltanet_beta_decay_t0)
+        self.deltanet_beta_decay_tokens_per_step = int(deltanet_beta_decay_tokens_per_step)
         self.state_weaving = bool(state_weaving)
         self.state_passing = (
             FLAStatePassing(dropout_prob=state_passing_dropout)
@@ -796,6 +809,7 @@ class FLABackbone(Backbone):
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
         deltanet_beta_decay_start: int | torch.Tensor = 0,
+        deltanet_beta_decay_tokens_per_step: int | None = None,
     ) -> tuple[torch.Tensor, tp.Any | None]:
         if cache_params is not None and return_cache and use_custom_recurrent:
             raise ValueError(
@@ -823,6 +837,7 @@ class FLABackbone(Backbone):
                     use_custom_recurrent=use_custom_recurrent,
                     use_custom_shortconv=use_custom_shortconv,
                     deltanet_beta_decay_start=deltanet_beta_decay_start,
+                    deltanet_beta_decay_tokens_per_step=deltanet_beta_decay_tokens_per_step,
                 ):
                     stack.enter_context(ctx)
                 out = self.fla(**kwargs)
@@ -838,6 +853,7 @@ class FLABackbone(Backbone):
         use_custom_recurrent: bool,
         use_custom_shortconv : bool = False,
         deltanet_beta_decay_start: int | torch.Tensor = 0,
+        deltanet_beta_decay_tokens_per_step: int | None = None,
     ) -> tp.Iterable[tp.ContextManager[tp.Any]]:
         """
         Get context managers for patching FLA model behavior. 
@@ -877,6 +893,11 @@ class FLABackbone(Backbone):
                     extra_kwargs["beta_decay"] = self.deltanet_beta_decay
                     extra_kwargs["beta_decay_t0"] = self.deltanet_beta_decay_t0
                     extra_kwargs["beta_decay_start"] = deltanet_beta_decay_start
+                    extra_kwargs["beta_decay_tokens_per_step"] = (
+                        self.deltanet_beta_decay_tokens_per_step
+                        if deltanet_beta_decay_tokens_per_step is None
+                        else int(deltanet_beta_decay_tokens_per_step)
+                    )
                 contexts.append(
                     ctx_factory(
                         use_custom_recurrent,
@@ -894,6 +915,15 @@ class FLABackbone(Backbone):
         if hasattr(cache_params, "get_seq_length"):
             return int(cache_params.get_seq_length(0))
         return 0
+
+    def _beta_decay_steps_in_cache(self, cache_seq_length: int) -> int:
+        """Decay steps consumed by a cached context of `cache_seq_length` tokens.
+
+        An interleaved x/y context holds two tokens per example, so its schedule
+        has advanced only half as far as its token count. Test tokens are single
+        examples, so callers pair this offset with tokens_per_step=1.
+        """
+        return int(cache_seq_length) // self.deltanet_beta_decay_tokens_per_step
 
     def _run_test_with_cache(
         self,
@@ -933,25 +963,18 @@ class FLABackbone(Backbone):
             else:
                 expanded_cache = cache_params
             chunk_flat = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
-            beta_decay_start: int | torch.Tensor = cache_seq_length + chunk_start
-            if (
-                self.deltanet_beta_decay != "none"
-                and isinstance(self.fla, DeltaNetModel)
-                and use_custom_recurrent
-                and supports_custom_recurrent
-            ):
-                beta_decay_start = torch.arange(
-                    cache_seq_length + chunk_start,
-                    cache_seq_length + chunk_start + chunk_len,
-                    device=chunk_x.device,
-                )
+            # The stateless kernels see each chunk as one sequence per batch row, so
+            # test token i is decayed at position steps_in_cache + chunk_start + i.
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
-                deltanet_beta_decay_start=beta_decay_start,
+                deltanet_beta_decay_start=(
+                    self._beta_decay_steps_in_cache(cache_seq_length) + chunk_start
+                ),
+                deltanet_beta_decay_tokens_per_step=1,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
@@ -993,7 +1016,10 @@ class FLABackbone(Backbone):
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
-                deltanet_beta_decay_start=cache_seq_length + t,
+                deltanet_beta_decay_start=(
+                    self._beta_decay_steps_in_cache(cache_seq_length) + t
+                ),
+                deltanet_beta_decay_tokens_per_step=1,
             )
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)

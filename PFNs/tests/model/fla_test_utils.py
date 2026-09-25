@@ -145,6 +145,7 @@ def build_fla_backbone(
     final_state_readout: bool = False,
     deltanet_beta_decay: str = "none",
     deltanet_beta_decay_t0: int = 1000,
+    deltanet_beta_decay_tokens_per_step: int = 1,
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -168,6 +169,7 @@ def build_fla_backbone(
         final_state_readout=bool(final_state_readout),
         deltanet_beta_decay=deltanet_beta_decay,
         deltanet_beta_decay_t0=deltanet_beta_decay_t0,
+        deltanet_beta_decay_tokens_per_step=deltanet_beta_decay_tokens_per_step,
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)

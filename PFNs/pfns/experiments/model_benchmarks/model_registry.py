@@ -423,12 +423,12 @@ NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/nw73xsr1", # online_inverse, beta_decay_t0=256
     },
     "DeltaNet_Int_MT_12L_no_decay": {
-        "display_name": "DeltaNet Int MT 12L (no decay, fpe=subspace)",
-        "wandb_run_id": "icl_arch/fla_models/v18qqmbk",  # control for the Int_MT decay comparison
+        "display_name": "DeltaNet Int MT 12L (no decay)",
+        "wandb_run_id": "icl_arch/fla_models/06k7fek6",  # Delta (Int-MT)
     },
     "DeltaNet_Int_MT_with_lr_decay_online_inverse_t0_256": {
         "display_name": "DeltaNet Int MT with LR Decay: Online Inverse T0=256",
-        "wandb_run_id": "icl_arch/fla_models/ysaayhlr",  # Int_MT, online_inverse, t0=256, tokens_per_step=2
+        "wandb_run_id": "icl_arch/fla_models/e6008u2i",  # online_inverse, t0=256, tokens_per_step=2
     },
     "Non_Causal_GLA": {
         "display_name": "Non-Causal GLA",
