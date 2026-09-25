@@ -50,15 +50,15 @@ pip install -r requirements/requirements.txt \
 pip install --no-build-isolation causal-conv1d==1.6.2.post1 mamba-ssm==2.3.2.post1
 ```
 
-Tested for Nvidia RTX 5070 and Nvidia RTX 2080Ti with CUDA 12.8 and 12.9.
+Tested on NVIDIA RTX 5070 and RTX 2080 Ti GPUs with CUDA 12.8 and 12.9.
 
-# Repository User Guide
+## Repository User Guide
 
-## CLI training interface
+### CLI training interface
 
 The training CLI allows you to train PFNs models using configuration from Python files. This provides a flexible and programmable way to configure training parameters, allowing for dynamic configuration generation, conditional logic, and easy reuse of configuration components. Configuration files define either a `config` variable or a `get_config(...)` function returning the training configuration.
 
-### Usage
+#### Usage
 
 Transformer example:
 
@@ -89,11 +89,11 @@ The first training steps of an FLA model can take a few minutes while Triton com
 
 All models from the paper are trained with the config files in `PFNs/configs/`. Variants such as final-state readout, the write-rate decay, the training setup and the mitigation strategies are selected with `--config-arg`, using the arguments of each config's `get_config`.
 
-### Command Line Arguments
+#### Command Line Arguments
 
 - `config_file` (required): Path to the Python configuration file that defines either a `config` variable or a `get_config(...)` function
 - `--device`: Device to use for training (e.g., 'cuda:0', 'cpu'). If not specified, will auto-detect.
-- `--compile`: Use torch.compile for the model (requires PyTorch 2.0+)
+- `--compile`: Use torch.compile for the model
 - `--checkpoint-save-load-prefix`: Path to save/load checkpoint (and default wandb dir).
 - `--checkpoint-save-load-suffix`: Suffix to add to the checkpoint save/load path. This can, e.g., be the seed.
 - `--wandb` / `--no-wandb`: Enable/disable wandb logging (wandb settings come from the config file).
@@ -127,7 +127,7 @@ This `--model_path` matches the transformer training example above when run with
 - `--checkpoint_name`: Name of the checkpoint file within the model path (default: 'checkpoint.pt')
 - `--wandb_run_id`: wandb run path or ID to download/evaluate instead of a local checkpoint path.
 - `--device`: Device to use for evaluation (e.g., 'cuda:0', 'cpu'). Default: auto-detect
-- `--benchmark`: Benchmark suite to evaluate on. Choices: 'opencc' (OpenML-CC18), 'openml_large_dataset', 'tabarena_full', 'tabarena_medium'. Default: 'opencc'
+- `--benchmark`: Benchmark suite to evaluate on. Choices: 'opencc' (OpenML-CC18), 'openml_large_dataset', 'tabarena_full', 'tabarena_medium', 'tabarena_largest_5'. Default: 'opencc'
 - `--max_samples`: Maximum number of samples per dataset (default: 1000)
 - `--max_features`: Maximum number of features per dataset (default: 20)
 - `--max_classes`: Maximum number of classes per dataset (default: 10)
@@ -140,14 +140,14 @@ This `--model_path` matches the transformer training example above when run with
 - `--sample_order_permutation`: Permute training sample order for each ensemble configuration
 - `--fla_cache_chunk_size`: Chunk size for cache-backed inference when using an FLA backbone
 
-## Configuration and logging
+### Configuration and logging
 
-### wandb support
+#### wandb support
 
 wandb is configured via `MainConfig.wandb`. The CLI can toggle logging via `--wandb` / `--no-wandb` or continue from an existing run via `--continue-from-wandb`.
 For restricted environments, set `mode="offline"` in the config file (or `WANDB_MODE=offline`) and sync later with `wandb sync`.
 
-### Configuration Files
+#### Configuration Files
 
 The Python configuration file must define either a `config` variable or a
 `get_config(config_index: int = 0)` function, which when called returns a
@@ -155,18 +155,18 @@ The Python configuration file must define either a `config` variable or a
 `PFNs/configs/transformer/transformer_config.py`.
 
 The main FLA config is `PFNs/configs/fla/fla_config.py`. It supports
-`model_type` values `gla`, `mamba2`, `deltanet`,
-`gated_deltanet`, and `linear_attn`, plus sequence-mode,
-bidirectional, state-passing, cache, categorical-feature, and mimetic-init
-options via `--config-arg`.
+`model_type` values `gla`, `mamba2`, `deltanet`, `gated_deltanet`, and
+`linear_attn`, plus options for the sequence mode, bidirectionality, final-state
+readout, the DeltaNet write-rate decay, state weaving, state passing, cache
+chunking, categorical features, and mimetic initialisation via `--config-arg`.
 
-#### Curriculum Learning Parameters
+##### Curriculum Learning Parameters
 
 Curriculum learning is configured via `get_config(...)` arguments in configs such as
 `PFNs/configs/transformer/transformer_config.py` and `PFNs/configs/fla/fla_config.py`.
 From the CLI, pass these through repeatable `--config-arg KEY=VALUE` arguments.
 
-##### Sequence-length stages
+###### Sequence-length stages
 
 - `max_seq_len` (default: `1000`): Upper bound for sampled sequence length.
 - `seq_len_stages` (default: `None`): Optional staged sequence-length settings by epoch.
@@ -177,7 +177,8 @@ From the CLI, pass these through repeatable `--config-arg KEY=VALUE` arguments.
   - `(end_epoch, stage_max_seq_len, eval_pos_split_pct_min, eval_pos_split_pct_max)`
   - `(end_epoch, stage_min_seq_len, stage_max_seq_len, seq_len_distribution)`
   - `(end_epoch, stage_min_seq_len, stage_max_seq_len, seq_len_distribution, eval_pos_split_pct_min, eval_pos_split_pct_max)`
-    Where `seq_len_distribution` is one of:
+
+  `seq_len_distribution` is one of:
   - `fixed`: use `stage_max_seq_len`.
   - `uniform`: sample integer sequence length uniformly in `[min_seq_len, max_seq_len]`.
   - `log_uniform`: sample sequence length log-uniformly in `[min_seq_len, max_seq_len]`.
@@ -193,7 +194,7 @@ Examples:
   - First stage: sample seq len uniformly from 1k to 5k.
   - Second stage: sample seq len log-uniformly from 5k to 64k.
 
-##### Eval-position split (global)
+###### Eval-position split (global)
 
 - `eval_pos_split_pct` (default: `None`): Global eval split in percent for `single_eval_pos`.
   - Scalar: fixed split, e.g. `80` means always 80% of sequence length.
@@ -201,7 +202,7 @@ Examples:
 - Stage-level split values in `seq_len_stages` override the global `eval_pos_split_pct` for those epochs.
 - Split percentages must be between 0 and 100, with min `<=` max.
 
-##### Dynamic batch-size by sequence length
+###### Dynamic batch-size by sequence length
 
 - `batch_size_stages` (default: `None`): Optional sequence-length thresholds for batch size.
   - Format: `[(seq_len_threshold, batch_size), ...]` with increasing thresholds.
@@ -213,7 +214,7 @@ Examples:
     `dynamic_batch_size / base_batch_size`.
   - This keeps effective batch size approximately stable when dynamic batch sizing is active.
 
-##### Related sampler controls
+###### Related sampler controls
 
 These are part of `BatchShapeSamplerConfig` and influence the same sampling process:
 
@@ -222,9 +223,7 @@ These are part of `BatchShapeSamplerConfig` and influence the same sampling proc
 - `min_num_features`, `max_num_features`: Feature-count sampling range per batch.
 - `seed` (default: `42`): Seed used with `(epoch, step)` for deterministic batch-shape sampling.
 
-## Main sequence-length, real-world, and hidden-state analysis notebooks
-
-The main sequence-length, real-world, and hidden-state analysis notebooks are:
+### Main sequence-length, real-world, and hidden-state analysis notebooks
 
 - [Sequence-length comparison and generalization](PFNs/notebooks/seq_len_comparison_and_generalization.ipynb)
 - [Real-world experiments](PFNs/notebooks/real_world_experiments.ipynb)
@@ -236,7 +235,7 @@ The benchmarks themselves are run with [run_synthetic_seq_len_experiments.py](PF
 
 All notebooks except the minimal reproduction require trained model checkpoints. These checkpoints are not included in this release; train the models with the [training CLI](#cli-training-interface). To use a local checkpoint, replace the `wandb_run_id` of its entry in [model_registry.py](PFNs/pfns/experiments/model_benchmarks/model_registry.py) with `"base_path": "<directory containing checkpoint.pt>"`. Without a W&B login the notebooks skip the W&B results cache and compute all results locally. The minimal sequence-length degradation notebook is intended as a lightweight standalone reproduction.
 
-## Minimal sequence-length degradation reproduction
+### Minimal sequence-length degradation reproduction
 
 The minimal reproduction for the linear-attention sequence-length degradation
 question is the notebook
@@ -250,15 +249,15 @@ It writes outputs under `minimal_linear_attention_seq_len_generalization_runs/`
 unless `--output-root` is set, and can log to the
 `minimal_linear_attention_seq_len_generalization` wandb project with `--wandb`.
 
-# Repository (PFNs) explanation
+## Repository (PFNs) explanation
 
-## Steps of execution in the pre-training pipeline
+### Steps of execution in the pre-training pipeline
 
 1. The CLI script `run_training_cli.py` is executed with the path to a configuration file and the CLI parameters. This first parses the CLI arguments and then loads the configuration file as a Python module. It retrieves the `config` variable or calls the `get_config` function to obtain the `MainConfig` object.
 2. The `MainConfig` object includes all the necessary objects for the training process, including the prior, model, batch shape sampler, optimizer and training loop configuration. If we have already started a training with the same name and have stored a checkpoint the config gets updated to load the checkpoint.
 3. The training loop is started by calling the `pfns.train.train` function with the created `MainConfig` object.
 
-## Main Config components
+### Main Config components
 
 Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for training. Specifically includes:
 
@@ -287,9 +286,9 @@ Dataclass (see `PFNs/pfns/train.py`) that includes all necessary components for 
 - Data loading
   - **dataloader_class**, **num_workers**
 
-## Model Overview
+### Model Overview
 
-### Encoding
+#### Encoding
 
 Encoders are a sequence of (learned) transformations (encoding steps) that process the input data (x and y) before mapping it into an embedding that is fed into the main sequence model (e.g. Transformer). Different encoding steps can be stacked to form the final encoder. The different encoders currently implemented are in `PFNs/pfns/model/encoders.py` and implement the abstract base class `SeqEncStep`:
 
@@ -305,15 +304,15 @@ These individual encoders can be combined using the `SequentialEncoder` class to
 
 **Style Encoder**: Special encoder that encodes metadata (e.g. hyperparameters) that describes how the data was generated, allowing the model to condition on this information.
 
-#### Features per group parameter
+##### Features per group parameter
 
 The default encoding of the transformer model creates one embedding per feature. TabPFN v1 used one embedding per row (`features_per_group = num_features`). The larger `features_per_group` is set, the fewer tokens the sequence model has to process, reducing memory and compute requirements. However, this also reduces the model capacity.
 
-#### Encoding overview
+##### Encoding overview
 
 The model both encodes the input features (X) and the target (y) separately. Each of which goes through its own pipeline and has its own learned parameters.
 
-#### Feature Positional Embedding
+##### Feature Positional Embedding
 
 Without positional embeddings, the model cannot distinguish between different feature groups as attention is permutation-invariant. The `feature_positional_embedding` adds a unique identifier to each feature group's embedding. Options are:
 
@@ -325,19 +324,20 @@ Without positional embeddings, the model cannot distinguish between different fe
 
 The random embeddings use a fixed seed, ensuring consistent feature IDs across forward passes while different models get different IDs.
 
-### Backbones
+#### Backbones
 
 The model core is selected via `ModelConfig.backbone`, which uses the `Backbone` / `BackboneConfig` interfaces in `PFNs/pfns/model/backbones.py`. Current backbone implementations include:
 
 - **TransformerBackbone**: PFN-style per-feature Transformer stack.
 - **FLABackbone** and **BidirectionalFLABackbone**: Wrappers for Flash Linear Attention models GLA, DeltaNet, Gated DeltaNet, Mamba-2, and Linear Attention.
-- **LinearAttentionBackbone** and related experimental backbones for local linear-attention variants.
+- **LinearAttentionBackbone**: Local linear-attention implementation, including the layer-local ridge state.
+- **TwoAxisBackbone**: TabPFN-v2-style two-axis processing with attention across features and a row-wise sequence mixer.
 
-### Table Transformer Architecture
+#### Table Transformer Architecture
 
 The Transformer backbone extends the standard Transformer architecture to operate on a per-feature basis, which allows for processing each feature separately. It only consists of encoder blocks (no decoder blocks). Specifically, the Transformer backbone is a stack of `PerFeatureLayer` layers.
 
-#### Per Feature Layer
+##### Per Feature Layer
 
 Transformer encoder layer that processes each feature block separately. Does Multi-head attention between features, multi-head attention between items, and feedforward neural networks (MLPs).
 
@@ -355,7 +355,7 @@ The main features here are:
 - **Two attention axes**: Attends across both features AND items (unlike standard transformers)
 - **Train/test split**: `single_eval_pos` separates training context from test items, enabling causal masking for in-context learning
 
-### Decoder
+#### Decoder
 
 The decoder is a simple MLP output head that maps the y-token embeddings from test items to prediction logits:
 
@@ -364,11 +364,11 @@ The decoder is a simple MLP output head that maps the y-token embeddings from te
 
 The y-token for test items initially encodes "unknown label" (via NaN handling), and through attention with training context, accumulates information needed for prediction.
 
-## Inference Overview
+### Inference Overview
 
 `TabPFNClassifier` is the main prediction interface with a modular architecture supporting swappable model backbones. The training set is provided via `fit(X_train, y_train)`, and predictions are made on new data with `predict(X_test)` or `predict_proba(X_test)`.
 
-### Architecture Components
+#### Architecture Components
 
 The inference pipeline consists of three main components:
 
@@ -383,7 +383,7 @@ The inference pipeline consists of three main components:
    - `TransformerBackbone`: Wrapper for the PFN-style Transformer stack
    - `FLABackbone`: Wrapper for Flash Linear Attention backbones used by GLA, DeltaNet, Gated DeltaNet, Mamba-2, Linear Attention, and related variants
 
-### Prediction Flow
+#### Prediction Flow
 
 During the `fit` call, the training data is preprocessed:
 
@@ -398,14 +398,14 @@ During `predict`/`predict_proba` calls:
 4. **Batch inference**: Forward passes through model backbone in batches
 5. **Aggregate**: Reverse class shifts, average logits across ensemble, apply softmax
 
-# Credits
+## Credits
 
 This repo builds on:
 
 - [PFNs](https://github.com/automl/PFNs) (Apache 2.0) for the core training pipeline and priors. Used as the starting repository.
-- [TabPFN-v1-prior](https://github.com/automl/tabpfn-v1-prior) (Apache 2.0) for the tabpfn v1 prior implementation.
+- [TabPFN-v1-prior](https://github.com/automl/tabpfn-v1-prior) (Apache 2.0) for the TabPFN v1 prior implementation.
 
-# Similar relevant repositories
+## Similar relevant repositories
 
 - [TabPFN](https://github.com/PriorLabs/TabPFN) the TabPFN model and prior implementation.
 - [TFM-Playground](https://github.com/automl/TFM-Playground) (Apache 2.0) open source playground containing nanoTabPFN with more diverse prior support.
