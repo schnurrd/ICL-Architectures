@@ -54,8 +54,6 @@ MODEL_SETTINGS = {
     # Model size: 12.59 M
     # Training speed on different gpus (uncompiled, single target): 
     #    - RTX 5070:   22it/s, 1.8GiB (single target); 28it/s, 1.6GiB (multi target); 16it/s, 2.6GiB (multi target, interleaved)
-    #    - RTX 2080Ti:  it/s
-    #    - A5000:       it/s 
     "gla": {
         "emsize": 320,
         "config_kwargs": { # also has max_position_embeddings set to 2048, supports attn dict
@@ -74,8 +72,6 @@ MODEL_SETTINGS = {
     # Model size: 12.49 M full
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   7it/s, 4.3GB (single target); 5it/s (single target, interleaved); 15it/s, 2GB (multi target); 8it/s, 2.9GiB (multi target, interleaved)
-    #    - RTX 2080Ti:  it/s
-    #    - A5000:        it/s 
     "mamba2": { 
         "emsize": 320,
         "config_kwargs": {
@@ -94,8 +90,6 @@ MODEL_SETTINGS = {
     # Model size: 12.49 M
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   22it/s, 2.2GB (single target); 29it/s, 1.7GB (multi target); 16it/s, 2.8GiB (multi target, interleaved)
-    #    - RTX 2080Ti:  it/s
-    #    - A5000:        it/s 
     "deltanet": {
         "emsize": 320,
         "config_kwargs": {
@@ -114,8 +108,6 @@ MODEL_SETTINGS = {
     # Model size: 12.50 M
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   14it/s, 2.9GB (single target); 24it/s, 1.9GB (multi target); 15it/s, 3.5GiB (multi target, interleaved)
-    #    - RTX 2080Ti:  it/s
-    #    - A5000:        it/s 
     "gated_deltanet": {
         "emsize": 320,
         "config_kwargs": {

@@ -147,7 +147,7 @@ def train(
 
         if len(priors) != 1:
             raise ValueError(
-                "Currently only supporting a single prior. Later this should be a seqeunce that is called in order by wrapping."
+                "Currently only supporting a single prior. Later this should be a sequence that is called in order by wrapping."
             )
 
         if len(priors) == 1 and callable(priors[0]):  # Simplistic assumption

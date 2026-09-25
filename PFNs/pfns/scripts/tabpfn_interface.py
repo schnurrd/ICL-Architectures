@@ -856,7 +856,7 @@ class TabPFNClassifier(BaseEstimator, ClassifierMixin):
 
             if int(torch.isnan(X_full).sum()):
                 print(
-                    "X contains nans and the gradient implementation is not designed to handel nans."
+                    "X contains NaNs and the gradient implementation is not designed to handle NaNs."
                 )
 
         y_full = np.concatenate([self.y_, np.full(shape=X.shape[0], fill_value=np.nan)], axis=0)

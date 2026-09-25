@@ -7,7 +7,7 @@ from pfns.utils import get_default_device
 TRANSFORMER_MODELS: dict[str, dict[str, Any]] = {
     "Softmax_Transformer": {
         "wandb_run_id": "tabpfn_transformer/runs/lqft3oxa",
-        "eval_autocast_dtype": "fp16", # bf16 does not work on rtx 2080 ti due to the GPU being too old -> OOM error in scaled dot product attention
+        "eval_autocast_dtype": "fp16",  # bf16 attention runs out of memory on pre-Ampere GPUs
     },
 }
 
@@ -39,7 +39,7 @@ DELTANET_MODELS: dict[str, dict[str, Any]] = {
     },
     "DeltaNet_Comb_ST": {
         "display_name": "DeltaNet Combined Single Target",
-        "wandb_run_id": "fla_models/runs/q67a0x92", 
+        "wandb_run_id": "fla_models/runs/q67a0x92",
     },
     "DeltaNet_Int_ST": {
         "display_name": "DeltaNet Interleaved Single Target",
@@ -93,20 +93,20 @@ MAMBA2_MODELS: dict[str, dict[str, Any]] = {
 
 LINEAR_ATTENTION_MODELS: dict[str, dict[str, Any]] = {
     "Linear_Attention_Non_Causal": {
-      "wandb_run_id": "linear_attention/runs/83hs69fa",
-      "display_name": "Linear Attention\nNon-Causal",
+        "wandb_run_id": "linear_attention/runs/83hs69fa",
+        "display_name": "Linear Attention\nNon-Causal",
     },
     "Linear_Attention_Non_Causal_fro_norm": {
-      "wandb_run_id": "linear_attention/runs/i960z4r7",
-      "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
+        "wandb_run_id": "linear_attention/runs/i960z4r7",
+        "display_name": "Linear Attention\n(Non-Causal) w. Fro Norm",
     },
     "Linear_Attention_Comb_ST": {
-      "wandb_run_id": "linear_attention/runs/3jq88aqt",
-      "display_name": "Linear Attention\nCausal",
+        "wandb_run_id": "linear_attention/runs/3jq88aqt",
+        "display_name": "Linear Attention\nCausal",
     },
     "Linear_Attention_Comb_ST_fro_norm": {
-      "wandb_run_id": "linear_attention/runs/rrakg728",
-      "display_name": "Linear Attention\n(Comb ST) w. Fro Norm",
+        "wandb_run_id": "linear_attention/runs/rrakg728",
+        "display_name": "Linear Attention\n(Comb ST) w. Fro Norm",
     },
 }
 
@@ -116,10 +116,6 @@ DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/ob2m9rth",
         "display_name": "DeltaNet Reference",
     },
-    "DeltaNet_Comb_ST_Seq_Len_200-4K_loguniform": {
-        "wandb_run_id": "fla_models/runs/caeqvp6x",
-        "display_name": "DeltaNet Seq Len\n200-4K loguniform",
-    },
     "DeltaNet_Comb_ST_Seq_Len_200-8K_loguniform": {
         "wandb_run_id": "fla_models/runs/r59sudxf",
         "display_name": "DeltaNet Seq Len\n200-8K loguniform",
@@ -128,17 +124,9 @@ DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "fla_models/runs/didft89r",
         "display_name": "DeltaNet Seq Len\n200-16K loguniform",
     },
-    "DeltaNet_Comb_ST_Seq_Len_200-32K_loguniform": {
-        "wandb_run_id": "fla_models/runs/fmudiy3w",
-        "display_name": "DeltaNet Seq Len\n200-32K loguniform",
-    },
     "DeltaNet_Comb_ST_Seq_Len_200-64K_loguniform": {
         "wandb_run_id": "fla_models/runs/9llxebf9",
         "display_name": "DeltaNet Seq Len\n200-64K loguniform",
-    },
-    "DeltaNet_Comb_ST_Seq_Len_200-100K_loguniform": {
-        "wandb_run_id": "fla_models/runs/oh6n51z3",
-        "display_name": "DeltaNet Seq Len\n200-100K loguniform",
     },
     "DeltaNet_Comb_ST_Seq_Len_200-64K_lognormal_dataset_matched": {
         "wandb_run_id": "fla_models/runs/a34treix",
@@ -147,19 +135,31 @@ DELTANET_HIGH_SEQ_LEN_MODELS: dict[str, dict[str, Any]] = {
 }
 
 
-EQUAL_PARAMS_MODELS_RETRAINED: dict[str, dict[str, Any]] = {
-    "equal_params:Transformer_Comb_ST": { # non-causal version
+TWO_AXIS_MODELS: dict[str, dict[str, Any]] = {
+    "equal_params_new:Linear_Attention_Causal_Comb_ST_two_axis": {
+        "display_name": "Causal Linear Attention (Two Axis)",
+        "wandb_run_id": "fla_models/runs/dkyzp2gs",
+    },
+    "equal_params_new:DeltaNet_Comb_ST_two_axis": {
+        "display_name": "DeltaNet (Two Axis)",
+        "wandb_run_id": "fla_models/runs/9inbilyc",
+    },
+}
+
+
+EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
+    "equal_params:Transformer_Comb_ST": {
         "display_name": "Non-Causal Transformer",
         "eval_autocast_dtype": "fp16",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
     },
     "Linear_Attention_Non_Causal": {
-      "wandb_run_id": "linear_attention/runs/83hs69fa",
-      "display_name": "Linear Attention\n(Non-Causal)",
+        "wandb_run_id": "linear_attention/runs/83hs69fa",
+        "display_name": "Linear Attention\n(Non-Causal)",
     },
     "equal_params_new:Linear_Attention_Comb_ST": {
-      "wandb_run_id": "fla_models/runs/743tmxot",
-      "display_name": "Linear Attention\n(Comb_ST)",
+        "wandb_run_id": "fla_models/runs/743tmxot",
+        "display_name": "Linear Attention\n(Comb_ST)",
     },
     "equal_params_new:DeltaNet_Comb_ST": {
         "display_name": "Delta",
@@ -177,91 +177,12 @@ EQUAL_PARAMS_MODELS_RETRAINED: dict[str, dict[str, Any]] = {
         "display_name": "Mamba-2",
         "wandb_run_id": "fla_models/runs/mrqlajz1",
     },
-    "equal_params_new:GLA_Comb_ST_matched_v2": {
-        "display_name": "Gated Linear\nAttention (matched v2)",
-        "wandb_run_id": "fla_models/runs/guhcl3zg",
-    },
-    "equal_params_new:Transformer_Comb_ST_matched_v2": { # non-causal version
-        "display_name": "Non-Causal Transformer (matched v2)",
-        "eval_autocast_dtype": "fp16",
-        "wandb_run_id": "icl_arch/tabpfn_transformer/2sx0des5",
-    },
-    "equal_params_new:Transformer_Comb_ST_Causal_matched_v2": { # causal version
-        "display_name": "Causal Transformer (matched v2)",
-        "eval_autocast_dtype": "fp16",
-        "wandb_run_id": "icl_arch/tabpfn_transformer_masking_experiments/w5ywh97a", # updated
-    },
-    "equal_params_new:Gated_DeltaNet_Comb_ST_matched_v2": {
-        "display_name": "Gated DeltaNet (matched v2)",
-        "wandb_run_id": "fla_models/runs/z51sz4kj",
-    },
-    # Two-axis (row + feature attention) retrainings of the causal backbones.
-    # The `_two_axis` suffix keeps them out of `get_canonical_setting_models`,
-    # which selects only names ending exactly in the setting.
-    "equal_params_new:Linear_Attention_Causal_Comb_ST_two_axis": {
-        "display_name": "Causal Linear Attention (Two Axis)",
-        "wandb_run_id": "fla_models/runs/dkyzp2gs",
-    },
-    "equal_params_new:DeltaNet_Comb_ST_two_axis": {
-        "display_name": "DeltaNet (Two Axis)",
-        "wandb_run_id": "fla_models/runs/9inbilyc",
-    },
-}
-
-EQUAL_PARAMS_MODELS: dict[str, dict[str, Any]] = {
-    "equal_params:Transformer_Comb_ST": { # non-causal version
-        "display_name": "Non-Causal Transformer",
-        "eval_autocast_dtype": "fp16",
-        "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
-    },
-    "equal_params:Linear_Attention_Non_Causal": {
-      "wandb_run_id": "linear_attention/runs/83hs69fa", # new default implementation
-      "display_name": "Linear Attention\n(Non-Causal)",
-    },
-    "equal_params:Linear_Attention_Comb_ST": {
-      "wandb_run_id": "linear_attention/runs/3jq88aqt", # new default implementation
-      "display_name": "Linear Attention\n(Comb_ST)",
-    },
-    "equal_params:DeltaNet_Comb_ST": {
-        "display_name": "Delta",
-        "wandb_run_id": "fla_models/runs/ob2m9rth",
-    },
-    "equal_params:GLA_Comb_ST": {
-        "display_name": "Gated Linear\nAttention",
-        "wandb_run_id": "fla_models/runs/4vsqz1ee",
-    },
-    "equal_params:Gated_DeltaNet_Comb_ST": {
-        "display_name": "Delta Gated",
-        "wandb_run_id": "fla_models/runs/g7rh5nv9",  
-    },
-    "equal_params:Mamba2_Comb_ST": {
-        "display_name": "Mamba-2",
-        "wandb_run_id": "fla_models/runs/o9e00w17",
-    },
 }
 
 TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
-    "Transformer_Non_Causal": {
-        "display_name": "Softmax Attention\nNon-Causal", #"Non-Causal (Default)",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/f1lg4ch9",
-        "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16",
-    },
-    "Transformer_Non_Causal_new": {
-        "display_name": "Softmax Attention\nNon-Causal new", #"Non-Causal (Default)",
-        "wandb_run_id": "tabpfn_transformer/runs/2sx0des5", 
-        "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16",
-    },
     "masked:Transformer_Comb_ST": {
         "display_name": "Softmax Attention\nCausal",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/gex7h68b", 
-        "eval_mode": "forward",
-        "eval_autocast_dtype": "fp16",
-    },
-    "Transformer_Comb_MT": {
-        "display_name": "Softmax Attention (Causal MT)",
-        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/81g04qla",
+        "wandb_run_id": "tabpfn_transformer_masking_experiments/runs/gex7h68b",
         "eval_mode": "forward",
         "eval_autocast_dtype": "fp16",
     },
@@ -270,11 +191,7 @@ TRANSFORMER_MASKED_MODELS: dict[str, dict[str, Any]] = {
 STATE_PASSING_MODELS: dict[str, dict[str, Any]] = {
     "State_Passing_GLA_Comb_ST": {
         "display_name": "GLA with\nState Passing",
-        "wandb_run_id": "fla_models/runs/66hynh1d"
-    },
-    "GLA_Comb_ST": {
-        "display_name": "GLA Combined\nSingle Target",
-        "wandb_run_id": "fla_models/runs/g1ul5lyc",
+        "wandb_run_id": "fla_models/runs/66hynh1d",
     },
     "State_Passing_DeltaNet_Comb_ST": {
         "display_name": "DeltaNet with\nState Passing",
@@ -291,7 +208,7 @@ STATE_PASSING_MODELS: dict[str, dict[str, Any]] = {
 }
 
 ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
-    "equal_params:Transformer_Comb_ST": { # non-causal version
+    "equal_params:Transformer_Comb_ST": {
         "display_name": "Softmax Attention\nNon-Causal",
         "eval_autocast_dtype": "fp16",
         "wandb_run_id": "tabpfn_transformer/runs/nb5hz44b",
@@ -303,17 +220,17 @@ ORACLE_PERFORMANCE_MODELS: dict[str, dict[str, Any]] = {
     "oracles:subsampled:DeltaNet_Comb_ST_3K": {
         "display_name": "DeltaNet\n(Subsampled 3K)",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
-        "subsample_dataset_size": 3_000
+        "subsample_dataset_size": 3_000,
     },
     "oracles:Oracle_Hidden_State_DeltaNet_Comb_ST": {
         **DELTANET_MODELS["DeltaNet_Comb_ST"],
-        "display_name": "Oracle Hidden State", # from deltanet
+        "display_name": "Oracle Hidden State",
         "oracle_hidden_state_baseline": True,
         "oracle_num_epochs": 400,
         "oracle_lr": 3e-3,
         "oracle_weight_decay": 1e-5,
         "oracle_patience": 20,
-        "oracle_query_batch_size": 4000, # increasing or decreasing batch size hurt at seq len 128k
+        "oracle_query_batch_size": 4000,  # tuned for 128k-row contexts
         "oracle_selection_fraction": 0.1,
         "oracle_evaluate_only_max_seqlen": True,
         "oracle_verbose": False,
@@ -352,12 +269,7 @@ SUBSAMPLED_MODELS: dict[str, dict[str, Any]] = {
     "subsampled:DeltaNet_Comb_ST_3K": {
         "display_name": "DeltaNet Comb ST\n(Subsampled 3K)",
         "wandb_run_id": "fla_models/runs/ob2m9rth",
-        "subsample_dataset_size": 3_000
-    },
-    "subsampled:GLA_Comb_ST_3K": {
-        "display_name": "GLA Comb ST\n(Subsampled 3K)",
-        "wandb_run_id": "fla_models/runs/2v2xw7d2",
-        "subsample_dataset_size": 3_000
+        "subsample_dataset_size": 3_000,
     },
 }
 
@@ -366,15 +278,10 @@ MIMETIC_INITIALIZATION_MODELS: dict[str, dict[str, Any]] = {
         "display_name": "GLA",
         "wandb_run_id": "fla_models/runs/2v2xw7d2",
     },
-    "mimetic:GLA_Comb_ST_mimetic_full": {
-        "display_name": "GLA Comb ST (Full Mimetic)",
-        "wandb_run_id": "fla_models/runs/dthrura3",
-    },
     "mimetic:GLA_Comb_ST_mimetic_gate_only": {
         "display_name": "GLA with Mimetic",
         "wandb_run_id": "fla_models/runs/l9lcdj1f",
     },
-    
 }
 
 BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
@@ -383,12 +290,8 @@ BIDIRECTIONAL_MODELS: dict[str, dict[str, Any]] = {
         "wandb_run_id": "icl_arch/fla_models/5rv92df5",
     },
     "Bidirectional_GLA_Comb_ST_mean_output_mean_cache": {
-        "display_name": "Bidirectional GLA ",
+        "display_name": "Bidirectional GLA",
         "wandb_run_id": "icl_arch/fla_models/iw22mtux",
-    },
-    "DeltaNet_Comb_ST_Reference_New": {
-        "display_name": "DeltaNet",
-        "wandb_run_id": "fla_models/runs/tuj1kct1",
     },
 }
 
@@ -402,25 +305,25 @@ NON_CAUSAL_FLA_MODELS: dict[str, dict[str, Any]] = {
     },
     "Non_Causal_DeltaNet": {
         "display_name": "Non-Causal DeltaNet (Comb ST)",
-        "wandb_run_id": "icl_arch/fla_models/dj7xmlsb", # fp32 8cpcrc2e
+        "wandb_run_id": "icl_arch/fla_models/dj7xmlsb",
     },
     "Non_Causal_DeltaNet_loguniform_64K": {
-        "display_name": "Non-Causal DeltaNet loguniform 64K(Comb ST)",
-        "wandb_run_id": "icl_arch/fla_models/p70y8140", # fp32 8cpcrc2e
+        "display_name": "Non-Causal DeltaNet loguniform 64K (Comb ST)",
+        "wandb_run_id": "icl_arch/fla_models/p70y8140",
     },
     "Non_Causal_DeltaNet_online_inverse_eval_only": {
         "display_name": "Non-Causal DeltaNet + Online Inverse LR Decay (Comb ST)",
-        "wandb_run_id": "icl_arch/fla_models/dj7xmlsb", # fp32 8cpcrc2e
+        "wandb_run_id": "icl_arch/fla_models/dj7xmlsb",
         "deltanet_beta_decay": "online_inverse",
         "deltanet_beta_decay_t0": 256,
     },
     "Non_Causal_DeltaNet_with_lr_decay_online_inverse_t0_256": {
         "display_name": "Non-Causal DeltaNet with LR Decay: Online Inverse T0=256 (Comb ST)",
-        "wandb_run_id": "fla_models/runs/feoe37tc", # online_inverse, beta_decay_t0=256
+        "wandb_run_id": "fla_models/runs/feoe37tc",  # online_inverse, beta_decay_t0=256
     },
     "DeltaNet_with_lr_decay_online_inverse_t0_256": {
         "display_name": "DeltaNet with LR Decay: Online Inverse T0=256 (Comb ST)",
-        "wandb_run_id": "fla_models/runs/nw73xsr1", # online_inverse, beta_decay_t0=256
+        "wandb_run_id": "fla_models/runs/nw73xsr1",  # online_inverse, beta_decay_t0=256
     },
     "DeltaNet_Int_MT_12L_no_decay": {
         "display_name": "DeltaNet Int MT 12L (no decay)",
@@ -457,7 +360,7 @@ MODEL_FAMILIES: dict[str, dict[str, dict[str, Any]]] = {
     "mamba2": MAMBA2_MODELS,
     "linear_attention": LINEAR_ATTENTION_MODELS,
     "equal_params": EQUAL_PARAMS_MODELS,
-    "equal_params_new": EQUAL_PARAMS_MODELS_RETRAINED, 
+    "two_axis": TWO_AXIS_MODELS,
     "transformer_masked": TRANSFORMER_MASKED_MODELS,
     "deltanet_high_seq_len": DELTANET_HIGH_SEQ_LEN_MODELS,
     "mimetic_initialization": MIMETIC_INITIALIZATION_MODELS,
@@ -493,10 +396,9 @@ def _copy_model_config_with_display_name(
 
 def functional_model_config(model_config: dict[str, Any]) -> dict[str, Any]:
     return {
-        key: value
-        for key, value in model_config.items()
-        if key not in NON_FUNCTIONAL_CONFIG_KEYS
+        key: value for key, value in model_config.items() if key not in NON_FUNCTIONAL_CONFIG_KEYS
     }
+
 
 def _merge_models_with_conflict_check(
     *,

@@ -268,7 +268,7 @@ def download_model_from_wandb(
                 and local_epoch is not None
                 and (local_epoch == remote_epoch or local_epoch == remote_epoch - 1)
                 and local_file_is_latest
-            ): # can be off by 1 when interupted mid epoch
+            ): # can be off by 1 when interrupted mid epoch
                 print(f"Model at {destination_path} is already up to date (Run ID: {local_run_id}, Epoch: {local_epoch}). Skipping download.")
                 return destination_path
             

@@ -1,8 +1,8 @@
 """
 This module describes the typical distribution output of the output of PFNs.
-In the literature this distribution is reffered to as Riemann, piece-wise constant, discretized continuous, or bar distribution.
+In the literature this distribution is referred to as Riemann, piece-wise constant, discretized continuous, or bar distribution.
 
-The distributions are used to compute all kinds of metrics, including their negative log densities by callling (their forward),
+The distributions are used to compute all kinds of metrics, including their negative log densities by calling (their forward),
 which is the loss used for training.
 """
 

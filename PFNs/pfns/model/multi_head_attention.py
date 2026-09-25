@@ -521,7 +521,7 @@ class MultiHeadAttention(torch.nn.Module):
             if kv_cache is not None:
                 if kv_cache.shape[-2] == 1:
                     # we are in the case where only the first head kv is cached
-                    # that is the case when we only neeed that for inference
+                    # that is the case when we only need that for inference
                     kv_cache[:] = kv_for_cache[..., :1, :]
                 else:
                     kv_cache[:] = kv_for_cache
