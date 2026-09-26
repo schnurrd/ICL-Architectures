@@ -43,7 +43,15 @@ def _apply_deltanet_beta_decay(
     t0: int,
     start_position: int | torch.Tensor = 0,
     position_dim: int = 1,
+    tokens_per_step: int = 1,
 ) -> torch.Tensor:
+    """Scale beta by the write-rate decay schedule c / (c + step).
+
+    `start_position` counts decay steps (examples) already consumed, and
+    `tokens_per_step` is how many consecutive tokens share one step. For an
+    interleaved x/y stream, tokens_per_step=2 holds the schedule fixed across each
+    feature token and the target token that follows it.
+    """
     mode = _normalize_deltanet_beta_decay(mode)
     if mode == "none":
         return beta
@@ -51,6 +59,10 @@ def _apply_deltanet_beta_decay(
         raise AssertionError(f"Unhandled deltanet_beta_decay mode: {mode!r}.")
     if t0 <= 0:
         raise ValueError(f"deltanet_beta_decay_t0 must be > 0, got {t0}.")
+    if tokens_per_step < 1:
+        raise ValueError(
+            f"deltanet_beta_decay_tokens_per_step must be >= 1, got {tokens_per_step}."
+        )
     if beta.ndim == 0:
         raise ValueError(
             "deltanet beta decay expects beta to have at least one dimension."
@@ -64,7 +76,10 @@ def _apply_deltanet_beta_decay(
     seq_len = beta.shape[position_dim]
     shape = [1] * beta.ndim
     shape[position_dim] = seq_len
-    positions = torch.arange(seq_len, device=beta.device, dtype=torch.float32).view(shape)
+    steps = torch.arange(seq_len, device=beta.device, dtype=torch.long)
+    if tokens_per_step > 1:
+        steps = torch.div(steps, tokens_per_step, rounding_mode="floor")
+    positions = steps.to(torch.float32).view(shape)
 
     if isinstance(start_position, torch.Tensor):
         start_position = start_position.to(device=beta.device, dtype=torch.float32)
@@ -96,6 +111,7 @@ def _deltanet_beta_decay_patch(
     mode: str | None,
     t0: int,
     start_position: int | torch.Tensor = 0,
+    tokens_per_step: int = 1,
 ) -> tp.Callable[..., tuple[torch.Tensor, torch.Tensor | None]]:
     mode = _normalize_deltanet_beta_decay(mode)
     if mode == "none":
@@ -116,6 +132,7 @@ def _deltanet_beta_decay_patch(
                 mode=mode,
                 t0=t0,
                 start_position=start_position,
+                tokens_per_step=tokens_per_step,
             )
 
         if len(args) > 3:
@@ -360,151 +377,6 @@ def _maybe_patch_gla_with_stateless_recurrent(
         gla_layer.fused_chunk_gla = original_fused_chunked
 
 
-@contextmanager
-def _maybe_patch_kda_with_stateless_recurrent(
-    enabled: bool,
-    *,
-    include_self_term: bool = True,
-    final_state_readout: bool = False,
-):
-    if not enabled and not final_state_readout:
-        yield
-        return
-    import fla.layers.kda as kda_layer
-
-    original_fused_recurrent_kda = kda_layer.fused_recurrent_kda
-    original_chunk_kda = kda_layer.chunk_kda
-
-    @torch.compiler.disable
-    def _stateless_kda_kernel(
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        g: torch.Tensor | None = None,
-        beta: torch.Tensor | None = None,
-        scale: float | None = None,
-        initial_state: torch.Tensor | None = None,
-        output_final_state: bool = False,
-        reverse: bool = False,
-        cu_seqlens: torch.LongTensor | None = None,
-        use_qk_l2norm_in_kernel: bool = False,
-        use_gate_in_kernel: bool = False,
-        A_log: torch.Tensor | None = None,
-        dt_bias: torch.Tensor | None = None,
-        **kwargs: tp.Any,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        assert not kwargs, f"Unsupported extra args: {sorted(kwargs)}"
-        assert g is not None, "g is required for stateless_kda."
-        assert beta is not None, "beta is required for stateless_kda."
-        assert initial_state is not None, "stateless mode requires an initial_state."
-        assert not reverse, "stateless_kda does not support reverse processing."
-        assert cu_seqlens is None, "stateless_kda does not support cu_seqlens."
-        assert output_final_state is False, (
-            "output_final_state must be False in stateless_kda patch."
-        )
-        assert q.shape[1] == 1, "stateless_kda patch only supports decode-like T=1."
-
-        scale = k.shape[-1] ** -0.5 if scale is None else scale
-        dtype = q.dtype
-        
-        q, k, v, g, beta = (t.float() for t in (q, k, v, g, beta))
-        s0 = initial_state.float() # (B_cache, H, K, V)
-
-        orig_batch = q.shape[0]
-        cache_batch = s0.shape[0]
-
-        if orig_batch != cache_batch:
-            assert orig_batch % cache_batch == 0, "orig_batch must be divisible by cache_batch."
-            flat_len = orig_batch // cache_batch
-            
-            T = q.shape[1]
-            q = q.reshape(cache_batch, flat_len, T, *q.shape[2:])
-            k = k.reshape(cache_batch, flat_len, T, *k.shape[2:])
-            v = v.reshape(cache_batch, flat_len, T, *v.shape[2:])
-            g = g.reshape(cache_batch, flat_len, T, *g.shape[2:])
-            beta = beta.reshape(cache_batch, flat_len, T, *beta.shape[2:])
-
-        # Use FLA's l2norm to match the original kernel's normalization and don't fail tests
-        if use_qk_l2norm_in_kernel:
-            q = l2norm(q)
-            if not final_state_readout:
-                k = l2norm(k)
-
-        if final_state_readout:
-            return _read_from_final_kv_state(
-                q,
-                s0,
-                scale=scale,
-                output_final_state=False,
-                flatten_batch=orig_batch if orig_batch != cache_batch else None,
-                output_dtype=dtype,
-            )
-
-        q = q * scale
-
-        if use_gate_in_kernel and A_log is not None:
-            if dt_bias is not None:
-                 H, K = q.shape[-2], q.shape[-1]
-                 if dt_bias.ndim == 1 and dt_bias.numel() == H * K:
-                     dt_bias = dt_bias.view(H, K)
-            
-            A = A_log.exp().view(1, 1, -1, 1) # (1, 1, H, 1)
-            bias = dt_bias.view(1, 1, *dt_bias.shape) if dt_bias is not None else 0.0
-            
-            if g.ndim == 5:
-                A = A.unsqueeze(0)
-                if isinstance(bias, torch.Tensor):
-                    bias = bias.unsqueeze(0)
-
-            g = -A * F.softplus(g + bias)
-
-        g_exp = g.exp()
-        if g_exp.ndim == q.ndim - 1:
-            g_exp = g_exp.unsqueeze(-1)
-        q_decayed = q * g_exp
-        o_base = _read_kv_state(q_decayed, s0)
-
-        k_decayed = k * g_exp
-        k_s0 = _read_kv_state(k_decayed, s0)
-            
-        o = o_base
-        if include_self_term:
-            delta = v - k_s0
-            qk_dot = (q * k).sum(dim=-1, keepdim=True) # (..., H, 1)
-            scaling = beta.unsqueeze(-1) * qk_dot      # (..., H, 1)
-            o = o + delta * scaling
-
-        if orig_batch != cache_batch:
-            o = o.reshape(orig_batch, *o.shape[2:])
-
-        return o.to(dtype), None
-
-    if enabled:
-        kda_layer.fused_recurrent_kda = _stateless_kda_kernel
-        kda_layer.chunk_kda = _stateless_kda_kernel
-    else:
-        kda_layer.fused_recurrent_kda = _final_state_patch(
-            original_fused_recurrent_kda,
-        )
-        kda_layer.chunk_kda = _final_state_patch(
-            _adapt_to_recurrent_kernel(
-                original_fused_recurrent_kda,
-                drop=(
-                    "cu_seqlens_cpu",
-                    "safe_gate",
-                    "disable_recompute",
-                    "return_intermediate_states",
-                    "cp_context",
-                ),
-            ),
-        )
-    try:
-        yield
-    finally:
-        kda_layer.fused_recurrent_kda = original_fused_recurrent_kda
-        kda_layer.chunk_kda = original_chunk_kda
-
-
 def _read_from_final_kv_state(
     q: torch.Tensor,
     recurrent_state: torch.Tensor,
@@ -616,6 +488,7 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
     beta_decay: str | None = "none",
     beta_decay_t0: int = 1000,
     beta_decay_start: int | torch.Tensor = 0,
+    beta_decay_tokens_per_step: int = 1,
 ):
     beta_decay = _normalize_deltanet_beta_decay(beta_decay)
     if not enabled and not final_state_readout and beta_decay == "none":
@@ -630,12 +503,14 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
         mode=beta_decay,
         t0=beta_decay_t0,
         start_position=beta_decay_start,
+        tokens_per_step=beta_decay_tokens_per_step,
     )
     decay_chunk_delta_rule = _deltanet_beta_decay_patch(
         original_chunk_delta_rule,
         mode=beta_decay,
         t0=beta_decay_t0,
         start_position=beta_decay_start,
+        tokens_per_step=beta_decay_tokens_per_step,
     )
 
     @torch.compiler.disable
@@ -698,6 +573,7 @@ def _maybe_patch_deltanet_with_stateless_recurrent(
             mode=beta_decay,
             t0=beta_decay_t0,
             start_position=beta_decay_start,
+            tokens_per_step=beta_decay_tokens_per_step,
         )
 
         q = q * scale
@@ -873,149 +749,6 @@ def _maybe_patch_gated_deltanet_with_stateless_recurrent(
     finally:
         gated_deltanet_layer.fused_recurrent_gated_delta_rule = original_fused
         gated_deltanet_layer.chunk_gated_delta_rule = original_chunk
-
-
-@contextmanager
-def _maybe_patch_mesanet_with_stateless_recurrent(
-    enabled: bool,
-    *,
-    include_self_term: bool = True,
-):
-    if not enabled:
-        yield
-        return
-    import fla.layers.mesa_net as mesa_net_layer
-
-    original_forward = mesa_net_layer.MesaNet.forward
-
-    @torch.compiler.disable
-    def _stateless_forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
-        past_key_values=None,
-        use_cache: bool | None = False,
-        output_attentions: bool | None = False,
-        **kwargs: tp.Any,
-    ) -> tuple[torch.Tensor, torch.Tensor | None, tp.Any]:
-        del use_cache
-        assert output_attentions in (None, False), (
-            "stateless MesaNet patch does not support output_attentions=True."
-        )
-        assert attention_mask is None, (
-            "stateless MesaNet patch does not support attention_mask."
-        )
-        assert not kwargs, (
-            f"Unsupported extra args for stateless MesaNet patch: {sorted(kwargs)}"
-        )
-
-        last_state = mesa_net_layer.get_layer_cache(self, past_key_values)
-        if last_state is None:
-            return original_forward(
-                self,
-                hidden_states=hidden_states,
-                attention_mask=attention_mask,
-                past_key_values=past_key_values,
-                use_cache=False,
-                output_attentions=output_attentions,
-            )
-
-        batch_size, seq_len, _ = hidden_states.shape
-        assert seq_len == 1, (
-            "stateless MesaNet patch only supports decode-like seq_len=1."
-        )
-
-        conv_state_q, conv_state_k = last_state["conv_state"]
-        q, _ = self.q_conv1d(
-            x=self.q_proj(hidden_states),
-            cache=conv_state_q,
-            output_final_state=False,
-            cu_seqlens=None,
-        )
-        k, _ = self.k_conv1d(
-            x=self.k_proj(hidden_states),
-            cache=conv_state_k,
-            output_final_state=False,
-            cu_seqlens=None,
-        )
-        v = self.v_proj(hidden_states)
-
-        q = q.reshape(batch_size, seq_len, self.num_heads, self.head_k_dim)
-        k = k.reshape(batch_size, seq_len, self.num_heads, self.head_k_dim)
-        v = v.reshape(batch_size, seq_len, self.num_heads, self.head_v_dim)
-        beta = self.b_proj(hidden_states).float().sigmoid()
-        g = F.logsigmoid(self.a_proj(hidden_states).float())
-        lamb = F.softplus(self.lambda_params.float()) + self.lambda_lower_bound
-        lamb = lamb.reshape(self.num_heads, self.head_k_dim)
-
-        prev_h_kk, prev_h_kv = last_state["recurrent_state"]
-        assert prev_h_kk is not None and prev_h_kv is not None, (
-            "stateless MesaNet patch requires recurrent_state in the cache."
-        )
-
-        dtype = q.dtype
-        q = mesa_net_layer.l2_norm(q).float().squeeze(1)
-        k = mesa_net_layer.l2_norm(k).float().squeeze(1)
-        v = v.float().squeeze(1)
-        beta = beta.float().squeeze(1)
-        g = g.float().squeeze(1)
-        prev_h_kk = prev_h_kk.float()
-        prev_h_kv = prev_h_kv.float()
-
-        cache_batch = prev_h_kk.shape[0]
-        assert batch_size % cache_batch == 0, (
-            "MesaNet stateless patch expects batch_size to be divisible by cache batch size."
-        )
-        flat_len = batch_size // cache_batch
-
-        q = q.reshape(cache_batch, flat_len, self.num_heads, self.head_k_dim)
-        k = k.reshape(cache_batch, flat_len, self.num_heads, self.head_k_dim)
-        v = v.reshape(cache_batch, flat_len, self.num_heads, self.head_v_dim)
-        beta = beta.reshape(cache_batch, flat_len, self.num_heads)
-        g = g.reshape(cache_batch, flat_len, self.num_heads)
-
-        decay = g.exp().unsqueeze(-1).unsqueeze(-1)
-        k_beta = k * beta.unsqueeze(-1)
-        h_kk = prev_h_kk.unsqueeze(1) * decay
-        h_kv = prev_h_kv.unsqueeze(1) * decay
-        if include_self_term:
-            h_kk = h_kk + k_beta.unsqueeze(-1) * k.unsqueeze(-2)
-            h_kv = h_kv + k_beta.unsqueeze(-1) * v.unsqueeze(-2)
-
-        lamb = lamb.view(1, 1, self.num_heads, self.head_k_dim)
-        diag_h = torch.diagonal(h_kk, dim1=-2, dim2=-1)
-        x = q / (diag_h + lamb)
-        residual = q - (x.unsqueeze(-1) * h_kk).sum(-2) - lamb * x
-        direction = residual.clone()
-        delta_old = (residual * residual).sum(-1)
-
-        for _ in range(self.max_cg_step_decoding):
-            q_cg = (direction.unsqueeze(-1) * h_kk).sum(-2) + lamb * direction
-            alpha = delta_old / ((direction * q_cg).sum(-1) + 1e-5)
-            x = x + alpha.unsqueeze(-1) * direction
-            residual = residual - alpha.unsqueeze(-1) * q_cg
-            delta_new = (residual * residual).sum(-1)
-            beta_cg = delta_new / (delta_old + 1e-5)
-            direction = residual + beta_cg.unsqueeze(-1) * direction
-            delta_old = delta_new
-
-        o = (x.unsqueeze(-1) * h_kv).sum(-2)
-        o = o.reshape(batch_size, 1, self.num_heads, self.head_v_dim).to(dtype)
-
-        if self.use_output_gate:
-            gate = self.g_proj(hidden_states).reshape(batch_size, seq_len, self.num_heads, self.head_v_dim)
-            o = self.o_norm(o, gate)
-        else:
-            o = self.o_norm(o)
-        o = o.reshape(batch_size, seq_len, self.value_dim)
-        o = self.o_proj(o)
-        return o, None, past_key_values
-
-    mesa_net_layer.MesaNet.forward = _stateless_forward
-    try:
-        yield
-    finally:
-        mesa_net_layer.MesaNet.forward = original_forward
 
 
 @contextmanager

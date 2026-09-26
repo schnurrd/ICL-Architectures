@@ -86,7 +86,7 @@ def parse_cli_args():
         default=None,
         help=(
             "Optional exact model names to evaluate. "
-            "Example: --models Softmax_Transformer Rebased"
+            "Example: --models equal_params:Transformer_Comb_ST equal_params_new:DeltaNet_Comb_ST"
         ),
     )
     parser.add_argument(
@@ -185,9 +185,8 @@ print(
 # models_to_compare = get_models_from_families(["transformer"])
 
 # models_to_compare = get_models_from_names([
-#     "Softmax_Transformer",
-#     "Rebased",
-#     "Linear_Attention",
+#     "equal_params:Transformer_Comb_ST",
+#     "equal_params_new:DeltaNet_Comb_ST",
 # ])
 
 if CLI_ARGS.models:
@@ -354,4 +353,5 @@ for model_name, model_config in models_to_compare.items():
                 "run_metadata": model_results.get("metadata", {}),
             },
         )
-        print(f"Uploaded per-model artifact for {model_name}: {artifact_ref}")
+        if artifact_ref is not None:
+            print(f"Uploaded per-model artifact for {model_name}: {artifact_ref}")

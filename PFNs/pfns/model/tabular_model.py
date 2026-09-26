@@ -785,9 +785,9 @@ class TabularModel(nn.Module):
 
         if torch.isnan(embedded_input).any():
             raise ValueError(
-                f"There should be no NaNs in the encoded x and y."
-                "Check that you do not feed NaNs or use a NaN-handling enocder."
-                "Your embedded x and y returned the following:"
+                f"There should be no NaNs in the encoded x and y. "
+                "Check that you do not feed NaNs or use a NaN-handling encoder. "
+                "Your embedded x and y returned the following: "
                 f"{torch.isnan(embedded_x).any()=} | {torch.isnan(embedded_y).any()=}",
             )
         del embedded_y, embedded_x
@@ -1005,7 +1005,7 @@ class TabularModel(nn.Module):
 
 class LayerStack(nn.Module):
     """Same as nn.Sequential, but with support for passing keyword arguments
-    to layers and stacks the same layer multiple times, which is passed as creater function.
+    to layers and stacks the same layer multiple times, which is passed as creator function.
 
     This is used as transformer encoder and decoder.
     """

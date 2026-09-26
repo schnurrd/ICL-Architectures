@@ -295,7 +295,7 @@ def lambda_time(f, name="", enabled=True):
 
 def pretty_get_batch(get_batch):
     """
-    Genereate string representation of get_batch function
+    Generate string representation of get_batch function
     :param get_batch:
     :return:
     """
@@ -310,7 +310,7 @@ class get_batch_sequence(list):
     This will call the get_batch_methods in order from the back and pass the previous as `get_batch` kwarg.
     For example for `get_batch_methods=[get_batch_1, get_batch_2, get_batch_3]` this will produce a call
     equivalent to `get_batch_3(*args,get_batch=partial(partial(get_batch_2),get_batch=get_batch_1,**kwargs))`.
-    get_batch_methods: all priors, but the first, muste have a `get_batch` argument
+    get_batch_methods: all priors, but the first, must have a `get_batch` argument
     """
 
     def __init__(self, *get_batch_methods):

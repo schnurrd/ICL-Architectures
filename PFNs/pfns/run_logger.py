@@ -212,8 +212,17 @@ def download_model_from_wandb(
     import tempfile
     
     print(f"Attempting to download model from wandb run: {run_path}")
-    api = wandb.Api()
-    run = api.run(run_path)
+    try:
+        api = wandb.Api()
+        run = api.run(run_path)
+    except Exception as err:
+        raise RuntimeError(
+            f"Could not access the checkpoint of W&B run {run_path!r}. The trained "
+            "checkpoints are not part of this release. Train the model with "
+            "PFNs/pfns/run_training_cli.py (see the README) and point its entry in "
+            "model_registry.py at the local checkpoint by replacing 'wandb_run_id' "
+            "with 'base_path': '<checkpoint directory>'."
+        ) from err
     
     if destination_path is None:
         run_id = run_path.rstrip("/").split("/")[-1]
@@ -259,7 +268,7 @@ def download_model_from_wandb(
                 and local_epoch is not None
                 and (local_epoch == remote_epoch or local_epoch == remote_epoch - 1)
                 and local_file_is_latest
-            ): # can be off by 1 when interupted mid epoch
+            ): # can be off by 1 when interrupted mid epoch
                 print(f"Model at {destination_path} is already up to date (Run ID: {local_run_id}, Epoch: {local_epoch}). Skipping download.")
                 return destination_path
             

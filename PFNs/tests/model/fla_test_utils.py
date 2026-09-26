@@ -16,7 +16,7 @@ def _filter_model_types(model_types: tuple[str, ...]) -> tuple[str, ...]:
 
 
 FLA_MODEL_TYPES = _filter_model_types(
-    ("gla", "kda", "deltanet", "gated_deltanet", "mamba2", "linear_attn", "mesanet")
+    ("gla", "deltanet", "gated_deltanet", "mamba2", "linear_attn")
 )
 
 
@@ -67,17 +67,6 @@ def fla_model_config_kwargs(
             "num_heads": num_heads,
             "use_cache": True,
         }
-    if model_type == "kda":
-        return {
-            "hidden_size": hidden_size,
-            "num_hidden_layers": num_layers,
-            "num_heads": num_heads,
-            "intermediate_size": intermediate_size,
-            "hidden_act": "swish",
-            "norm_eps": 1e-5,
-            "use_cache": True,
-            "use_short_conv": True,
-        }
     if model_type == "deltanet":
         return {
             "hidden_size": hidden_size,
@@ -116,20 +105,6 @@ def fla_model_config_kwargs(
             "norm_eps": 1e-5,
             "use_cache": True,
         }
-    if model_type == "mesanet":
-        return {
-            "attn_mode": "chunk",
-            "hidden_size": hidden_size,
-            "num_hidden_layers": num_layers,
-            "num_heads": num_heads,
-            "head_dim": hidden_size // num_heads,
-            "intermediate_size": intermediate_size,
-            "hidden_act": "swish",
-            "norm_eps": 1e-5,
-            "use_output_gate": False,
-            "use_short_conv": True,
-            "use_cache": True,
-        }
     raise ValueError(f"Unsupported model_type: {model_type}")
 
 
@@ -140,13 +115,13 @@ def fla_tolerances(
 ) -> tuple[float, float]:
     if model_type in {"deltanet", "mamba2"}:
         return 1e-3, 1e-3
-    if model_type in {"kda", "gated_deltanet", "mesanet"}:
+    if model_type == "gated_deltanet":
         return 1e-4, 1e-4
     return default
 
 
 def fla_cache_equivalence_tolerances(model_type: str) -> tuple[float, float]:
-    if model_type in {"kda", "deltanet", "gated_deltanet", "mamba2", "mesanet"}:
+    if model_type in {"deltanet", "gated_deltanet", "mamba2"}:
         return 1e-4, 1e-4
     return 1e-6, 1e-6
 
@@ -170,6 +145,7 @@ def build_fla_backbone(
     final_state_readout: bool = False,
     deltanet_beta_decay: str = "none",
     deltanet_beta_decay_t0: int = 1000,
+    deltanet_beta_decay_tokens_per_step: int = 1,
     train: bool = False,
 ) -> torch.nn.Module:
     from pfns.model.backbones import FLABackboneConfig
@@ -193,6 +169,7 @@ def build_fla_backbone(
         final_state_readout=bool(final_state_readout),
         deltanet_beta_decay=deltanet_beta_decay,
         deltanet_beta_decay_t0=deltanet_beta_decay_t0,
+        deltanet_beta_decay_tokens_per_step=deltanet_beta_decay_tokens_per_step,
     )
     ninp = int(kwargs["hidden_size"])
     backbone = config.create_backbone(ninp=ninp, attention_between_features=False)
