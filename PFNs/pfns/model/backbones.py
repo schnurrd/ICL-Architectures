@@ -18,11 +18,9 @@ from torch.utils.checkpoint import checkpoint
 
 from fla.models import GLAConfig, GLAModel
 from fla.models import Mamba2Config, Mamba2Model
-from fla.models import KDAConfig, KDAModel
 from fla.models import DeltaNetConfig, DeltaNetModel
 from fla.models import GatedDeltaNetConfig, GatedDeltaNetModel
 from fla.models import LinearAttentionConfig, LinearAttentionModel
-from fla.models import MesaNetConfig, MesaNetModel
 from fla.models.utils import Cache as FLACache
 
 from pfns import base_config
@@ -30,10 +28,8 @@ from pfns.model.fla_mimetic_init import MimeticInitMode, apply_mimetic_fla_init
 from pfns.model.fla_patches import (
     DELTANET_BETA_DECAY_MODES,
     _maybe_patch_gla_with_stateless_recurrent,
-    _maybe_patch_kda_with_stateless_recurrent,
     _maybe_patch_deltanet_with_stateless_recurrent,
     _maybe_patch_gated_deltanet_with_stateless_recurrent,
-    _maybe_patch_mesanet_with_stateless_recurrent,
     _maybe_patch_mamba2_with_stateless_recurrent,
     _maybe_patch_linear_attn_with_stateless_recurrent,
     _maybe_patch_shortconv_forward_pytorch,
@@ -74,17 +70,15 @@ from pfns.model.fla_cache_utils import (
     shallow_copy as _shallow_copy_fla,
 )
 
-from pfns.model.based_linear_attention import BasedLinearAttention
+from pfns.model.two_axis_layer import TwoAxisLayer
 from pfns.model.tabular_model import LayerStack
 # Registry mapping model types to their config and model classes
 FLA_MODEL_REGISTRY = {
     "gla": (GLAConfig, GLAModel),
     "mamba2": (Mamba2Config, Mamba2Model),
-    "kda": (KDAConfig, KDAModel),
     "deltanet": (DeltaNetConfig, DeltaNetModel),
     "gated_deltanet": (GatedDeltaNetConfig, GatedDeltaNetModel),
     "linear_attn": (LinearAttentionConfig, LinearAttentionModel),
-    "mesanet": (MesaNetConfig, MesaNetModel),
 }
 
 FLA_SEQUENCE_MODES = set(CANONICAL_SEQUENCE_MODES)
@@ -92,7 +86,6 @@ FLA_SPLIT_SEQUENCE_MODES = {"Comb_ST", "Int_ST"}
 FINAL_STATE_READOUT_FLA_MODELS = {
     "linear_attn",
     "gla",
-    "kda",
     "deltanet",
     "gated_deltanet",
 }
@@ -372,7 +365,7 @@ class FLABackboneConfig(BackboneConfig):
     """Configuration for Flash Linear Attention (FLA) based backbones."""
 
     model_type: tp.Literal[
-        "gla", "mamba2", "kda", "deltanet", "gated_deltanet", "linear_attn", "mesanet"
+        "gla", "mamba2", "deltanet", "gated_deltanet", "linear_attn"
     ] = "linear_attn"
     config_kwargs: dict[str, tp.Any] | None = None
     sequence_mode: tp.Literal["Comb_ST", "Int_ST", "Comb_MT", "Int_MT"] = "Comb_ST"
@@ -390,6 +383,8 @@ class FLABackboneConfig(BackboneConfig):
         "online_inverse",
     ] = "none"
     deltanet_beta_decay_t0: int = 1000
+    # Tokens that share one decay step; 2 for interleaved x/y pairs (Int_* modes).
+    deltanet_beta_decay_tokens_per_step: int = 1
     mimetic_init: bool = False
     mimetic_init_layer_indices: tuple[int, ...] | list[int] | None = None
     mimetic_init_mode: MimeticInitMode = "gate_only"
@@ -458,6 +453,12 @@ class FLABackboneConfig(BackboneConfig):
                 raise ValueError("deltanet_beta_decay does not support state_passing.")
             if self.deltanet_beta_decay_t0 <= 0:
                 raise ValueError("deltanet_beta_decay_t0 must be > 0.")
+        if self.deltanet_beta_decay_tokens_per_step < 1:
+            raise ValueError("deltanet_beta_decay_tokens_per_step must be >= 1.")
+        if self.deltanet_beta_decay_tokens_per_step > 1 and self.deltanet_beta_decay == "none":
+            raise ValueError(
+                "deltanet_beta_decay_tokens_per_step > 1 requires deltanet_beta_decay != 'none'."
+            )
         if self.state_weaving:
             if self.sequence_mode != "Comb_ST":
                 raise ValueError("state_weaving currently supports only sequence_mode='Comb_ST'.")
@@ -516,6 +517,9 @@ class FLABackboneConfig(BackboneConfig):
             backbone_kwargs["final_state_readout"] = self.final_state_readout
             backbone_kwargs["deltanet_beta_decay"] = self.deltanet_beta_decay
             backbone_kwargs["deltanet_beta_decay_t0"] = self.deltanet_beta_decay_t0
+            backbone_kwargs["deltanet_beta_decay_tokens_per_step"] = (
+                self.deltanet_beta_decay_tokens_per_step
+            )
 
         return backbone_cls(**backbone_kwargs)
 
@@ -525,12 +529,10 @@ class FLABackbone(Backbone):
 
     _CUSTOM_RECURRENT_MODELS: tuple[type[nn.Module], ...] = (
         GLAModel,
-        KDAModel,
         DeltaNetModel,
         GatedDeltaNetModel,
         Mamba2Model,
         LinearAttentionModel,
-        MesaNetModel,
     )
 
     def __init__(
@@ -545,6 +547,7 @@ class FLABackbone(Backbone):
         final_state_readout: bool = False,
         deltanet_beta_decay: str = "none",
         deltanet_beta_decay_t0: int = 1000,
+        deltanet_beta_decay_tokens_per_step: int = 1,
     ):
         super().__init__()
         self.fla = fla_model.model if hasattr(fla_model, "model") else fla_model
@@ -557,6 +560,7 @@ class FLABackbone(Backbone):
         self.final_state_readout = bool(final_state_readout)
         self.deltanet_beta_decay = str(deltanet_beta_decay)
         self.deltanet_beta_decay_t0 = int(deltanet_beta_decay_t0)
+        self.deltanet_beta_decay_tokens_per_step = int(deltanet_beta_decay_tokens_per_step)
         self.state_weaving = bool(state_weaving)
         self.state_passing = (
             FLAStatePassing(dropout_prob=state_passing_dropout)
@@ -805,18 +809,8 @@ class FLABackbone(Backbone):
         use_custom_recurrent: bool = False,
         use_custom_shortconv: bool = False,
         deltanet_beta_decay_start: int | torch.Tensor = 0,
+        deltanet_beta_decay_tokens_per_step: int | None = None,
     ) -> tuple[torch.Tensor, tp.Any | None]:
-        if (
-            cache_params is not None
-            and isinstance(self.fla, MesaNetModel)
-            and not use_custom_recurrent
-        ):
-            return self._run_mesanet_with_initial_cache(
-                x,
-                cache_params=cache_params,
-                return_cache=return_cache,
-            )
-
         if cache_params is not None and return_cache and use_custom_recurrent:
             raise ValueError(
                 "Custom stateless recurrent FLA patches do not support returning "
@@ -843,6 +837,7 @@ class FLABackbone(Backbone):
                     use_custom_recurrent=use_custom_recurrent,
                     use_custom_shortconv=use_custom_shortconv,
                     deltanet_beta_decay_start=deltanet_beta_decay_start,
+                    deltanet_beta_decay_tokens_per_step=deltanet_beta_decay_tokens_per_step,
                 ):
                     stack.enter_context(ctx)
                 out = self.fla(**kwargs)
@@ -853,40 +848,12 @@ class FLABackbone(Backbone):
 
         return self._unpack_fla_output(out, return_cache=return_cache)
 
-    def _run_mesanet_with_initial_cache(
-        self,
-        x: torch.Tensor,
-        *,
-        cache_params: tp.Any,
-        return_cache: bool,
-    ) -> tuple[torch.Tensor, tp.Any | None]:
-        if x.numel() == 0:
-            return x, (self._copy_cache(cache_params) if return_cache else None)
-
-        current_cache = self._copy_cache(cache_params)
-        outputs = []
-        for t in range(x.size(1)):
-            step_x = x[:, t : t + 1, :].transpose(0, 1).contiguous()
-            out = self.fla(
-                inputs_embeds=step_x,
-                past_key_values=current_cache,
-                use_cache=True,
-                return_dict=True,
-            )
-            last_hidden_state, current_cache = self._unpack_fla_output(
-                out,
-                return_cache=True,
-                model_name="MesaNet",
-            )
-            outputs.append(last_hidden_state.transpose(0, 1))
-
-        return torch.cat(outputs, dim=1), (current_cache if return_cache else None)
-
     def _patch_contexts(
         self, 
         use_custom_recurrent: bool,
         use_custom_shortconv : bool = False,
         deltanet_beta_decay_start: int | torch.Tensor = 0,
+        deltanet_beta_decay_tokens_per_step: int | None = None,
     ) -> tp.Iterable[tp.ContextManager[tp.Any]]:
         """
         Get context managers for patching FLA model behavior. 
@@ -903,10 +870,8 @@ class FLABackbone(Backbone):
             ...,
         ] = (
             (GLAModel, _maybe_patch_gla_with_stateless_recurrent),
-            (KDAModel, _maybe_patch_kda_with_stateless_recurrent),
             (DeltaNetModel, _maybe_patch_deltanet_with_stateless_recurrent),
             (GatedDeltaNetModel, _maybe_patch_gated_deltanet_with_stateless_recurrent),
-            (MesaNetModel, _maybe_patch_mesanet_with_stateless_recurrent),
             (Mamba2Model, _maybe_patch_mamba2_with_stateless_recurrent),
             (LinearAttentionModel, _maybe_patch_linear_attn_with_stateless_recurrent),
         )
@@ -928,6 +893,11 @@ class FLABackbone(Backbone):
                     extra_kwargs["beta_decay"] = self.deltanet_beta_decay
                     extra_kwargs["beta_decay_t0"] = self.deltanet_beta_decay_t0
                     extra_kwargs["beta_decay_start"] = deltanet_beta_decay_start
+                    extra_kwargs["beta_decay_tokens_per_step"] = (
+                        self.deltanet_beta_decay_tokens_per_step
+                        if deltanet_beta_decay_tokens_per_step is None
+                        else int(deltanet_beta_decay_tokens_per_step)
+                    )
                 contexts.append(
                     ctx_factory(
                         use_custom_recurrent,
@@ -945,6 +915,9 @@ class FLABackbone(Backbone):
         if hasattr(cache_params, "get_seq_length"):
             return int(cache_params.get_seq_length(0))
         return 0
+
+    def _beta_decay_steps_in_cache(self, cache_seq_length: int) -> int:
+        return int(cache_seq_length) // self.deltanet_beta_decay_tokens_per_step
 
     def _run_test_with_cache(
         self,
@@ -984,37 +957,23 @@ class FLABackbone(Backbone):
             else:
                 expanded_cache = cache_params
             chunk_flat = chunk_x.contiguous().view(batch_size * chunk_len, 1, embed_dim)
-            beta_decay_start: int | torch.Tensor = cache_seq_length + chunk_start
-            if (
-                self.deltanet_beta_decay != "none"
-                and isinstance(self.fla, DeltaNetModel)
-                and use_custom_recurrent
-                and supports_custom_recurrent
-            ):
-                beta_decay_start = torch.arange(
-                    cache_seq_length + chunk_start,
-                    cache_seq_length + chunk_start + chunk_len,
-                    device=chunk_x.device,
-                )
+            # The stateless kernels see each chunk as one sequence per batch row, so
+            # test token i is decayed at position steps_in_cache + chunk_start + i.
             output, _ = self._run_fla(
                 chunk_flat,
                 cache_params=expanded_cache,
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
-                deltanet_beta_decay_start=beta_decay_start,
+                deltanet_beta_decay_start=(
+                    self._beta_decay_steps_in_cache(cache_seq_length) + chunk_start
+                ),
+                deltanet_beta_decay_tokens_per_step=1,
             )
             output = output.view(batch_size, chunk_len, embed_dim)
             return output
 
         effective_cache_chunk_size = self.cache_chunk_size
-        if (
-            effective_cache_chunk_size is None
-            and use_custom_recurrent
-            and isinstance(self.fla, MesaNetModel)
-            and seq_len > 128
-        ):
-            effective_cache_chunk_size = 128
 
         if effective_cache_chunk_size is None or seq_len <= effective_cache_chunk_size:
             return _run_parallel_chunk(test_x, chunk_start=0)
@@ -1051,7 +1010,10 @@ class FLABackbone(Backbone):
                 return_cache=False,
                 use_custom_recurrent=use_custom_recurrent,
                 use_custom_shortconv=use_custom_shortconv,
-                deltanet_beta_decay_start=cache_seq_length + t,
+                deltanet_beta_decay_start=(
+                    self._beta_decay_steps_in_cache(cache_seq_length) + t
+                ),
+                deltanet_beta_decay_tokens_per_step=1,
             )
             output_tokens.append(output)
         output = torch.cat(output_tokens, dim=1)
@@ -1420,16 +1382,16 @@ class LinearAttentionBackbone(Backbone):
 
 
 @dataclass(frozen=True)
-class RebasedBackboneConfig(BackboneConfig):
-    nlayers: int = 6
-    mlp_hidden_dim: int = 200
-    num_heads: int = 2
-    recompute_layer: bool = False
-    recompute_every_n_layers: int | None = 1
-    use_final_norm: bool = False
-    initializer_range: float = 0.02
-    layer_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
+class TwoAxisBackboneConfig(BackboneConfig):
+    """Configuration for a TabPFN-v2-style two-axis backbone."""
 
+    nlayers: int = 6
+    nhead: int = 2
+    dim_feedforward: int = 200
+    activation: tp.Literal["gelu", "relu"] = "gelu"
+    row_attention: tp.Literal["deltanet", "linear"] = "deltanet"
+    row_attention_kwargs: tp.Dict[str, base_config.BaseTypes] | None = None
+    recompute_layer: bool = False
 
     def create_backbone(
         self,
@@ -1437,35 +1399,86 @@ class RebasedBackboneConfig(BackboneConfig):
         attention_between_features: bool,
         **kwargs: tp.Any,
     ) -> Backbone:
-        assert attention_between_features is False, (
-            "RebasedBackbone currently does not support attention between features"
+        assert attention_between_features, (
+            "TwoAxisBackbone requires attention_between_features=True: "
+            "column (feature) attention is the point of this backbone."
         )
 
-        layers = nn.ModuleList(
-            [
-                BasedLinearAttention(
-                    d_model=ninp,
-                    num_heads=self.num_heads,
-                    mlp_hidden_dim=self.mlp_hidden_dim,
-                    **(self.layer_kwargs or {}),
-                )
-                for _ in range(self.nlayers)
-            ]
-        )
-        layers.apply(
-            lambda module: init_linear_attention_weights_like_fla(
-                module,
-                initializer_range=self.initializer_range,
+        def layer_creator() -> TwoAxisLayer:
+            return TwoAxisLayer(
+                d_model=ninp,
+                nhead=self.nhead,
+                dim_feedforward=self.dim_feedforward,
+                activation=self.activation,
+                zero_init=True,
+                row_attention=self.row_attention,
+                row_attention_kwargs=dict(self.row_attention_kwargs or {}),
             )
-        )
-        final_norm = build_norm(
-            ninp,
-            enabled=self.use_final_norm,
-            norm_type=str((self.layer_kwargs or {}).get("norm_type", "rmsnorm")),
-        )
-        return LinearAttentionBackbone(
-            layers,
-            final_norm=final_norm,
+
+        layer_stack = LayerStack(
+            layer_creator=layer_creator,
+            num_layers=self.nlayers,
             recompute_each_layer=self.recompute_layer,
-            recompute_every_n_layers=self.recompute_every_n_layers,
         )
+        return TwoAxisBackbone(layer_stack)
+
+
+class TwoAxisBackbone(Backbone):
+    """Wrapper for a stack of `TwoAxisLayer`s to conform to the Backbone
+    interface."""
+
+    def __init__(self, layer_stack: nn.Module):
+        super().__init__()
+        self.layer_stack = layer_stack
+
+    @property
+    def layers(self):
+        return self.layer_stack.layers
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        single_eval_pos: int | None = None,
+        half_layers: bool = False,
+        cache_trainset_representation: bool = False,
+        **kwargs: tp.Any,
+    ) -> torch.Tensor:
+        assert half_layers is False, (
+            "half_layers not supported in TwoAxisBackbone"
+        )
+        assert cache_trainset_representation is False, (
+            "cache_trainset_representation not supported in "
+            "TwoAxisBackbone.forward(); use incontext_fit/"
+            "incontext_predict instead."
+        )
+        return self.layer_stack(x, single_eval_pos=single_eval_pos, **kwargs)
+
+    def incontext_fit(
+        self,
+        x: torch.Tensor,
+        **kwargs: tp.Any,
+    ) -> tuple[torch.Tensor, tp.Any]:
+        out = x
+        layer_states: list[dict[str, torch.Tensor]] = []
+        for layer in self.layers:
+            out, state = layer.incontext_fit(out)
+            layer_states.append(state)
+        return out, {"layer_states": layer_states}
+
+    def incontext_predict(
+        self,
+        x: torch.Tensor,
+        cached_state: tp.Any,
+        **kwargs: tp.Any,
+    ) -> torch.Tensor:
+        out = x
+        layer_states = cached_state["layer_states"]
+        if len(layer_states) != len(self.layers):
+            raise ValueError(
+                f"Cached state has {len(layer_states)} layer states but the "
+                f"backbone has {len(self.layers)} layers."
+            )
+        for layer, state in zip(self.layers, layer_states):
+            out = layer.incontext_predict(out, state)
+        return out

@@ -315,6 +315,56 @@ def test_rope_inv_freq_buffer_matches_reference():
     torch.testing.assert_close(y, y_ref, rtol=1e-6, atol=1e-6)
 
 
+def test_sdpa_chunking_matches_unchunked(monkeypatch):
+    """Chunking over the batch dimension must not change the result."""
+    from pfns.model import multi_head_attention as mha_module
+
+    batch, n_q, n_kv, d_k = 13, 6, 9, 16
+    q = torch.randn(batch, nhead, n_q, d_k, device=device, dtype=dtype)
+    k = torch.randn(batch, nhead, n_kv, d_k, device=device, dtype=dtype)
+    v = torch.randn(batch, nhead, n_kv, d_k, device=device, dtype=dtype)
+    batched_mask = torch.randn(batch, 1, n_q, n_kv, device=device, dtype=dtype)
+    broadcast_mask = torch.randn(1, 1, n_q, n_kv, device=device, dtype=dtype)
+
+    for mask in (None, batched_mask, broadcast_mask):
+        kwargs = {} if mask is None else {"attn_mask": mask}
+        expected = torch.nn.functional.scaled_dot_product_attention(q, k, v, **kwargs)
+
+        monkeypatch.setattr(mha_module, "MAX_SDPA_BATCH_SIZE", batch)
+        unchunked = MultiHeadAttention._scaled_dot_product_attention(q, k, v, **kwargs)
+        monkeypatch.setattr(mha_module, "MAX_SDPA_BATCH_SIZE", 5)
+        chunked = MultiHeadAttention._scaled_dot_product_attention(q, k, v, **kwargs)
+
+        torch.testing.assert_close(unchunked, expected)
+        torch.testing.assert_close(chunked, expected)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_attention_over_batch_above_cuda_grid_limit():
+    """Feature attention flattens (batch, items) into the batch dimension, which
+    the fused CUDA kernels cannot launch for beyond `MAX_SDPA_BATCH_SIZE`."""
+    from pfns.model.multi_head_attention import MAX_SDPA_BATCH_SIZE
+
+    embed_dim_small, n_items, n_features = 32, MAX_SDPA_BATCH_SIZE + 1, 3
+    att = MultiHeadAttention(
+        input_size=embed_dim_small,
+        output_size=embed_dim_small,
+        d_k=embed_dim_small // nhead,
+        d_v=embed_dim_small // nhead,
+        nhead=nhead,
+        device=device,
+        dtype=dtype,
+    )
+    x = torch.randn(1, n_items, n_features, embed_dim_small, device=device, dtype=dtype)
+
+    with torch.no_grad():
+        y = att(x, add_input=True, allow_inplace=True)
+
+    torch.cuda.synchronize()
+    assert y.shape == x.shape
+    assert torch.isfinite(y).all()
+
+
 if __name__ == "__main__":
     test_attention()
     test_attention_caching()

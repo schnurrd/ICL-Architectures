@@ -9,7 +9,7 @@ from tests.model.fla_test_utils import build_fla_backbone, fla_hidden_size
 
 @pytest.mark.parametrize(
     "model_type",
-    ["gla", "kda", "deltanet", "gated_deltanet", "linear_attn"],
+    ["gla", "deltanet", "gated_deltanet", "linear_attn"],
 )
 def test_state_weaving_builds_supported_recurrent_models(model_type: str) -> None:
     backbone = build_fla_backbone(model_type, size="small", state_weaving=True)

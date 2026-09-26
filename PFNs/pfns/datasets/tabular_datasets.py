@@ -65,9 +65,15 @@ def get_benchmark_suite_dids(
     min_samples: int | None = None,
     max_samples: int | None = None,
     max_features: int | None = None,
+    largest_n: int | None = None,
     refresh_cache: bool = False,
 ) -> list[int]:
-    """Resolve classification dataset IDs from an OpenML benchmark suite."""
+    """Resolve classification dataset IDs from an OpenML benchmark suite.
+
+    ``largest_n`` keeps only the ``n`` datasets with the most rows, applied after
+    the other filters. The returned IDs stay sorted, so callers cannot rely on
+    the ordering to recover the ranking.
+    """
     min_samples, min_part = (None, "all") if min_samples is None else (int(min_samples), str(int(min_samples)))
     max_samples, max_part = (None, "all") if max_samples is None else (int(max_samples), str(int(max_samples)))
     max_features, feat_part = (None, "all") if max_features is None else (int(max_features), str(int(max_features)))
@@ -79,12 +85,16 @@ def get_benchmark_suite_dids(
         raise ValueError("min_samples must be <= max_samples when both are set.")
     if max_features is not None and max_features <= 0:
         raise ValueError("max_features must be > 0 when set.")
-    
-    cache_file = _suite_cache_path(
-        "benchmark_suite",
-        suite_id,
-        f"dids_{min_part}_{max_part}_{feat_part}",
-    )
+    largest_n, largest_part = (None, "all") if largest_n is None else (int(largest_n), str(int(largest_n)))
+    if largest_n is not None and largest_n <= 0:
+        raise ValueError("largest_n must be > 0 when set.")
+
+    # The suffix is only appended when a size cut is requested, so caches written
+    # before `largest_n` existed keep resolving.
+    descriptor = f"dids_{min_part}_{max_part}_{feat_part}"
+    if largest_n is not None:
+        descriptor = f"{descriptor}_largest_{largest_part}"
+    cache_file = _suite_cache_path("benchmark_suite", suite_id, descriptor)
     if cache_file.exists() and not refresh_cache:
         return _load_cached_dids(cache_file)
 
@@ -117,6 +127,8 @@ def get_benchmark_suite_dids(
         filtered = filtered[filtered["NumberOfInstances"] <= max_samples]
     if max_features is not None:
         filtered = filtered[filtered["NumberOfFeatures"] <= max_features]
+    if largest_n is not None:
+        filtered = filtered.nlargest(largest_n, "NumberOfInstances")
 
     filtered_dids = _normalize_dids(filtered["did"].dropna().tolist())
     _save_cached_dids(cache_file, filtered_dids)

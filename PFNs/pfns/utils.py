@@ -15,7 +15,7 @@ from torch.optim.lr_scheduler import LambdaLR
 
 
 def find_project_root(start: str | Path) -> Path:
-    """Walk upward from `start` until the ICL-Architectures project root is found."""
+    """Walk upward from `start` until the project root is found."""
     start_path = Path(start).resolve()
     candidates = (start_path, *start_path.parents)
     for path in candidates:

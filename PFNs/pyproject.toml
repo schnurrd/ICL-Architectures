@@ -13,14 +13,13 @@ authors = [
 ]
 
 description = "PFNs"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies=[
         'torch>=2.2',
         'scikit-learn>=0.24.2',
         'pyyaml>=5.4.1',
         'numpy>=1.21.2',
         'pandas>=2.0.0',
-        'requests>=2.23.0',
         'gpytorch>=1.5.0',
         'openml',
         'configspace>=0.4.21',
@@ -34,13 +33,7 @@ dependencies=[
         'tabicl',
         'tabpfn',
         'flash-linear-attention==0.4.2',
-        'pre-commit>=3.5.0',
-        'black==24.4.2',
-        'usort==1.0.8.post1',
-        'ruff-api==0.1.0',
-        'stdlibs==2024.1.28',
         'pytest>=5.4.3',
-        'flake8-bugbear>=24.0.0',
         'wandb>=0.16.0',
 ]
 classifiers = [
@@ -54,12 +47,3 @@ exclude = [
   "*.pt",
   "*.cpkt",
 ]
-
-[tool.usort]
-first_party_detection = false
-
-[tool.ufmt]
-formatter = "ruff-api"
-
-[tool.black]
-line-length = 88

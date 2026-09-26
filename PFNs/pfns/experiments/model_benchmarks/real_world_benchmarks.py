@@ -8,6 +8,7 @@ BENCHMARK_CHOICES = [
     "openml_large_dataset",
     "tabarena_full",
     "tabarena_medium",
+    "tabarena_largest_5",
 ]
 
 
@@ -27,6 +28,12 @@ def get_real_world_benchmark_dataset_ids(benchmark: str) -> list[int]:
             min_samples=10_000,
             max_samples=None,
             max_features=None,
+        )
+    if benchmark == "tabarena_largest_5":
+        return get_benchmark_suite_dids(
+            suite_id=457,
+            max_features=None,
+            largest_n=5,
         )
 
     supported = ", ".join(BENCHMARK_CHOICES)

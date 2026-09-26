@@ -8,6 +8,7 @@ from __future__ import annotations
 import torch
 
 from configs.config_utils import (
+    TRAINING_PROFILES,
     normalize_optional_none_string,
     resolve_batch_size_stages,
     resolve_eval_pos_split_pct,
@@ -48,42 +49,11 @@ MAX_NUM_CLASSES = int(TABPFN_PRIOR_DEFAULTS["max_num_classes"])
 MAX_NUM_FEATURES = int(TABPFN_PRIOR_DEFAULTS["max_num_features"])
 SUPPORTED_SEQUENCE_MODES = CANONICAL_SEQUENCE_MODES
 
-TRAINING_PROFILES = {
-    "debug": {"lr": 6.0e-5, "steps_per_epoch": 10, "epochs": 200},
-    "low": {"lr": 6.0e-5, "steps_per_epoch": 1000, "epochs": 200},
-    "high": {"lr": 3.0e-5, "steps_per_epoch": 4000, "epochs": 200},
-    "ar": {"lr": 3.0e-5, "steps_per_epoch": 500, "epochs": 200},
-}
-
 MODEL_SETTINGS = {
-    # KDA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/kda/configuration_kda.py#L10
-    # Model size: 12.60 M
-    # Training speed on different gpus (uncompiled, single target): 
-    #    - RTX 5070 (bf16):   16it/s, 3.4GiB (single target); 19it/s, 2.2GiB (multi target); 10it/s, 3.7GiB (multi target, interleaved)
-    #    - RTX 2080Ti:        4it/s, 6.2GB (non-compiled), 
-    #    - A5000:             6it/s (non-compiled), 
-    "kda": {
-        "emsize": 320,
-        "config_kwargs": { # per default runs in chunked mode, has a max_position_embeddings set to 2048, supports attn dict
-            "hidden_size": 320, # default 2048
-            "use_short_conv": False, # typically true but we don't have temporal data
-            "num_heads": 4, # default 16
-            "head_dim": 80, # currently 128
-            "intermediate_size": 320 * 2, # default None -> 4*hidden_size
-            "hidden_act": "swish",
-            "num_hidden_layers": 11, # default 24
-            "norm_eps": 1e-6, # default 1e-6
-            "use_cache": True,
-            "vocab_size": 1, # dummy value, not used default 32000
-            # "cache_chunk_size": 16,  
-        },
-    },
     # GLA Config: https://github.com/fla-org/flash-linear-attention/blob/3cf180339b8a1cbad823f553541cd531d18670ea/fla/models/gla/configuration_gla.py#L12
     # Model size: 12.59 M
     # Training speed on different gpus (uncompiled, single target): 
     #    - RTX 5070:   22it/s, 1.8GiB (single target); 28it/s, 1.6GiB (multi target); 16it/s, 2.6GiB (multi target, interleaved)
-    #    - RTX 2080Ti:  it/s
-    #    - A5000:       it/s 
     "gla": {
         "emsize": 320,
         "config_kwargs": { # also has max_position_embeddings set to 2048, supports attn dict
@@ -102,8 +72,6 @@ MODEL_SETTINGS = {
     # Model size: 12.49 M full
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   7it/s, 4.3GB (single target); 5it/s (single target, interleaved); 15it/s, 2GB (multi target); 8it/s, 2.9GiB (multi target, interleaved)
-    #    - RTX 2080Ti:  it/s
-    #    - A5000:        it/s 
     "mamba2": { 
         "emsize": 320,
         "config_kwargs": {
@@ -122,8 +90,6 @@ MODEL_SETTINGS = {
     # Model size: 12.49 M
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   22it/s, 2.2GB (single target); 29it/s, 1.7GB (multi target); 16it/s, 2.8GiB (multi target, interleaved)
-    #    - RTX 2080Ti:  it/s
-    #    - A5000:        it/s 
     "deltanet": {
         "emsize": 320,
         "config_kwargs": {
@@ -142,8 +108,6 @@ MODEL_SETTINGS = {
     # Model size: 12.50 M
     # Training speed on different gpus (uncompiled): 
     #    - RTX 5070 (bf16):   14it/s, 2.9GB (single target); 24it/s, 1.9GB (multi target); 15it/s, 3.5GiB (multi target, interleaved)
-    #    - RTX 2080Ti:  it/s
-    #    - A5000:        it/s 
     "gated_deltanet": {
         "emsize": 320,
         "config_kwargs": {
@@ -181,25 +145,6 @@ MODEL_SETTINGS = {
             "vocab_size": 1, # dummy value, not used default 32000
         },
     },
-    # MesaNet Config: https://github.com/fla-org/flash-linear-attention/blob/main/fla/models/mesa_net/configuration_mesa_net.py
-    # Model size: 12.54 M full
-    "mesanet": {
-        "emsize": 320,
-        "config_kwargs": {
-            "attn_mode": "chunk",
-            "hidden_size": 320,
-            "num_hidden_layers": 12,
-            "num_heads": 4,
-            "head_dim": 80,
-            "intermediate_size": 320 * 2,
-            "hidden_act": "swish",
-            "norm_eps": 1e-6,
-            "use_output_gate": False,
-            "use_short_conv": False,
-            "use_cache": True,
-            "vocab_size": 1, # dummy value, not used default 32000
-        },
-    },
 }
 
 def _normalize_model_type(model_type: str) -> str:
@@ -212,15 +157,13 @@ def _normalize_model_type(model_type: str) -> str:
         return "gated_deltanet"
     if model_type in {"linear_attention", "linearattn"}:
         return "linear_attn"
-    if model_type in {"mesa", "mesa_net"}:
-        return "mesanet"
     return model_type
 
 
 def get_config(
     config_index: int = 0,
     # Architecture
-    model_type: str = "kda",
+    model_type: str = "deltanet",
     hidden_size: int | None = None,
     sequence_mode: str = "Comb_ST",
     bidirectional: bool = False,
@@ -233,6 +176,7 @@ def get_config(
     final_state_readout: bool = False,
     deltanet_beta_decay: str = "none",
     deltanet_beta_decay_t0: int = 1000,
+    deltanet_beta_decay_tokens_per_step: int = 1,
     task_variant: str = "tabular_prior",
     # Training
     training_setup: str = "high",
@@ -381,6 +325,7 @@ def get_config(
         deltanet_beta_decay,
     ) or "none"
     resolved_deltanet_beta_decay_t0 = int(deltanet_beta_decay_t0)
+    resolved_deltanet_beta_decay_tokens_per_step = int(deltanet_beta_decay_tokens_per_step)
 
     backbone_kwargs = {
         "model_type": model_type,
@@ -396,6 +341,7 @@ def get_config(
         "final_state_readout": resolved_final_state_readout,
         "deltanet_beta_decay": resolved_deltanet_beta_decay,
         "deltanet_beta_decay_t0": resolved_deltanet_beta_decay_t0,
+        "deltanet_beta_decay_tokens_per_step": resolved_deltanet_beta_decay_tokens_per_step,
         "mimetic_init": mimetic_init,
         "mimetic_init_mode": mimetic_init_mode,
         "mimetic_init_layer_indices": mimetic_init_layer_indices,
@@ -458,6 +404,11 @@ def get_config(
         "finalstate" if resolved_final_state_readout else None,
         (
             f"betadecay_{resolved_deltanet_beta_decay}_t0{resolved_deltanet_beta_decay_t0}"
+            + (
+                f"_tps{resolved_deltanet_beta_decay_tokens_per_step}"
+                if resolved_deltanet_beta_decay_tokens_per_step != 1
+                else ""
+            )
             if resolved_deltanet_beta_decay != "none"
             else None
         ),

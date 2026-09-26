@@ -1,4 +1,4 @@
-"""WIP notebook that copies the minimal_linear_attention_seq_len_generalization.ipynb experiment notebook and exposes it as a script and has wandb support"""
+"""Script version of minimal_linear_attention_seq_len_generalization.ipynb, with command-line options and optional W&B logging."""
 
 
 from __future__ import annotations

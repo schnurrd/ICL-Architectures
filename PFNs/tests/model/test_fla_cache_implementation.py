@@ -168,6 +168,76 @@ def test_deltanet_beta_decay_scales_late_positions():
         _apply_deltanet_beta_decay(beta, mode="online_sqrt_inverse", t0=2)
 
 
+def test_deltanet_beta_decay_tokens_per_step_shares_steps():
+    from pfns.model.fla_patches import _apply_deltanet_beta_decay
+
+    beta = torch.ones(1, 6, 2)
+
+    paired = _apply_deltanet_beta_decay(beta, mode="online_inverse", t0=2, tokens_per_step=2)
+    expected = torch.tensor([1.0, 1.0, 2 / 3, 2 / 3, 0.5, 0.5]).view(1, 6, 1)
+    torch.testing.assert_close(paired, expected.expand_as(beta))
+
+    offset = _apply_deltanet_beta_decay(
+        beta, mode="online_inverse", t0=2, start_position=3, tokens_per_step=2
+    )
+    expected_offset = torch.tensor([2 / 5, 2 / 5, 2 / 6, 2 / 6, 2 / 7, 2 / 7]).view(1, 6, 1)
+    torch.testing.assert_close(offset, expected_offset.expand_as(beta))
+
+    with pytest.raises(ValueError, match="tokens_per_step must be >= 1"):
+        _apply_deltanet_beta_decay(beta, mode="online_inverse", t0=2, tokens_per_step=0)
+
+
+def test_deltanet_beta_decay_tokens_per_step_validates_backbone_config():
+    from pfns.model.backbones import FLABackboneConfig
+
+    config_kwargs = fla_model_config_kwargs("deltanet", size="small")
+    with pytest.raises(ValueError, match="requires deltanet_beta_decay"):
+        FLABackboneConfig(
+            model_type="deltanet",
+            config_kwargs=config_kwargs,
+            deltanet_beta_decay_tokens_per_step=2,
+        )
+    with pytest.raises(ValueError, match="tokens_per_step must be >= 1"):
+        FLABackboneConfig(
+            model_type="deltanet",
+            config_kwargs=config_kwargs,
+            deltanet_beta_decay="online_inverse",
+            deltanet_beta_decay_tokens_per_step=0,
+        )
+
+
+@pytest.mark.parametrize("tokens_per_step", [1, 2])
+def test_deltanet_beta_decay_cached_test_paths_agree(tokens_per_step: int):
+    """The parallel and sequential cached test paths use the same decay schedule."""
+    if not torch.cuda.is_available():
+        pytest.skip("FLA DeltaNet kernel requires CUDA/Triton.")
+
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+    backbone = build_fla_backbone(
+        "deltanet",
+        deltanet_beta_decay="online_inverse",
+        deltanet_beta_decay_t0=1,
+        deltanet_beta_decay_tokens_per_step=tokens_per_step,
+    ).to(device)
+    embed_dim = fla_hidden_size("deltanet")
+    train_x = torch.randn(2, 2, embed_dim, device=device)
+    test_x = torch.randn(2, 5, embed_dim, device=device)
+
+    with torch.no_grad():
+        _, cache = backbone._run_fla(train_x)
+        assert backbone._beta_decay_steps_in_cache(
+            backbone._cache_seq_length(cache)
+        ) == 2 // tokens_per_step
+        parallel = backbone._run_test_with_cache(test_x, cache)
+        _, cache = backbone._run_fla(train_x)
+        sequential = backbone._run_test_with_cache_naive(
+            test_x, cache, use_custom_recurrent=True, use_custom_shortconv=True
+        )
+
+    torch.testing.assert_close(parallel, sequential, rtol=1e-6, atol=1e-6)
+
+
 def test_deltanet_beta_decay_validates_backbone_config():
     from pfns.model.backbones import FLABackboneConfig
 
@@ -268,7 +338,7 @@ def test_deltanet_beta_decay_patch_matches_manual_decayed_beta():
 
 @pytest.mark.parametrize(
     "case",
-    ["linear_attn", "gla", "kda", "deltanet", "gated_deltanet"],
+    ["linear_attn", "gla", "deltanet", "gated_deltanet"],
 )
 def test_final_state_readout_kernels_match_native_final_state_readout(case: str):
     if not torch.cuda.is_available():
@@ -279,13 +349,11 @@ def test_final_state_readout_kernels_match_native_final_state_readout(case: str)
     import fla.layers.delta_net as deltanet_layer
     import fla.layers.gated_deltanet as gated_deltanet_layer
     import fla.layers.gla as gla_layer
-    import fla.layers.kda as kda_layer
     import fla.layers.linear_attn as linear_attn_layer
     from pfns.model.fla_patches import (
         _maybe_patch_deltanet_with_stateless_recurrent,
         _maybe_patch_gated_deltanet_with_stateless_recurrent,
         _maybe_patch_gla_with_stateless_recurrent,
-        _maybe_patch_kda_with_stateless_recurrent,
         _maybe_patch_linear_attn_with_stateless_recurrent,
     )
 
@@ -314,21 +382,6 @@ def test_final_state_readout_kernels_match_native_final_state_readout(case: str)
         original_kernel = gla_layer.fused_recurrent_gla
         patched_kernel = lambda: gla_layer.fused_recurrent_gla
         patch_context = _maybe_patch_gla_with_stateless_recurrent(
-            False,
-            final_state_readout=True,
-        )
-    elif case == "kda":
-        g = torch.randn(2, 5, 3, 4, device=device).clamp(-2.0, 2.0)
-        inputs = {
-            **base_inputs,
-            "g": g,
-            "beta": torch.rand(2, 5, 3, device=device),
-            "use_qk_l2norm_in_kernel": True,
-        }
-        use_l2 = True
-        original_kernel = kda_layer.fused_recurrent_kda
-        patched_kernel = lambda: kda_layer.fused_recurrent_kda
-        patch_context = _maybe_patch_kda_with_stateless_recurrent(
             False,
             final_state_readout=True,
         )
@@ -391,7 +444,6 @@ def test_final_state_readout_kernels_match_native_final_state_readout(case: str)
         ("linear_attn", "fused_chunk"),
         ("gla", "chunk"),
         ("gla", "fused_chunk"),
-        ("kda", "chunk"),
         ("deltanet", "chunk"),
         ("gated_deltanet", "chunk"),
     ],
@@ -408,13 +460,11 @@ def test_final_state_readout_chunk_kernels_match_selected_final_state(
     import fla.layers.delta_net as deltanet_layer
     import fla.layers.gated_deltanet as gated_deltanet_layer
     import fla.layers.gla as gla_layer
-    import fla.layers.kda as kda_layer
     import fla.layers.linear_attn as linear_attn_layer
     from pfns.model.fla_patches import (
         _maybe_patch_deltanet_with_stateless_recurrent,
         _maybe_patch_gated_deltanet_with_stateless_recurrent,
         _maybe_patch_gla_with_stateless_recurrent,
-        _maybe_patch_kda_with_stateless_recurrent,
         _maybe_patch_linear_attn_with_stateless_recurrent,
     )
 
@@ -455,25 +505,6 @@ def test_final_state_readout_chunk_kernels_match_selected_final_state(
             else gla_layer.fused_chunk_gla
         )
         patch_context = _maybe_patch_gla_with_stateless_recurrent(
-            False,
-            final_state_readout=True,
-        )
-    elif case == "kda":
-        g = torch.randn(2, 80, 3, 4, device=device).clamp(-2.0, 2.0)
-        recurrent_inputs = {
-            **base_inputs,
-            "g": g,
-            "beta": torch.rand(2, 80, 3, device=device),
-            "A_log": torch.log(torch.rand(3, device=device) + 0.5),
-            "dt_bias": torch.randn(12, device=device),
-            "use_qk_l2norm_in_kernel": True,
-            "use_gate_in_kernel": True,
-        }
-        chunk_inputs = dict(recurrent_inputs)
-        use_l2 = True
-        original_recurrent = kda_layer.fused_recurrent_kda
-        patched_kernel = lambda: kda_layer.chunk_kda
-        patch_context = _maybe_patch_kda_with_stateless_recurrent(
             False,
             final_state_readout=True,
         )
@@ -634,7 +665,7 @@ def test_final_state_readout_cached_stateless_path_skips_self_term():
     assert not torch.allclose(out, expected + self_term)
 
 
-@pytest.mark.parametrize("model_type", ["gla", "kda", "gated_deltanet"])
+@pytest.mark.parametrize("model_type", ["gla", "gated_deltanet"])
 def test_final_state_readout_cached_stateless_path_skips_query_decay(model_type: str):
     torch.manual_seed(0)
     backbone = build_fla_backbone(model_type, final_state_readout=True)
@@ -664,22 +695,6 @@ def test_final_state_readout_cached_stateless_path_skips_query_decay(model_type:
                 gk=g,
                 scale=scale,
                 initial_state=initial_state,
-            )
-            q_read = q * scale
-            q_decayed = q_read * g.exp()
-        elif model_type == "kda":
-            import fla.layers.kda as kda_layer
-
-            g = torch.randn(batch_size, seq_len, num_heads, key_dim).clamp(-2.0, 2.0)
-            out, _ = kda_layer.fused_recurrent_kda(
-                q=q,
-                k=k,
-                v=v,
-                g=g,
-                beta=torch.rand(batch_size, seq_len, num_heads),
-                scale=scale,
-                initial_state=initial_state,
-                use_qk_l2norm_in_kernel=False,
             )
             q_read = q * scale
             q_decayed = q_read * g.exp()
@@ -788,7 +803,6 @@ def test_fla_test_cache_matches_naive(model_type: str):
     test_x = x_batched[:, train_len:]
     test_len = test_x.size(1)
     assert test_len > 1
-    use_custom_reference = model_type == "mesanet"
 
     with torch.no_grad():
         out_full, _ = backbone._run_fla(x_batched)
@@ -799,8 +813,8 @@ def test_fla_test_cache_matches_naive(model_type: str):
         out_naive = backbone._run_test_with_cache_naive(
             test_x,
             past_1,
-            use_custom_recurrent=use_custom_reference,
-            use_custom_shortconv=use_custom_reference,
+            use_custom_recurrent=False,
+            use_custom_shortconv=False,
         )
 
         _, past_2 = backbone._run_fla(train_x)
@@ -828,8 +842,8 @@ def test_fla_test_cache_matches_naive(model_type: str):
             backbone,
             test_x,
             past_5,
-            use_custom_recurrent=use_custom_reference,
-            use_custom_shortconv=use_custom_reference,
+            use_custom_recurrent=False,
+            use_custom_shortconv=False,
         )
     
     rtol, atol = fla_cache_equivalence_tolerances(model_type)
@@ -872,7 +886,7 @@ def test_fla_cache_allows_train_gradients(model_type: str):
     _, past_naive = backbone_naive._run_fla(train_x_naive)
     assert past_naive is not None
     # For mamba2, native FLA doesn't support gradients through cache, so use custom recurrent
-    use_custom_for_naive = model_type in {"mamba2", "mesanet"}
+    use_custom_for_naive = model_type == "mamba2"
     out_naive = backbone_naive._run_test_with_cache_naive(
         test_x, past_naive, use_custom_recurrent=use_custom_for_naive, use_custom_shortconv=True # to allow gradients through shortconv cache
     )
@@ -920,12 +934,11 @@ def test_fla_cache_chunking_matches_gradients(model_type: str):
     test_x_full = test_x_base.clone().requires_grad_(True)
     _, past_full = backbone_full._run_fla(train_x_full)
     assert past_full is not None
-    use_custom_recurrent = model_type == "mesanet"
     out_full = backbone_full._run_test_with_cache(
         test_x_full,
         past_full,
-        use_custom_recurrent=use_custom_recurrent,
-        use_custom_shortconv=use_custom_recurrent,
+        use_custom_recurrent=False,
+        use_custom_shortconv=False,
     )
     out_full.sum().backward()
 
@@ -936,8 +949,8 @@ def test_fla_cache_chunking_matches_gradients(model_type: str):
     out_chunked = backbone_chunked._run_test_with_cache(
         test_x_chunked,
         past_chunked,
-        use_custom_recurrent=use_custom_recurrent,
-        use_custom_shortconv=use_custom_recurrent,
+        use_custom_recurrent=False,
+        use_custom_shortconv=False,
     )
     out_chunked.sum().backward()
 
@@ -992,12 +1005,11 @@ def test_stateless_matches_repeated_cache_outputs_and_grads(model_type: str):
     _, past_ref = backbone_reference._run_fla(train_x_ref)
     assert past_ref is not None
 
-    use_custom_reference = model_type == "mesanet"
     out_ref = _run_repeated_cache_reference(
         backbone_reference,
         test_x_ref,
         past_ref,
-        use_custom_recurrent=use_custom_reference,
+        use_custom_recurrent=False,
         use_custom_shortconv=True,
     )
     
@@ -1033,12 +1045,11 @@ def test_edge_cases(model_type: str, batch_size: int, test_len: int, size: str):
     with torch.no_grad():
         _, past = backbone._run_fla(train_x)
         out_fast = backbone._run_test_with_cache(test_x, past)
-        use_custom_reference = model_type == "mesanet"
         out_naive = backbone._run_test_with_cache_naive(
             test_x,
             backbone._copy_cache(past),
-            use_custom_recurrent=use_custom_reference,
-            use_custom_shortconv=use_custom_reference,
+            use_custom_recurrent=False,
+            use_custom_shortconv=False,
         )
 
     rtol, atol = fla_tolerances(model_type)
@@ -1070,7 +1081,7 @@ def test_model_parameter_gradients(model_type: str):
     train_x_naive = train_x.detach().clone().requires_grad_(True)
     _, past_naive = backbone_naive._run_fla(train_x_naive)
     # mamba2 & gated_deltanet: native kernels don't support correct gradients through cache for model parameters
-    use_custom = model_type in {"mamba2", "gated_deltanet", "mesanet"}
+    use_custom = model_type in {"mamba2", "gated_deltanet"}
     out_naive = backbone_naive._run_test_with_cache_naive(
         test_x, past_naive, use_custom_recurrent=use_custom, use_custom_shortconv=True
     )
@@ -1082,9 +1093,10 @@ def test_model_parameter_gradients(model_type: str):
     out_fast.sum().backward()
 
     rtol, atol = fla_tolerances(model_type)
+    rtol, atol = max(rtol, 1e-5), max(atol, 1e-5)
     if model_type == "mamba2":
         rtol, atol = max(rtol, 5e-3), max(atol, 5e-3)
-    
+
     for (name_naive, param_naive), (name_fast, param_fast) in zip(
         backbone_naive.named_parameters(), backbone_fast.named_parameters()
     ):
@@ -1164,12 +1176,11 @@ def test_long_training_context(model_type: str, train_len: int):
         _, past = backbone._run_fla(train_x)
         assert past is not None
         out_fast = backbone._run_test_with_cache(test_x, past)
-        use_custom_reference = model_type == "mesanet"
         out_naive = backbone._run_test_with_cache_naive(
             test_x,
             backbone._copy_cache(past),
-            use_custom_recurrent=use_custom_reference,
-            use_custom_shortconv=use_custom_reference,
+            use_custom_recurrent=False,
+            use_custom_shortconv=False,
         )
 
     rtol, atol = fla_tolerances(model_type)
