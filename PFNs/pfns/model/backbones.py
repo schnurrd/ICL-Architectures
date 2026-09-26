@@ -917,12 +917,6 @@ class FLABackbone(Backbone):
         return 0
 
     def _beta_decay_steps_in_cache(self, cache_seq_length: int) -> int:
-        """Decay steps consumed by a cached context of `cache_seq_length` tokens.
-
-        An interleaved x/y context holds two tokens per example, so its schedule
-        has advanced only half as far as its token count. Test tokens are single
-        examples, so callers pair this offset with tokens_per_step=1.
-        """
         return int(cache_seq_length) // self.deltanet_beta_decay_tokens_per_step
 
     def _run_test_with_cache(
