@@ -1,5 +1,9 @@
 # Adapting Linear-Time Architectures for Tabular In-Context Learning
 
+David Schnurr, Felix Sarnthein, Thomas Hofmann, Imanol Schlag
+
+[Paper (arXiv)](https://arxiv.org/abs/2609.36337)
+
 Unified framework for comparing sequence-model architectures for in-context learning on tabular classification tasks. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, (Gated) Linear Attention, (Gated) DeltaNet, and Mamba-2 backbones.
 
 ## Table of Contents
@@ -30,6 +34,7 @@ Unified framework for comparing sequence-model architectures for in-context lear
       - [Per Feature Layer](#per-feature-layer)
     - [Decoder](#decoder)
   - [Inference Overview](#inference-overview)
+- [Citation](#citation)
 - [Credits](#credits)
 - [Similar relevant repositories](#similar-relevant-repositories)
 
@@ -404,6 +409,17 @@ During `predict`/`predict_proba` calls:
 3. **Apply shifts**: Circular shift classes/features according to each configuration
 4. **Batch inference**: Forward passes through model backbone in batches
 5. **Aggregate**: Reverse class shifts, average logits across ensemble, apply softmax
+
+## Citation
+
+```bibtex
+@article{schnurr2026adapting,
+  title   = {Adapting Linear-Time Architectures for Tabular In-Context Learning},
+  author  = {Schnurr, David and Sarnthein, Felix and Hofmann, Thomas and Schlag, Imanol},
+  journal = {arXiv preprint arXiv:2609.36337},
+  year    = {2026}
+}
+```
 
 ## Credits
 
