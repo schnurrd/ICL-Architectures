@@ -3,8 +3,8 @@
 The synthetic version of this experiment lives in the sequence-length sweep: a
 frozen DeltaNet is compared against the same checkpoint whose per-layer recurrent
 states have been optimised directly on the in-context set. This module does the
-same comparison on real data, and pulls the non-causal reference models from
-whatever real-world bundles are already on disk instead of rerunning them.
+same comparison on real data, and reuses the newest existing real-world bundles
+for the non-causal reference models instead of rerunning them.
 
 Bundles are matched on the experiment keys that decide whether two runs are
 comparable. ``benchmark`` is deliberately not one of them: it only selects

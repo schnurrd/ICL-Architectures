@@ -444,7 +444,7 @@ def get_config(
     if resolved_deltanet_beta_decay != "none":
         wandb_tags.append(f"deltanet_beta_decay_{resolved_deltanet_beta_decay}")
     wandb_config = WandbConfig(
-        entity="icl_arch",
+        entity=None,  # default W&B entity of the logged-in user, or WANDB_ENTITY
         project=(
             ASSOCIATIVE_RECALL_SETTINGS["wandb_project"]
             if is_associative_recall

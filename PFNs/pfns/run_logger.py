@@ -80,7 +80,7 @@ def _init_wandb_run(
         "name": wandb_config.name,
         "group": wandb_config.group,
         "tags": wandb_config.tags,
-        "mode": wandb_config.mode,
+        "mode": os.environ.get("WANDB_MODE", wandb_config.mode),
         "dir": wandb_config.dir,
     }
     if full_config is not None:

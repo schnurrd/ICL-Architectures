@@ -157,6 +157,7 @@ This `--model_path` matches the transformer training example above when run with
 #### wandb support
 
 wandb is configured via `MainConfig.wandb`. The CLI can toggle logging via `--wandb` / `--no-wandb` or continue from an existing run via `--continue-from-wandb`.
+Logging is on by default and goes to the default entity of the logged-in wandb user; set `WANDB_ENTITY` to log to a team instead, or pass `--no-wandb` to train without a wandb account.
 For restricted environments, set `mode="offline"` in the config file (or `WANDB_MODE=offline`) and sync later with `wandb sync`.
 
 #### Configuration Files

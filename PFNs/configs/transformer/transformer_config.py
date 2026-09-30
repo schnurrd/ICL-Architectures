@@ -264,7 +264,7 @@ def get_config(
         wandb_name += "_ar"
 
     wandb_config = WandbConfig(
-        entity="icl_arch",
+        entity=None,  # default W&B entity of the logged-in user, or WANDB_ENTITY
         project=(
             ASSOCIATIVE_RECALL_SETTINGS["wandb_project"]
             if is_associative_recall

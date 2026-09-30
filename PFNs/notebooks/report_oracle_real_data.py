@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""Report the hidden-state oracle comparison on the largest TabArena datasets.
+"""Report the hidden-state oracle results on the five largest TabArena datasets.
 
-Reads the real-world bundles written by `run_real_world_experiments.py` -- the
-oracle and DeltaNet arms from the `tabarena_largest_5` run, the non-causal
-reference arms from whatever compatible TabArena bundle is already on disk --
-and prints the per-dataset table plus the paired oracle-minus-baseline test.
-
-Usage (from the repo root; the scripts live under PFNs/):
-    python PFNs/notebooks/report_oracle_real_data.py
-    python PFNs/notebooks/report_oracle_real_data.py --metric accuracy
+Reads the newest result bundles written by
+`run_real_world_experiments.py --benchmark tabarena_largest_5`.
 """
 
 from __future__ import annotations

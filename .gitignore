@@ -216,6 +216,8 @@ wandb/
 # Experiment outputs (notebooks)
 PFNs/notebooks/exp_outputs/
 PFNs/notebooks/artifacts/
+trained_minimal_linear_attention_seq_len_generalization/
+minimal_linear_attention_seq_len_generalization_runs/
 
 exp_outputs/*
 

@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the paper below."
+title: "Adapting Linear-Time Architectures for Tabular In-Context Learning"
+type: software
+authors:
+  - family-names: Schnurr
+    given-names: David
+  - family-names: Sarnthein
+    given-names: Felix
+  - family-names: Hofmann
+    given-names: Thomas
+  - family-names: Schlag
+    given-names: Imanol
+repository-code: "https://github.com/schnurrd/ICL-Architectures"
+license: Apache-2.0
+preferred-citation:
+  type: article
+  title: "Adapting Linear-Time Architectures for Tabular In-Context Learning"
+  authors:
+    - family-names: Schnurr
+      given-names: David
+    - family-names: Sarnthein
+      given-names: Felix
+    - family-names: Hofmann
+      given-names: Thomas
+    - family-names: Schlag
+      given-names: Imanol
+  journal: "arXiv preprint arXiv:2609.36337"
+  year: 2026
+  doi: 10.48550/arXiv.2609.36337
+  url: "https://arxiv.org/abs/2609.36337"
