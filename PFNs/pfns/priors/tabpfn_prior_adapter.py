@@ -18,8 +18,8 @@ try:
     from tabpfn_prior import build_tabpfn_prior
 except ModuleNotFoundError as exc:
     raise ImportError(
-        "The tabpfn_prior package is required. Install it via "
-        "`pip install -e prior-repos/tabpfn-v1-prior`."
+        "The tabpfn_prior package is required. Fetch the submodule with "
+        "`git submodule update --init --recursive` and run `uv sync`."
     ) from exc
 
 

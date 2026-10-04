@@ -1,0 +1,60 @@
+[project]
+name = "icl-architectures"
+version = "0.1.0"
+description = "Linear-time architectures for tabular in-context learning"
+readme = "README.md"
+requires-python = "==3.11.*"
+dependencies = [
+    "pfns",
+    "tabpfn-v1-prior",
+    "torch==2.9.0",
+    "transformers==5.8.0",
+    "flash-linear-attention==0.4.2",
+    "numpy==2.4.4",
+    "pandas==3.0.3",
+    "scipy==1.17.1",
+    "scikit-learn==1.8.0",
+    "seaborn==0.13.2",
+    "matplotlib==3.10.9",
+    "ipykernel==7.2.0",
+    "nvidia-ml-py==13.595.45",
+    "gpytorch==1.15.2",
+    "openml==0.15.1",
+    "xgboost==3.2.0",
+    "catboost==1.2.10",
+    "tabicl==2.1.1",
+    "tabpfn==7.1.1",
+    "wandb==0.26.1",
+]
+
+[dependency-groups]
+# CUDA kernels for the Mamba-2 backbone, as prebuilt wheels matching the installed torch.
+mamba = [
+    "causal-conv1d==1.6.2.post1",
+    "mamba-ssm==2.3.2.post1",
+]
+
+[tool.uv]
+required-version = ">=0.9.17"
+package = false
+default-groups = ["mamba"]
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[tool.uv.sources]
+pfns = { path = "PFNs", editable = true }
+tabpfn-v1-prior = { path = "prior-repos/tabpfn-v1-prior", editable = true }
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.extra-build-dependencies]
+causal-conv1d = [{ requirement = "torch", match-runtime = true }]
+mamba-ssm = [{ requirement = "torch", match-runtime = true }]
+
+# Download the prebuilt CUDA wheels instead of compiling them, so no CUDA toolkit (nvcc) is needed.
+[tool.uv.extra-build-variables]
+causal-conv1d = { CAUSAL_CONV1D_SKIP_CUDA_BUILD = "TRUE" }
+mamba-ssm = { MAMBA_SKIP_CUDA_BUILD = "TRUE" }

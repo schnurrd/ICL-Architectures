@@ -49,20 +49,14 @@ cd ICL-Architectures
 
 If the repository was cloned without `--recurse-submodules`, or after pulling changes, run `git submodule update --init --recursive`.
 
-Install the required packages and editable installs for PFNs and the TabPFN-v1 prior:
+Dependencies are managed with [uv](https://docs.astral.sh/uv/getting-started/installation/). Create the environment and activate it:
 
 ```bash
-conda create -n icl_arch python=3.11
-conda activate icl_arch
-
-pip install -r requirements/requirements.txt \
-    -e ./PFNs \
-    -e ./prior-repos/tabpfn-v1-prior
-
-pip install --no-build-isolation causal-conv1d==1.6.2.post1 mamba-ssm==2.3.2.post1
+uv sync
+source .venv/bin/activate
 ```
 
-Tested on NVIDIA RTX 5070 and RTX 2080 Ti GPUs with CUDA 12.8 and 12.9.
+Tested on Linux with NVIDIA RTX 5070 and RTX 2080 Ti GPUs and CUDA 12.8 and 12.9.
 
 ## Repository User Guide
 
@@ -426,7 +420,7 @@ During `predict`/`predict_proba` calls:
 
 This repo builds on:
 
-- [PFNs](https://github.com/automl/PFNs) (Apache 2.0) for the core training pipeline and priors. Used as the starting repository.
+- [PFNs](https://github.com/SamuelGabriel/PFNs) (Apache 2.0) for the core training pipeline and priors. Used as the starting repository.
 - [TabPFN-v1-prior](https://github.com/automl/tabpfn-v1-prior) (Apache 2.0) for the TabPFN v1 prior implementation.
 
 ## Similar relevant repositories

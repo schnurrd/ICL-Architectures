@@ -101,11 +101,6 @@ def parse_args():
         help="Enable/disable wandb logging (configured via the config file).",
     )
     parser.add_argument(
-        "--new-wandb-id",
-        action="store_true",
-        help="Start a new wandb run ID when resuming from a checkpoint.",
-    )
-    parser.add_argument(
         "--continue-from-wandb",
         type=str,
         default=None,
