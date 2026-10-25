@@ -2,7 +2,7 @@
 
 David Schnurr, Felix Sarnthein, Thomas Hofmann, Imanol Schlag
 
-[Paper (arXiv)](https://arxiv.org/abs/2609.36337)
+[![Paper](https://img.shields.io/badge/Paper-2609.36337-B31B1B?logo=arxiv)](https://arxiv.org/abs/2609.36337) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE.txt)
 
 Unified framework for comparing sequence-model architectures for in-context learning on tabular classification tasks. Includes modular pretraining pipelines, shared priors, and evaluations of Transformer, (Gated) Linear Attention, (Gated) DeltaNet, and Mamba-2 backbones.
 
